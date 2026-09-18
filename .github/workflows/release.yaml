@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write  # Required for cosign keyless signing
+
+jobs:
+  goreleaser:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Setup QEMU (multi-arch Docker)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install Syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0
+
+      # Fetch pre-built dashboard UI from the private mockd-desktop repo.
+      # The dist is a compiled artifact (not source) — it gets embedded into
+      # the binary via go:embed with -tags dashboard. The DASHBOARD_PAT secret
+      # needs `repo` scope on getmockd/mockd-desktop.
+      - name: Fetch dashboard dist
+        env:
+          GH_TOKEN: ${{ secrets.DASHBOARD_PAT }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p pkg/admin/dashboard/dist
+          # Try matching mockd tag first, then fall back to latest stable release.
+          gh release download "$TAG" --repo getmockd/mockd-desktop \
+            --pattern 'dashboard-dist.tar.gz' \
+            --dir /tmp/dashboard 2>/dev/null \
+          || gh release download --repo getmockd/mockd-desktop \
+            --pattern 'dashboard-dist.tar.gz' \
+            --dir /tmp/dashboard 2>/dev/null \
+          || { echo "::warning::Dashboard dist not found — building without embedded UI"; exit 0; }
+          tar -xzf /tmp/dashboard/dashboard-dist.tar.gz -C pkg/admin/dashboard/dist/
+          echo "Dashboard dist installed from mockd-desktop:"
+          ls -la pkg/admin/dashboard/dist/
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          SCOOP_TAP_TOKEN: ${{ secrets.SCOOP_TAP_TOKEN || '' }}
+
+      # Generate per-binary SHA256 sidecar files for setup-mockd compatibility.
+      # Goreleaser uploads bare binaries (mockd-linux-amd64, etc.) to the release
+      # and records their checksums in checksums.txt. setup-mockd expects individual
+      # .sha256 sidecar files alongside each bare binary, so we extract them here.
+      - name: Generate per-binary checksum sidecars
+        run: |
+          cd dist
+          # Extract bare binary entries from checksums.txt (mockd-{os}-{arch} pattern)
+          grep -E '^[a-f0-9]+  mockd-(linux|darwin|windows)-(amd64|arm64)' checksums.txt | while read -r checksum filename; do
+            echo "${checksum}  ${filename}" > "${filename}.sha256"
+            echo "Created ${filename}.sha256"
+          done
+          echo "--- Generated sidecar files ---"
+          ls -la *.sha256 2>/dev/null || echo "No .sha256 files generated"
+
+      - name: Upload per-binary checksum sidecars to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          for f in dist/mockd-*.sha256; do
+            [ -f "$f" ] || continue
+            echo "Uploading $(basename "$f")"
+            gh release upload "$TAG" "$f" --clobber
+          done

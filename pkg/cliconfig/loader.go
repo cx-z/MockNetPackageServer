@@ -1,0 +1,166 @@
+package cliconfig
+
+import (
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
+
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	// GlobalConfigDir is the directory for global config
+	GlobalConfigDir = "mockd"
+)
+
+// LocalConfigFileNames are the names to search for local config (in order).
+var LocalConfigFileNames = []string{".mockdrc.yaml", ".mockdrc.yml"}
+
+// GlobalConfigFileNames are the names to search for global config (in order).
+var GlobalConfigFileNames = []string{"config.yaml", "config.yml"}
+
+// FindLocalConfig searches for .mockdrc.yaml or .mockdrc.yml in the current directory.
+func FindLocalConfig() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for _, name := range LocalConfigFileNames {
+		path := filepath.Join(cwd, name)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", nil
+}
+
+// GetLocalConfigSearchPaths returns the paths that will be searched for local config.
+func GetLocalConfigSearchPaths() []string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	paths := make([]string, len(LocalConfigFileNames))
+	for i, name := range LocalConfigFileNames {
+		paths[i] = filepath.Join(cwd, name)
+	}
+	return paths
+}
+
+// FindGlobalConfig returns the path to the global config file.
+// Returns empty string if not found.
+func FindGlobalConfig() (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		//nolint:nilerr // intentionally returning empty string when no config dir is available
+		return "", nil
+	}
+	for _, name := range GlobalConfigFileNames {
+		path := filepath.Join(configDir, GlobalConfigDir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", nil
+}
+
+// GetGlobalConfigSearchPaths returns the paths that will be searched for global config.
+func GetGlobalConfigSearchPaths() []string {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return nil
+	}
+	paths := make([]string, len(GlobalConfigFileNames))
+	for i, name := range GlobalConfigFileNames {
+		paths[i] = filepath.Join(configDir, GlobalConfigDir, name)
+	}
+	return paths
+}
+
+// LoadConfigFile loads a CLIConfig from a YAML file.
+// It also populates SetFields to track which keys were explicitly present in
+// the YAML, which is needed so that MergeConfig can distinguish "field absent"
+// from "field explicitly set to its zero value" (important for booleans).
+func LoadConfigFile(path string) (*CLIConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var cfg CLIConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, &ConfigError{
+			Path:    path,
+			Message: err.Error(),
+		}
+	}
+
+	cfg.Sources = make(map[string]string)
+
+	// Determine which keys were explicitly present in the YAML so that
+	// MergeConfig can correctly merge boolean false values.
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err == nil {
+		cfg.SetFields = make(map[string]bool, len(raw))
+		for k := range raw {
+			cfg.SetFields[k] = true
+		}
+	}
+
+	return &cfg, nil
+}
+
+// ConfigError represents a configuration file error with location info.
+type ConfigError struct {
+	Path    string
+	Line    int
+	Column  int
+	Message string
+}
+
+func (e *ConfigError) Error() string {
+	if e.Line > 0 {
+		return e.Path + " (line " + strconv.Itoa(e.Line) + ", column " + strconv.Itoa(e.Column) + "): " + e.Message
+	}
+	return e.Path + ": " + e.Message
+}
+
+// LoadAll loads configuration from all sources and merges them.
+// Precedence: flags > env > local config > global config > defaults
+// Parse errors in config files are logged as warnings but do not prevent
+// loading from other sources.
+func LoadAll() (*CLIConfig, error) {
+	// Start with defaults
+	cfg := NewDefault()
+
+	// Load global config
+	if globalPath, err := FindGlobalConfig(); err == nil && globalPath != "" {
+		globalCfg, err := LoadConfigFile(globalPath)
+		if err != nil {
+			slog.Warn("failed to parse global config file, skipping", "path", globalPath, "error", err)
+		} else {
+			MergeConfig(cfg, globalCfg, SourceGlobal)
+		}
+	}
+
+	// Load local config
+	if localPath, err := FindLocalConfig(); err == nil && localPath != "" {
+		localCfg, err := LoadConfigFile(localPath)
+		if err != nil {
+			slog.Warn("failed to parse local config file, skipping", "path", localPath, "error", err)
+		} else {
+			MergeConfig(cfg, localCfg, SourceLocal)
+		}
+	}
+
+	// Load environment variables
+	LoadEnvConfig(cfg)
+
+	// Validate final merged config
+	if err := cfg.Validate(); err != nil {
+		slog.Warn("config validation warning", "error", err)
+	}
+
+	return cfg, nil
+}

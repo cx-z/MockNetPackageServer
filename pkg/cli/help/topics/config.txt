@@ -1,0 +1,219 @@
+CONFIGURATION FILE
+==================
+
+mockd uses YAML configuration files following a Docker Compose-style approach.
+
+PROJECT CONFIGURATION (mockd.yaml)
+----------------------------------
+
+The main config file defines admins, engines, workspaces, and mocks:
+
+  version: "1"
+  
+  # Control plane - manages workspaces, mocks, engine registry
+  admins:
+    - name: local
+      port: 4290
+      auth:
+        type: none           # none | api-key
+  
+  # Data plane - serves mock responses  
+  engines:
+    - name: default
+      httpPort: 4280
+      admin: local           # Which admin to register with
+  
+  # Logical groupings of mocks
+  workspaces:
+    - name: default
+      engines:
+        - default
+  
+  # Mock definitions (inline or file references)
+  mocks:
+    - id: health-check
+      workspace: default
+      type: http
+      http:
+        matcher:
+          path: /health
+        response:
+          statusCode: 200
+          body: '{"status": "ok"}'
+
+ENVIRONMENT VARIABLES
+---------------------
+
+Environment variable substitution is supported:
+
+  admins:
+    - name: local
+      port: ${MOCKD_PORT:-4290}        # With default
+      
+  engines:
+    - name: default
+      httpPort: ${MOCKD_HTTP_PORT}     # Required env var
+
+CONFIG DISCOVERY
+----------------
+
+Priority order:
+  1. --config / -f flags (can specify multiple)
+  2. MOCKD_CONFIG environment variable
+  3. ./mockd.yaml in current directory
+  4. ./mockd.yml in current directory
+
+CONFIG MERGING
+--------------
+
+Multiple -f flags merge configs (later overrides earlier):
+
+  mockd up -f base.yaml -f production.yaml
+
+Merge rules:
+  - Scalars: Later value wins
+  - Objects: Deep merge
+  - Arrays with name/id: Merge by key
+  - Arrays without key: Later replaces entirely
+
+ADMINS
+------
+
+Local admin (mockd starts it):
+
+  admins:
+    - name: local
+      port: 4290
+      auth:
+        type: api-key
+        keyFile: ~/.mockd/api-key
+
+Remote admin (mockd connects to it):
+
+  admins:
+    - name: production
+      url: https://admin.prod.com:4290
+      apiKey: ${PROD_API_KEY}
+
+ENGINES
+-------
+
+Local engine registering with local admin:
+
+  engines:
+    - name: default
+      httpPort: 4280
+      httpsPort: 0              # 0 = disabled
+      grpcPort: 0               # 0 = disabled
+      admin: local
+
+Engine registering with remote admin:
+
+  engines:
+    - name: prod-helper
+      httpPort: 4281
+      admin: production
+      registration:
+        token: ${ENGINE_TOKEN}
+
+MOCKS
+-----
+
+Inline mock:
+
+  mocks:
+    - id: get-users
+      workspace: default
+      type: http
+      http:
+        matcher:
+          method: GET
+          path: /api/users
+        response:
+          statusCode: 200
+          body: '[{"id": 1, "name": "Alice"}]'
+
+File reference:
+
+  mocks:
+    - file: ./mocks/users.yaml
+
+Directory glob:
+
+  mocks:
+    - files: ./mocks/**/*.yaml
+
+MOCK TYPES
+----------
+
+The 'type' field determines the mock protocol:
+  - http      HTTP/HTTPS endpoints (default)
+  - websocket WebSocket connections
+  - graphql   GraphQL API endpoints
+  - grpc      gRPC services
+  - mqtt      MQTT broker topics
+  - soap      SOAP/WSDL services
+
+HTTP MOCK EXAMPLE
+-----------------
+
+  mocks:
+    - id: get-users
+      workspace: default
+      type: http
+      http:
+        matcher:
+          method: GET
+          path: /api/users
+          headers:
+            Authorization: "Bearer *"
+        response:
+          statusCode: 200
+          headers:
+            Content-Type: application/json
+          body: |
+            {"users": [{"id": 1, "name": "Alice"}]}
+          delayMs: 100
+
+TEMPLATE VARIABLES
+------------------
+
+Response bodies support template variables:
+
+  body: |
+    {
+      "id": "{{request.pathParam.id}}",
+      "timestamp": "{{now}}",
+      "uuid": "{{uuid}}"
+    }
+
+See 'mockd help templating' for all available variables.
+
+GETTING STARTED
+---------------
+
+  # Create a starter config
+  mockd init
+  
+  # Validate config
+  mockd validate
+  
+  # Start services (Docker Compose style)
+  mockd up
+  
+  # Show running services
+  mockd ps
+  
+  # Stop services
+  mockd down
+  
+  # Or use legacy serve command
+  mockd serve --config mockd.yaml
+
+SEE ALSO
+--------
+
+  mockd help templating   - Template variable reference
+  mockd help matching     - Request matching patterns
+  mockd help websocket    - WebSocket configuration
+  mockd help graphql      - GraphQL configuration

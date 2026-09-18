@@ -1,0 +1,2085 @@
+package grpc
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/jhump/protoreflect/desc"
+	"github.com/jhump/protoreflect/desc/protoparse"
+	"github.com/jhump/protoreflect/dynamic"
+	"github.com/jhump/protoreflect/dynamic/grpcdynamic"
+	"github.com/jhump/protoreflect/grpcreflect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	pref "google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/dynamicpb"
+)
+
+func getTestSchema(t *testing.T) *ProtoSchema {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+
+	projectRoot := filepath.Join(wd, "..", "..")
+	protoPath := filepath.Join(projectRoot, "tests", "fixtures", "grpc", "test.proto")
+
+	schema, err := ParseProtoFile(protoPath, nil)
+	require.NoError(t, err)
+	return schema
+}
+
+// getTestDescriptors returns jhump/protoreflect descriptors for dynamic client testing
+func getTestDescriptors(t *testing.T) []*desc.FileDescriptor {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+
+	projectRoot := filepath.Join(wd, "..", "..")
+	protoPath := filepath.Join(projectRoot, "tests", "fixtures", "grpc", "test.proto")
+
+	parser := protoparse.Parser{}
+	files, err := parser.ParseFiles(protoPath)
+	require.NoError(t, err)
+	return files
+}
+
+// getMethodDesc returns the jhump method descriptor for a service/method name
+func getMethodDesc(t *testing.T, files []*desc.FileDescriptor, serviceName, methodName string) *desc.MethodDescriptor {
+	t.Helper()
+	for _, file := range files {
+		for _, svc := range file.GetServices() {
+			if svc.GetFullyQualifiedName() == serviceName {
+				for _, method := range svc.GetMethods() {
+					if method.GetName() == methodName {
+						return method
+					}
+				}
+			}
+		}
+	}
+	t.Fatalf("method %s/%s not found", serviceName, methodName)
+	return nil
+}
+
+func TestNewServer(t *testing.T) {
+	schema := getTestSchema(t)
+
+	tests := []struct {
+		name    string
+		config  *GRPCConfig
+		schema  *ProtoSchema
+		wantErr error
+	}{
+		{
+			name:    "valid config and schema",
+			config:  &GRPCConfig{Port: 50051},
+			schema:  schema,
+			wantErr: nil,
+		},
+		{
+			name:    "nil config",
+			config:  nil,
+			schema:  schema,
+			wantErr: ErrNilConfig,
+		},
+		{
+			name:    "nil schema",
+			config:  &GRPCConfig{Port: 50051},
+			schema:  nil,
+			wantErr: ErrNilSchema,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, err := NewServer(tt.config, tt.schema)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				assert.Nil(t, srv)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, srv)
+			}
+		})
+	}
+}
+
+func TestServerStartStop(t *testing.T) {
+	schema := getTestSchema(t)
+	config := &GRPCConfig{
+		Port:       0, // Let OS assign port
+		Reflection: true,
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	// Should not be running initially
+	assert.False(t, srv.IsRunning())
+
+	// Start server
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	assert.True(t, srv.IsRunning())
+	assert.NotEmpty(t, srv.Address())
+
+	// Starting again should error
+	err = srv.Start(context.Background())
+	assert.ErrorIs(t, err, ErrServerAlreadyRunning)
+
+	// Stop server
+	err = srv.Stop(context.Background(), 5*time.Second)
+	require.NoError(t, err)
+	assert.False(t, srv.IsRunning())
+
+	// Stopping again should be fine (no-op)
+	err = srv.Stop(context.Background(), 5*time.Second)
+	assert.NoError(t, err)
+}
+
+func TestUnaryCall(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port:       0,
+		Reflection: true,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"GetUser": {
+						Response: map[string]interface{}{
+							"id":    "user-123",
+							"name":  "Test User",
+							"email": "test@example.com",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	// Connect client
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Get method descriptor from jhump/protoreflect for dynamic client
+	methodDesc := getMethodDesc(t, files, "test.UserService", "GetUser")
+
+	// Create dynamic stub
+	stub := grpcdynamic.NewStub(conn)
+
+	// Create request
+	reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+	reqMsg.SetFieldByName("id", "user-123")
+
+	// Make call
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	respMsg, err := stub.InvokeRpc(ctx, methodDesc, reqMsg)
+	require.NoError(t, err)
+
+	// Check response
+	resp := respMsg.(*dynamic.Message)
+	assert.Equal(t, "user-123", resp.GetFieldByName("id"))
+	assert.Equal(t, "Test User", resp.GetFieldByName("name"))
+	assert.Equal(t, "test@example.com", resp.GetFieldByName("email"))
+}
+
+func TestUnaryCallWithDelay(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.HealthService": {
+				Methods: map[string]MethodConfig{
+					"Check": {
+						Response: map[string]interface{}{
+							"status": 1, // SERVING
+						},
+						Delay: "100ms",
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.HealthService", "Check")
+
+	stub := grpcdynamic.NewStub(conn)
+	reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err = stub.InvokeRpc(ctx, methodDesc, reqMsg)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, elapsed, 100*time.Millisecond)
+}
+
+func TestUnaryCallWithError(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"GetUser": {
+						Error: &GRPCErrorConfig{
+							Code:    "NOT_FOUND",
+							Message: "user not found",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "GetUser")
+
+	stub := grpcdynamic.NewStub(conn)
+	reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+	reqMsg.SetFieldByName("id", "not-found")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = stub.InvokeRpc(ctx, methodDesc, reqMsg)
+	require.Error(t, err)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.NotFound, st.Code())
+	assert.Equal(t, "user not found", st.Message())
+}
+
+func TestServerStreaming(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"ListUsers": {
+						Responses: []interface{}{
+							map[string]interface{}{"id": "user-1", "name": "User One"},
+							map[string]interface{}{"id": "user-2", "name": "User Two"},
+							map[string]interface{}{"id": "user-3", "name": "User Three"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "ListUsers")
+
+	stub := grpcdynamic.NewStub(conn)
+	reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := stub.InvokeRpcServerStream(ctx, methodDesc, reqMsg)
+	require.NoError(t, err)
+
+	var responses []*dynamic.Message
+	for {
+		resp, err := stream.RecvMsg()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		responses = append(responses, resp.(*dynamic.Message))
+	}
+
+	require.Len(t, responses, 3)
+	assert.Equal(t, "user-1", responses[0].GetFieldByName("id"))
+	assert.Equal(t, "user-2", responses[1].GetFieldByName("id"))
+	assert.Equal(t, "user-3", responses[2].GetFieldByName("id"))
+}
+
+func TestServerStreamingWithStreamDelay(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"ListUsers": {
+						Responses: []interface{}{
+							map[string]interface{}{"id": "user-1"},
+							map[string]interface{}{"id": "user-2"},
+						},
+						StreamDelay: "50ms",
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "ListUsers")
+
+	stub := grpcdynamic.NewStub(conn)
+	reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := stub.InvokeRpcServerStream(ctx, methodDesc, reqMsg)
+	require.NoError(t, err)
+
+	start := time.Now()
+	count := 0
+	for {
+		_, err := stream.RecvMsg()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		count++
+	}
+	elapsed := time.Since(start)
+
+	assert.Equal(t, 2, count)
+	// Should have at least 50ms delay between messages
+	assert.GreaterOrEqual(t, elapsed, 50*time.Millisecond)
+}
+
+func TestClientStreaming(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"CreateUsers": {
+						Response: map[string]interface{}{
+							"created_count": 3,
+							"ids":           []string{"id-1", "id-2", "id-3"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "CreateUsers")
+
+	stub := grpcdynamic.NewStub(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := stub.InvokeRpcClientStream(ctx, methodDesc)
+	require.NoError(t, err)
+
+	// Send multiple requests
+	for i := 0; i < 3; i++ {
+		reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+		reqMsg.SetFieldByName("name", fmt.Sprintf("User %d", i))
+		reqMsg.SetFieldByName("email", fmt.Sprintf("user%d@example.com", i))
+		err = stream.SendMsg(reqMsg)
+		require.NoError(t, err)
+	}
+
+	resp, err := stream.CloseAndReceive()
+	require.NoError(t, err)
+
+	respMsg := resp.(*dynamic.Message)
+	assert.Equal(t, int32(3), respMsg.GetFieldByName("created_count"))
+}
+
+// TestClientStreaming_AdminCancelUnblocksIdleStream is a regression test for the
+// gRPC cancellation liveness bug: an admin/mock-update Cancel must actually
+// unblock a stream that is idle in stream.RecvMsg and return codes.Unavailable,
+// rather than returning 200 from the admin API while the stream stays blocked.
+// Before the fix the handler blocked on the original transport context and never
+// observed the StreamTracker-derived ctx cancellation, so this would hang.
+func TestClientStreaming_AdminCancelUnblocksIdleStream(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"CreateUsers": {Response: map[string]interface{}{"created_count": 1}},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+	require.NoError(t, srv.Start(context.Background()))
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "CreateUsers")
+	stub := grpcdynamic.NewStub(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Open the client-streaming RPC but send NOTHING — the server handler blocks in RecvMsg.
+	stream, err := stub.InvokeRpcClientStream(ctx, methodDesc)
+	require.NoError(t, err)
+
+	// Wait until the server has registered the idle stream (handler is in RecvMsg).
+	tracker := srv.StreamTracker()
+	var streamID string
+	require.Eventually(t, func() bool {
+		for _, info := range tracker.List() {
+			streamID = info.ID
+			return true
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond, "idle stream was never registered with the tracker")
+
+	// Admin-cancel the idle stream. This must unblock the handler's RecvMsg.
+	require.NoError(t, tracker.Cancel(streamID))
+
+	// The client should observe codes.Unavailable promptly — proving the handler unblocked.
+	done := make(chan error, 1)
+	go func() {
+		_, rerr := stream.CloseAndReceive()
+		done <- rerr
+	}()
+	select {
+	case rerr := <-done:
+		require.Error(t, rerr)
+		assert.Equal(t, codes.Unavailable, status.Code(rerr),
+			"admin-cancelled idle stream should return codes.Unavailable")
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream did not unblock after admin Cancel — gRPC cancellation liveness bug")
+	}
+}
+
+func TestBidirectionalStreaming(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"Chat": {
+						Responses: []interface{}{
+							map[string]interface{}{"user_id": "bot", "content": "Hello!"},
+							map[string]interface{}{"user_id": "bot", "content": "How are you?"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "Chat")
+
+	stub := grpcdynamic.NewStub(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := stub.InvokeRpcBidiStream(ctx, methodDesc)
+	require.NoError(t, err)
+
+	// Send messages and receive responses
+	var responses []*dynamic.Message
+	for i := 0; i < 2; i++ {
+		reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+		reqMsg.SetFieldByName("user_id", "user-1")
+		reqMsg.SetFieldByName("content", fmt.Sprintf("Message %d", i))
+
+		err = stream.SendMsg(reqMsg)
+		require.NoError(t, err)
+
+		resp, err := stream.RecvMsg()
+		require.NoError(t, err)
+		responses = append(responses, resp.(*dynamic.Message))
+	}
+
+	err = stream.CloseSend()
+	require.NoError(t, err)
+
+	require.Len(t, responses, 2)
+	assert.Equal(t, "bot", responses[0].GetFieldByName("user_id"))
+	assert.Equal(t, "Hello!", responses[0].GetFieldByName("content"))
+}
+
+func TestMetadataMatching(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"GetUser": {
+						Response: map[string]interface{}{
+							"id":   "matched-user",
+							"name": "Matched by metadata",
+						},
+						Match: &MethodMatch{
+							Metadata: map[string]string{
+								"x-api-key": "secret-key",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "GetUser")
+
+	stub := grpcdynamic.NewStub(conn)
+	reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+	reqMsg.SetFieldByName("id", "some-id")
+
+	// With matching metadata
+	ctx := metadata.NewOutgoingContext(context.Background(),
+		metadata.Pairs("x-api-key", "secret-key"))
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := stub.InvokeRpc(ctx, methodDesc, reqMsg)
+	require.NoError(t, err)
+
+	respMsg := resp.(*dynamic.Message)
+	assert.Equal(t, "matched-user", respMsg.GetFieldByName("id"))
+
+	// Without matching metadata
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+
+	_, err = stub.InvokeRpc(ctx2, methodDesc, reqMsg)
+	require.Error(t, err)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.Unimplemented, st.Code())
+}
+
+func TestRequestFieldMatching(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"GetUser": {
+						Response: map[string]interface{}{
+							"id":   "vip-user",
+							"name": "VIP User",
+						},
+						Match: &MethodMatch{
+							Request: map[string]interface{}{
+								"id": "vip-123",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "GetUser")
+
+	stub := grpcdynamic.NewStub(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Matching request
+	reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+	reqMsg.SetFieldByName("id", "vip-123")
+
+	resp, err := stub.InvokeRpc(ctx, methodDesc, reqMsg)
+	require.NoError(t, err)
+
+	respMsg := resp.(*dynamic.Message)
+	assert.Equal(t, "vip-user", respMsg.GetFieldByName("id"))
+
+	// Non-matching request
+	reqMsg2 := dynamic.NewMessage(methodDesc.GetInputType())
+	reqMsg2.SetFieldByName("id", "regular-user")
+
+	_, err = stub.InvokeRpc(ctx, methodDesc, reqMsg2)
+	require.Error(t, err)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.Unimplemented, st.Code())
+}
+
+// TestMethodMatchVariants is the regression test for issue #30: multiple mocks
+// on the same port + service + method with different match conditions.
+//
+// Before the fix, ServiceConfig.Methods could only hold ONE MethodConfig per
+// method, so a second match variant was impossible — findMethodConfig did a
+// single map lookup, evaluated that one config's Match, and returned
+// Unimplemented if it failed instead of trying other variants. Now the primary
+// config plus its Variants are evaluated in order and the first whose Match
+// passes wins.
+func TestMethodMatchVariants(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+
+	// Primary variant matches id "123"; the Variants list holds a second variant
+	// matching id "999" and a final unconditioned default. Ordering is
+	// deterministic: specific variants first, default last.
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"GetUser": {
+						Match:    &MethodMatch{Request: map[string]interface{}{"id": "123"}},
+						Response: map[string]interface{}{"id": "123", "name": "John Doe"},
+						Variants: []MethodConfig{
+							{
+								Match:    &MethodMatch{Request: map[string]interface{}{"id": "999"}},
+								Response: map[string]interface{}{"id": "999", "name": "Jane Doe"},
+							},
+							{
+								// Unconditioned default — must be ordered last.
+								Response: map[string]interface{}{"id": "0", "name": "Default User"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "GetUser")
+	stub := grpcdynamic.NewStub(conn)
+
+	call := func(id string) *dynamic.Message {
+		reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+		reqMsg.SetFieldByName("id", id)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		resp, err := stub.InvokeRpc(ctx, methodDesc, reqMsg)
+		require.NoError(t, err, "request id=%s should match a variant", id)
+		return resp.(*dynamic.Message)
+	}
+
+	// Request field A -> primary variant.
+	respA := call("123")
+	assert.Equal(t, "123", respA.GetFieldByName("id"))
+	assert.Equal(t, "John Doe", respA.GetFieldByName("name"))
+
+	// Request field B -> second variant (this is the exact issue #30 scenario
+	// that previously returned Unimplemented).
+	respB := call("999")
+	assert.Equal(t, "999", respB.GetFieldByName("id"))
+	assert.Equal(t, "Jane Doe", respB.GetFieldByName("name"))
+
+	// No specific match -> unconditioned default variant (fallthrough).
+	respDefault := call("does-not-exist")
+	assert.Equal(t, "0", respDefault.GetFieldByName("id"))
+	assert.Equal(t, "Default User", respDefault.GetFieldByName("name"))
+}
+
+// TestFindMethodConfigVariantOrdering unit-tests findMethodConfig directly
+// (no network), asserting deterministic, in-order variant evaluation.
+func TestFindMethodConfigVariantOrdering(t *testing.T) {
+	schema := getTestSchema(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"GetUser": {
+						Match:    &MethodMatch{Request: map[string]interface{}{"id": "a"}},
+						Response: map[string]interface{}{"id": "a"},
+						Variants: []MethodConfig{
+							{
+								Match:    &MethodMatch{Request: map[string]interface{}{"id": "b"}},
+								Response: map[string]interface{}{"id": "b"},
+							},
+							{
+								Response: map[string]interface{}{"id": "default"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	// Primary variant.
+	cfg := srv.findMethodConfig("test.UserService", "GetUser", nil, map[string]interface{}{"id": "a"})
+	require.NotNil(t, cfg)
+	assert.Equal(t, map[string]interface{}{"id": "a"}, cfg.Response)
+	assert.Nil(t, cfg.Variants, "returned config must not leak nested variants")
+
+	// Second variant.
+	cfg = srv.findMethodConfig("test.UserService", "GetUser", nil, map[string]interface{}{"id": "b"})
+	require.NotNil(t, cfg)
+	assert.Equal(t, map[string]interface{}{"id": "b"}, cfg.Response)
+
+	// Default (unconditioned) variant, ordered last.
+	cfg = srv.findMethodConfig("test.UserService", "GetUser", nil, map[string]interface{}{"id": "zzz"})
+	require.NotNil(t, cfg)
+	assert.Equal(t, map[string]interface{}{"id": "default"}, cfg.Response)
+}
+
+// TestFindMethodConfig_CatchAllPrimary_DoesNotShadowVariant is a regression test
+// for #30: a catch-all (unconditioned) config that comes FIRST — e.g. a default
+// mock created before a specific one via separate admin calls, so the merge
+// appends the specific variant after it — must NOT shadow the more specific
+// variant. Routing is order-independent: specific matches always win and the
+// catch-all is only the last-resort fallback.
+func TestFindMethodConfig_CatchAllPrimary_DoesNotShadowVariant(t *testing.T) {
+	schema := getTestSchema(t)
+	for _, primaryMatch := range []*MethodMatch{nil, {}} { // nil and empty (non-nil) catch-all
+		config := &GRPCConfig{
+			Port: 0,
+			Services: map[string]ServiceConfig{
+				"test.UserService": {
+					Methods: map[string]MethodConfig{
+						"GetUser": {
+							// Primary is the catch-all (created first).
+							Match:    primaryMatch,
+							Response: map[string]interface{}{"id": "default"},
+							Variants: []MethodConfig{
+								{
+									Match:    &MethodMatch{Request: map[string]interface{}{"id": "specific"}},
+									Response: map[string]interface{}{"id": "specific"},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		srv, err := NewServer(config, schema)
+		require.NoError(t, err)
+
+		// The specific variant must win even though the catch-all is first.
+		cfg := srv.findMethodConfig("test.UserService", "GetUser", nil, map[string]interface{}{"id": "specific"})
+		require.NotNil(t, cfg)
+		assert.Equal(t, map[string]interface{}{"id": "specific"}, cfg.Response,
+			"specific variant must win over a catch-all primary (regression #30)")
+
+		// A non-matching request falls back to the catch-all default.
+		cfg = srv.findMethodConfig("test.UserService", "GetUser", nil, map[string]interface{}{"id": "other"})
+		require.NotNil(t, cfg)
+		assert.Equal(t, map[string]interface{}{"id": "default"}, cfg.Response)
+	}
+}
+
+// TestMethodMatchVariantsNoDefault confirms that when NO variant matches and
+// there is no unconditioned default, the server returns Unimplemented.
+func TestMethodMatchVariantsNoDefault(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"GetUser": {
+						Match:    &MethodMatch{Request: map[string]interface{}{"id": "123"}},
+						Response: map[string]interface{}{"id": "123"},
+						Variants: []MethodConfig{
+							{
+								Match:    &MethodMatch{Request: map[string]interface{}{"id": "999"}},
+								Response: map[string]interface{}{"id": "999"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "GetUser")
+	stub := grpcdynamic.NewStub(conn)
+
+	reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+	reqMsg.SetFieldByName("id", "unmatched")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = stub.InvokeRpc(ctx, methodDesc, reqMsg)
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.Unimplemented, st.Code())
+}
+
+func TestNoMockConfigured(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port:     0,
+		Services: map[string]ServiceConfig{}, // No services configured
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "GetUser")
+
+	stub := grpcdynamic.NewStub(conn)
+	reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+	reqMsg.SetFieldByName("id", "any-id")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = stub.InvokeRpc(ctx, methodDesc, reqMsg)
+	require.Error(t, err)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.Unimplemented, st.Code())
+}
+
+func TestBuildResponse(t *testing.T) {
+	schema := getTestSchema(t)
+	config := &GRPCConfig{Port: 0}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	svc := schema.GetService("test.UserService")
+	require.NotNil(t, svc)
+	method := svc.GetMethod("GetUser")
+	require.NotNil(t, method)
+
+	tests := []struct {
+		name    string
+		data    interface{}
+		wantErr bool
+	}{
+		{
+			name: "valid map data",
+			data: map[string]interface{}{
+				"id":    "123",
+				"name":  "Test",
+				"email": "test@example.com",
+			},
+			wantErr: false,
+		},
+		{
+			name:    "nil data",
+			data:    nil,
+			wantErr: false,
+		},
+		{
+			name: "nested data",
+			data: map[string]interface{}{
+				"id": "456",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := srv.buildResponse(method, tt.data, nil)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, resp)
+			}
+		})
+	}
+}
+
+func TestToGRPCError(t *testing.T) {
+	srv := &Server{}
+
+	tests := []struct {
+		name       string
+		errCfg     *GRPCErrorConfig
+		wantCode   codes.Code
+		wantMsg    string
+		wantNilErr bool
+	}{
+		{
+			name:       "nil error config",
+			errCfg:     nil,
+			wantNilErr: true,
+		},
+		{
+			name: "not found error",
+			errCfg: &GRPCErrorConfig{
+				Code:    "NOT_FOUND",
+				Message: "resource not found",
+			},
+			wantCode: codes.NotFound,
+			wantMsg:  "resource not found",
+		},
+		{
+			name: "permission denied",
+			errCfg: &GRPCErrorConfig{
+				Code:    "PERMISSION_DENIED",
+				Message: "access denied",
+			},
+			wantCode: codes.PermissionDenied,
+			wantMsg:  "access denied",
+		},
+		{
+			name: "invalid code defaults to unknown",
+			errCfg: &GRPCErrorConfig{
+				Code:    "INVALID_CODE",
+				Message: "unknown error",
+			},
+			wantCode: codes.Unknown,
+			wantMsg:  "unknown error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := srv.toGRPCError(tt.errCfg)
+			if tt.wantNilErr {
+				assert.Nil(t, err)
+				return
+			}
+
+			require.NotNil(t, err)
+			st, ok := status.FromError(err)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantCode, st.Code())
+			assert.Equal(t, tt.wantMsg, st.Message())
+		})
+	}
+}
+
+func TestApplyDelay(t *testing.T) {
+	srv := &Server{}
+
+	tests := []struct {
+		name        string
+		delay       string
+		minDuration time.Duration
+	}{
+		{
+			name:        "empty delay",
+			delay:       "",
+			minDuration: 0,
+		},
+		{
+			name:        "50ms delay",
+			delay:       "50ms",
+			minDuration: 50 * time.Millisecond,
+		},
+		{
+			name:        "invalid delay format",
+			delay:       "invalid",
+			minDuration: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Now()
+			srv.applyDelay(tt.delay)
+			elapsed := time.Since(start)
+			assert.GreaterOrEqual(t, elapsed, tt.minDuration)
+		})
+	}
+}
+
+func TestValuesEqual(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected interface{}
+		actual   interface{}
+		want     bool
+	}{
+		{
+			name:     "both nil",
+			expected: nil,
+			actual:   nil,
+			want:     true,
+		},
+		{
+			name:     "expected nil",
+			expected: nil,
+			actual:   "value",
+			want:     false,
+		},
+		{
+			name:     "actual nil",
+			expected: "value",
+			actual:   nil,
+			want:     false,
+		},
+		{
+			name:     "equal strings",
+			expected: "test",
+			actual:   "test",
+			want:     true,
+		},
+		{
+			name:     "different strings",
+			expected: "test",
+			actual:   "other",
+			want:     false,
+		},
+		{
+			name:     "float64 to int",
+			expected: float64(123),
+			actual:   123,
+			want:     true,
+		},
+		{
+			name:     "float64 to int32",
+			expected: float64(123),
+			actual:   int32(123),
+			want:     true,
+		},
+		{
+			name:     "int to float64",
+			expected: 123,
+			actual:   float64(123),
+			want:     true,
+		},
+		{
+			name:     "equal floats",
+			expected: float64(3.14),
+			actual:   float64(3.14),
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := valuesEqual(tt.expected, tt.actual)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDynamicMessageToMap(t *testing.T) {
+	schema := getTestSchema(t)
+	svc := schema.GetService("test.UserService")
+	require.NotNil(t, svc)
+	method := svc.GetMethod("GetUser")
+	require.NotNil(t, method)
+
+	// Create a dynamicpb message using protoreflect descriptor
+	msg := dynamicpb.NewMessage(method.GetInputDescriptor())
+	msg.ProtoReflect().Set(
+		msg.ProtoReflect().Descriptor().Fields().ByName("id"),
+		pref.ValueOfString("test-123"),
+	)
+
+	result := dynamicMessageToMap(msg)
+	assert.NotNil(t, result)
+	assert.Equal(t, "test-123", result["id"])
+}
+
+func TestDynamicMessageToMapNil(t *testing.T) {
+	result := dynamicMessageToMap(nil)
+	assert.Nil(t, result)
+}
+
+func TestGetDescriptors(t *testing.T) {
+	schema := getTestSchema(t)
+	config := &GRPCConfig{Port: 0}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	// Test GetServiceDescriptor
+	svcDesc := srv.GetServiceDescriptor("test.UserService")
+	assert.NotNil(t, svcDesc)
+	assert.Equal(t, pref.FullName("test.UserService"), svcDesc.FullName())
+
+	// Test non-existent service
+	svcDesc = srv.GetServiceDescriptor("test.NonExistent")
+	assert.Nil(t, svcDesc)
+
+	// Test GetMethodDescriptor
+	methodDesc := srv.GetMethodDescriptor("test.UserService", "GetUser")
+	assert.NotNil(t, methodDesc)
+	assert.Equal(t, pref.Name("GetUser"), methodDesc.Name())
+
+	// Test non-existent method
+	methodDesc = srv.GetMethodDescriptor("test.UserService", "NonExistent")
+	assert.Nil(t, methodDesc)
+
+	// Test non-existent service for method
+	methodDesc = srv.GetMethodDescriptor("test.NonExistent", "GetUser")
+	assert.Nil(t, methodDesc)
+}
+
+func TestMatchesCondition(t *testing.T) {
+	srv := &Server{}
+
+	tests := []struct {
+		name  string
+		match *MethodMatch
+		md    metadata.MD
+		req   map[string]interface{}
+		want  bool
+	}{
+		{
+			name:  "no conditions - matches",
+			match: &MethodMatch{},
+			md:    metadata.MD{},
+			req:   map[string]interface{}{},
+			want:  true,
+		},
+		{
+			name: "metadata matches",
+			match: &MethodMatch{
+				Metadata: map[string]string{
+					"x-api-key": "secret",
+				},
+			},
+			md:   metadata.Pairs("x-api-key", "secret"),
+			req:  nil,
+			want: true,
+		},
+		{
+			name: "metadata does not match",
+			match: &MethodMatch{
+				Metadata: map[string]string{
+					"x-api-key": "secret",
+				},
+			},
+			md:   metadata.Pairs("x-api-key", "wrong"),
+			req:  nil,
+			want: false,
+		},
+		{
+			name: "metadata missing",
+			match: &MethodMatch{
+				Metadata: map[string]string{
+					"x-api-key": "secret",
+				},
+			},
+			md:   metadata.MD{},
+			req:  nil,
+			want: false,
+		},
+		{
+			name: "request field matches",
+			match: &MethodMatch{
+				Request: map[string]interface{}{
+					"id": "123",
+				},
+			},
+			md:   nil,
+			req:  map[string]interface{}{"id": "123"},
+			want: true,
+		},
+		{
+			name: "request field does not match",
+			match: &MethodMatch{
+				Request: map[string]interface{}{
+					"id": "123",
+				},
+			},
+			md:   nil,
+			req:  map[string]interface{}{"id": "456"},
+			want: false,
+		},
+		{
+			name: "request field missing",
+			match: &MethodMatch{
+				Request: map[string]interface{}{
+					"id": "123",
+				},
+			},
+			md:   nil,
+			req:  map[string]interface{}{},
+			want: false,
+		},
+		{
+			name: "both match",
+			match: &MethodMatch{
+				Metadata: map[string]string{
+					"authorization": "Bearer token",
+				},
+				Request: map[string]interface{}{
+					"id": "user-1",
+				},
+			},
+			md:   metadata.Pairs("authorization", "Bearer token"),
+			req:  map[string]interface{}{"id": "user-1"},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := srv.matchesCondition(tt.match, tt.md, tt.req)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestServerStreamingWithError(t *testing.T) {
+	schema := getTestSchema(t)
+	files := getTestDescriptors(t)
+	config := &GRPCConfig{
+		Port: 0,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"ListUsers": {
+						Error: &GRPCErrorConfig{
+							Code:    "INTERNAL",
+							Message: "database error",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	methodDesc := getMethodDesc(t, files, "test.UserService", "ListUsers")
+
+	stub := grpcdynamic.NewStub(conn)
+	reqMsg := dynamic.NewMessage(methodDesc.GetInputType())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stream, err := stub.InvokeRpcServerStream(ctx, methodDesc, reqMsg)
+	require.NoError(t, err)
+
+	_, err = stream.RecvMsg()
+	require.Error(t, err)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, "database error", st.Message())
+}
+
+// TestReflectionDescribe tests that gRPC reflection can describe services
+// and their methods. This is critical for tools like grpcurl and Insomnia
+// to discover the API schema.
+func TestReflectionDescribe(t *testing.T) {
+	schema := getTestSchema(t)
+	config := &GRPCConfig{
+		Port:       0,
+		Reflection: true,
+		Services: map[string]ServiceConfig{
+			"test.UserService": {
+				Methods: map[string]MethodConfig{
+					"GetUser": {
+						Response: map[string]interface{}{
+							"id":   1,
+							"name": "Test User",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	// Connect using reflection client
+	conn, err := grpc.NewClient(
+		srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Use the gRPC reflection client to list services and describe them
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Create reflection client
+	reflectClient := grpcreflect.NewClientAuto(ctx, conn)
+	defer reflectClient.Reset()
+
+	// List services
+	services, err := reflectClient.ListServices()
+	require.NoError(t, err)
+	assert.Contains(t, services, "test.UserService", "UserService should be listed")
+	assert.Contains(t, services, "test.HealthService", "HealthService should be listed")
+
+	// Describe UserService - this is what was failing before the fix
+	svcDesc, err := reflectClient.ResolveService("test.UserService")
+	require.NoError(t, err, "ResolveService should succeed - this was the bug")
+	assert.NotNil(t, svcDesc)
+	assert.Equal(t, "test.UserService", svcDesc.GetFullyQualifiedName())
+
+	// Verify methods are present
+	methods := svcDesc.GetMethods()
+	methodNames := make([]string, 0, len(methods))
+	for _, m := range methods {
+		methodNames = append(methodNames, m.GetName())
+	}
+	assert.Contains(t, methodNames, "GetUser")
+	assert.Contains(t, methodNames, "ListUsers")
+	assert.Contains(t, methodNames, "CreateUsers")
+	assert.Contains(t, methodNames, "Chat")
+
+	// Verify we can resolve a message type
+	getUserMethod := svcDesc.FindMethodByName("GetUser")
+	require.NotNil(t, getUserMethod)
+	inputType := getUserMethod.GetInputType()
+	require.NotNil(t, inputType)
+	assert.Equal(t, "test.GetUserRequest", inputType.GetFullyQualifiedName())
+
+	// Verify input message has expected field
+	idField := inputType.FindFieldByName("id")
+	assert.NotNil(t, idField, "GetUserRequest should have 'id' field")
+}
+
+// TestReflectionWithNestedTypes tests that reflection properly exposes nested message types
+func TestReflectionWithNestedTypes(t *testing.T) {
+	schema := getTestSchema(t)
+	config := &GRPCConfig{
+		Port:       0,
+		Reflection: true,
+	}
+
+	srv, err := NewServer(config, schema)
+	require.NoError(t, err)
+
+	err = srv.Start(context.Background())
+	require.NoError(t, err)
+	defer srv.Stop(context.Background(), 5*time.Second)
+
+	conn, err := grpc.NewClient(
+		srv.Address(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	reflectClient := grpcreflect.NewClientAuto(ctx, conn)
+	defer reflectClient.Reset()
+
+	// Resolve the User message type
+	userDesc, err := reflectClient.ResolveMessage("test.User")
+	require.NoError(t, err)
+	assert.NotNil(t, userDesc)
+
+	// Check fields
+	fields := userDesc.GetFields()
+	fieldNames := make([]string, 0, len(fields))
+	for _, f := range fields {
+		fieldNames = append(fieldNames, f.GetName())
+	}
+	assert.Contains(t, fieldNames, "id")
+	assert.Contains(t, fieldNames, "name")
+	assert.Contains(t, fieldNames, "email")
+}
+
+func TestMatchMetadataValue(t *testing.T) {
+	tests := []struct {
+		value   string
+		pattern string
+		want    bool
+	}{
+		{"hello", "hello", true},
+		{"hello", "world", false},
+		{"hello", "*", true},
+		{"anything", "*", true},
+		{"bearer token123", "bearer *", true},
+		{"bearer token123", "basic *", false},
+		{"app/json", "*/json", true},
+		{"app/xml", "*/json", false},
+		{"v1.2.3", "v1.*", true},
+		{"v2.0.0", "v1.*", false},
+		{"test-value-end", "test-*-end", true},
+		{"test-middle-end", "test-*-end", true},
+		{"test-value-other", "test-*-end", false},
+		{"", "*", true},
+		{"", "", true},
+		{"hello", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s_%s", tt.value, tt.pattern), func(t *testing.T) {
+			got := matchMetadataValue(tt.value, tt.pattern)
+			if got != tt.want {
+				t.Errorf("matchMetadataValue(%q, %q) = %v, want %v", tt.value, tt.pattern, got, tt.want)
+			}
+		})
+	}
+}
+
+// ── Error Detail Builder Tests ──────────────────────────────────────────────
+
+func TestBuildBadRequest(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("valid field violations", func(t *testing.T) {
+		data := map[string]interface{}{
+			"field_violations": []interface{}{
+				map[string]interface{}{"field": "email", "description": "invalid format"},
+				map[string]interface{}{"field": "name", "description": "required"},
+			},
+		}
+		br := srv.buildBadRequest(data)
+		require.NotNil(t, br)
+		assert.Len(t, br.FieldViolations, 2)
+		assert.Equal(t, "email", br.FieldViolations[0].Field)
+		assert.Equal(t, "invalid format", br.FieldViolations[0].Description)
+		assert.Equal(t, "name", br.FieldViolations[1].Field)
+		assert.Equal(t, "required", br.FieldViolations[1].Description)
+	})
+
+	t.Run("empty violations returns nil", func(t *testing.T) {
+		data := map[string]interface{}{
+			"field_violations": []interface{}{},
+		}
+		assert.Nil(t, srv.buildBadRequest(data))
+	})
+
+	t.Run("no field_violations key returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildBadRequest(map[string]interface{}{}))
+	})
+
+	t.Run("partial fields", func(t *testing.T) {
+		data := map[string]interface{}{
+			"field_violations": []interface{}{
+				map[string]interface{}{"field": "email"},
+			},
+		}
+		br := srv.buildBadRequest(data)
+		require.NotNil(t, br)
+		assert.Equal(t, "email", br.FieldViolations[0].Field)
+		assert.Empty(t, br.FieldViolations[0].Description)
+	})
+
+	t.Run("non-map violations skipped", func(t *testing.T) {
+		data := map[string]interface{}{
+			"field_violations": []interface{}{"not-a-map"},
+		}
+		assert.Nil(t, srv.buildBadRequest(data))
+	})
+}
+
+func TestBuildErrorInfo(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("full error info", func(t *testing.T) {
+		data := map[string]interface{}{
+			"reason": "QUOTA_EXCEEDED",
+			"domain": "googleapis.com",
+			"metadata": map[string]interface{}{
+				"consumer": "project:my-project",
+				"limit":    "100",
+			},
+		}
+		ei := srv.buildErrorInfo(data)
+		require.NotNil(t, ei)
+		assert.Equal(t, "QUOTA_EXCEEDED", ei.Reason)
+		assert.Equal(t, "googleapis.com", ei.Domain)
+		assert.Equal(t, "project:my-project", ei.Metadata["consumer"])
+		assert.Equal(t, "100", ei.Metadata["limit"])
+	})
+
+	t.Run("reason only", func(t *testing.T) {
+		ei := srv.buildErrorInfo(map[string]interface{}{"reason": "RATE_LIMITED"})
+		require.NotNil(t, ei)
+		assert.Equal(t, "RATE_LIMITED", ei.Reason)
+		assert.Empty(t, ei.Domain)
+	})
+
+	t.Run("domain only", func(t *testing.T) {
+		ei := srv.buildErrorInfo(map[string]interface{}{"domain": "example.com"})
+		require.NotNil(t, ei)
+		assert.Equal(t, "example.com", ei.Domain)
+	})
+
+	t.Run("empty returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildErrorInfo(map[string]interface{}{}))
+	})
+
+	t.Run("non-string metadata values skipped", func(t *testing.T) {
+		data := map[string]interface{}{
+			"reason":   "TEST",
+			"metadata": map[string]interface{}{"key": 123},
+		}
+		ei := srv.buildErrorInfo(data)
+		require.NotNil(t, ei)
+		assert.Empty(t, ei.Metadata)
+	})
+}
+
+func TestBuildRetryInfo(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("valid duration", func(t *testing.T) {
+		ri := srv.buildRetryInfo(map[string]interface{}{"retry_delay": "5s"})
+		require.NotNil(t, ri)
+		assert.Equal(t, int64(5), ri.RetryDelay.Seconds)
+	})
+
+	t.Run("millisecond duration", func(t *testing.T) {
+		ri := srv.buildRetryInfo(map[string]interface{}{"retry_delay": "500ms"})
+		require.NotNil(t, ri)
+		assert.Equal(t, int32(500000000), ri.RetryDelay.Nanos)
+	})
+
+	t.Run("invalid duration returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildRetryInfo(map[string]interface{}{"retry_delay": "invalid"}))
+	})
+
+	t.Run("missing key returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildRetryInfo(map[string]interface{}{}))
+	})
+}
+
+func TestBuildDebugInfo(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("stack entries and detail", func(t *testing.T) {
+		data := map[string]interface{}{
+			"stack_entries": []interface{}{"main.go:42", "handler.go:100"},
+			"detail":        "nil pointer dereference",
+		}
+		di := srv.buildDebugInfo(data)
+		require.NotNil(t, di)
+		assert.Equal(t, []string{"main.go:42", "handler.go:100"}, di.StackEntries)
+		assert.Equal(t, "nil pointer dereference", di.Detail)
+	})
+
+	t.Run("detail only", func(t *testing.T) {
+		di := srv.buildDebugInfo(map[string]interface{}{"detail": "something went wrong"})
+		require.NotNil(t, di)
+		assert.Empty(t, di.StackEntries)
+		assert.Equal(t, "something went wrong", di.Detail)
+	})
+
+	t.Run("stack entries only", func(t *testing.T) {
+		data := map[string]interface{}{
+			"stack_entries": []interface{}{"line1"},
+		}
+		di := srv.buildDebugInfo(data)
+		require.NotNil(t, di)
+		assert.Len(t, di.StackEntries, 1)
+	})
+
+	t.Run("empty returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildDebugInfo(map[string]interface{}{}))
+	})
+
+	t.Run("non-string stack entries skipped", func(t *testing.T) {
+		data := map[string]interface{}{
+			"stack_entries": []interface{}{123, "valid"},
+			"detail":        "",
+		}
+		di := srv.buildDebugInfo(data)
+		require.NotNil(t, di)
+		assert.Equal(t, []string{"valid"}, di.StackEntries)
+	})
+}
+
+func TestBuildQuotaFailure(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("valid violations", func(t *testing.T) {
+		data := map[string]interface{}{
+			"violations": []interface{}{
+				map[string]interface{}{"subject": "project:my-project", "description": "Quota exceeded"},
+			},
+		}
+		qf := srv.buildQuotaFailure(data)
+		require.NotNil(t, qf)
+		assert.Len(t, qf.Violations, 1)
+		assert.Equal(t, "project:my-project", qf.Violations[0].Subject)
+		assert.Equal(t, "Quota exceeded", qf.Violations[0].Description)
+	})
+
+	t.Run("empty violations returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildQuotaFailure(map[string]interface{}{
+			"violations": []interface{}{},
+		}))
+	})
+
+	t.Run("no violations key returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildQuotaFailure(map[string]interface{}{}))
+	})
+}
+
+func TestBuildPreconditionFailure(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("valid violations", func(t *testing.T) {
+		data := map[string]interface{}{
+			"violations": []interface{}{
+				map[string]interface{}{
+					"type":        "TOS",
+					"subject":     "google.com/tos",
+					"description": "Terms of service not accepted",
+				},
+			},
+		}
+		pf := srv.buildPreconditionFailure(data)
+		require.NotNil(t, pf)
+		assert.Len(t, pf.Violations, 1)
+		assert.Equal(t, "TOS", pf.Violations[0].Type)
+		assert.Equal(t, "google.com/tos", pf.Violations[0].Subject)
+		assert.Equal(t, "Terms of service not accepted", pf.Violations[0].Description)
+	})
+
+	t.Run("multiple violations", func(t *testing.T) {
+		data := map[string]interface{}{
+			"violations": []interface{}{
+				map[string]interface{}{"type": "TOS"},
+				map[string]interface{}{"type": "AGE"},
+			},
+		}
+		pf := srv.buildPreconditionFailure(data)
+		require.NotNil(t, pf)
+		assert.Len(t, pf.Violations, 2)
+	})
+
+	t.Run("empty returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildPreconditionFailure(map[string]interface{}{}))
+	})
+}
+
+func TestBuildResourceInfo(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("full resource info", func(t *testing.T) {
+		data := map[string]interface{}{
+			"resource_type": "compute.googleapis.com/Instance",
+			"resource_name": "projects/123/zones/us-central1-a/instances/my-vm",
+			"owner":         "user@example.com",
+			"description":   "VM instance not found",
+		}
+		ri := srv.buildResourceInfo(data)
+		require.NotNil(t, ri)
+		assert.Equal(t, "compute.googleapis.com/Instance", ri.ResourceType)
+		assert.Equal(t, "projects/123/zones/us-central1-a/instances/my-vm", ri.ResourceName)
+		assert.Equal(t, "user@example.com", ri.Owner)
+		assert.Equal(t, "VM instance not found", ri.Description)
+	})
+
+	t.Run("type only", func(t *testing.T) {
+		ri := srv.buildResourceInfo(map[string]interface{}{"resource_type": "User"})
+		require.NotNil(t, ri)
+		assert.Equal(t, "User", ri.ResourceType)
+	})
+
+	t.Run("name only", func(t *testing.T) {
+		ri := srv.buildResourceInfo(map[string]interface{}{"resource_name": "user-123"})
+		require.NotNil(t, ri)
+		assert.Equal(t, "user-123", ri.ResourceName)
+	})
+
+	t.Run("only owner and description returns nil", func(t *testing.T) {
+		data := map[string]interface{}{"owner": "admin", "description": "test"}
+		assert.Nil(t, srv.buildResourceInfo(data))
+	})
+
+	t.Run("empty returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildResourceInfo(map[string]interface{}{}))
+	})
+}
+
+func TestBuildHelp(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("valid links", func(t *testing.T) {
+		data := map[string]interface{}{
+			"links": []interface{}{
+				map[string]interface{}{
+					"description": "API Documentation",
+					"url":         "https://docs.example.com/api",
+				},
+				map[string]interface{}{
+					"description": "Support",
+					"url":         "https://support.example.com",
+				},
+			},
+		}
+		h := srv.buildHelp(data)
+		require.NotNil(t, h)
+		assert.Len(t, h.Links, 2)
+		assert.Equal(t, "API Documentation", h.Links[0].Description)
+		assert.Equal(t, "https://docs.example.com/api", h.Links[0].Url)
+	})
+
+	t.Run("empty links returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildHelp(map[string]interface{}{
+			"links": []interface{}{},
+		}))
+	})
+
+	t.Run("no links key returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildHelp(map[string]interface{}{}))
+	})
+
+	t.Run("non-map link skipped", func(t *testing.T) {
+		data := map[string]interface{}{
+			"links": []interface{}{"not-a-map"},
+		}
+		assert.Nil(t, srv.buildHelp(data))
+	})
+}
+
+func TestBuildLocalizedMessage(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("locale and message", func(t *testing.T) {
+		data := map[string]interface{}{
+			"locale":  "en-US",
+			"message": "Resource not found",
+		}
+		lm := srv.buildLocalizedMessage(data)
+		require.NotNil(t, lm)
+		assert.Equal(t, "en-US", lm.Locale)
+		assert.Equal(t, "Resource not found", lm.Message)
+	})
+
+	t.Run("locale only", func(t *testing.T) {
+		lm := srv.buildLocalizedMessage(map[string]interface{}{"locale": "fr-FR"})
+		require.NotNil(t, lm)
+		assert.Equal(t, "fr-FR", lm.Locale)
+	})
+
+	t.Run("message only", func(t *testing.T) {
+		lm := srv.buildLocalizedMessage(map[string]interface{}{"message": "Error"})
+		require.NotNil(t, lm)
+		assert.Equal(t, "Error", lm.Message)
+	})
+
+	t.Run("empty returns nil", func(t *testing.T) {
+		assert.Nil(t, srv.buildLocalizedMessage(map[string]interface{}{}))
+	})
+}
+
+func TestBuildErrorDetails(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("multiple detail types", func(t *testing.T) {
+		details := map[string]interface{}{
+			"bad_request": map[string]interface{}{
+				"field_violations": []interface{}{
+					map[string]interface{}{"field": "email", "description": "invalid"},
+				},
+			},
+			"error_info": map[string]interface{}{
+				"reason": "RATE_LIMITED",
+				"domain": "example.com",
+			},
+			"retry_info": map[string]interface{}{
+				"retry_delay": "10s",
+			},
+		}
+		result := srv.buildErrorDetails(details)
+		assert.Len(t, result, 3)
+	})
+
+	t.Run("unknown keys ignored", func(t *testing.T) {
+		details := map[string]interface{}{
+			"unknown_type": map[string]interface{}{"key": "value"},
+			"error_info": map[string]interface{}{
+				"reason": "TEST",
+			},
+		}
+		result := srv.buildErrorDetails(details)
+		assert.Len(t, result, 1)
+	})
+
+	t.Run("nil builders filtered", func(t *testing.T) {
+		details := map[string]interface{}{
+			"bad_request": map[string]interface{}{}, // no violations → nil
+			"error_info":  map[string]interface{}{}, // no reason/domain → nil
+		}
+		result := srv.buildErrorDetails(details)
+		assert.Empty(t, result)
+	})
+
+	t.Run("empty details", func(t *testing.T) {
+		result := srv.buildErrorDetails(map[string]interface{}{})
+		assert.Empty(t, result)
+	})
+
+	t.Run("all 9 detail types", func(t *testing.T) {
+		details := map[string]interface{}{
+			"bad_request": map[string]interface{}{
+				"field_violations": []interface{}{map[string]interface{}{"field": "f"}},
+			},
+			"error_info":           map[string]interface{}{"reason": "R"},
+			"retry_info":           map[string]interface{}{"retry_delay": "1s"},
+			"debug_info":           map[string]interface{}{"detail": "D"},
+			"quota_failure":        map[string]interface{}{"violations": []interface{}{map[string]interface{}{"subject": "S"}}},
+			"precondition_failure": map[string]interface{}{"violations": []interface{}{map[string]interface{}{"type": "T"}}},
+			"resource_info":        map[string]interface{}{"resource_type": "RT"},
+			"help":                 map[string]interface{}{"links": []interface{}{map[string]interface{}{"url": "U"}}},
+			"localized_message":    map[string]interface{}{"locale": "en", "message": "M"},
+		}
+		result := srv.buildErrorDetails(details)
+		assert.Len(t, result, 9)
+	})
+}
+
+func TestToGRPCErrorWithDetails(t *testing.T) {
+	srv := &Server{}
+
+	t.Run("error with bad_request details", func(t *testing.T) {
+		errCfg := &GRPCErrorConfig{
+			Code:    "INVALID_ARGUMENT",
+			Message: "validation failed",
+			Details: map[string]interface{}{
+				"bad_request": map[string]interface{}{
+					"field_violations": []interface{}{
+						map[string]interface{}{"field": "email", "description": "must be valid email"},
+					},
+				},
+			},
+		}
+		err := srv.toGRPCError(errCfg)
+		require.NotNil(t, err)
+
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.InvalidArgument, st.Code())
+		assert.Equal(t, "validation failed", st.Message())
+		assert.Len(t, st.Details(), 1)
+	})
+
+	t.Run("error with multiple details", func(t *testing.T) {
+		errCfg := &GRPCErrorConfig{
+			Code:    "RESOURCE_EXHAUSTED",
+			Message: "quota exceeded",
+			Details: map[string]interface{}{
+				"error_info": map[string]interface{}{
+					"reason": "QUOTA_EXCEEDED",
+					"domain": "example.com",
+				},
+				"retry_info": map[string]interface{}{
+					"retry_delay": "30s",
+				},
+			},
+		}
+		err := srv.toGRPCError(errCfg)
+		require.NotNil(t, err)
+
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.ResourceExhausted, st.Code())
+		assert.Len(t, st.Details(), 2)
+	})
+
+	t.Run("error with empty details map", func(t *testing.T) {
+		errCfg := &GRPCErrorConfig{
+			Code:    "NOT_FOUND",
+			Message: "not found",
+			Details: map[string]interface{}{},
+		}
+		err := srv.toGRPCError(errCfg)
+		require.NotNil(t, err)
+
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.NotFound, st.Code())
+		assert.Empty(t, st.Details())
+	})
+}
+
+// Helper to avoid unused import warning
+var _ = json.Marshal

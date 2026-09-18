@@ -1,0 +1,524 @@
+package stateful
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/getmockd/mockd/pkg/config"
+	"github.com/getmockd/mockd/pkg/tracing"
+	"github.com/getmockd/mockd/pkg/validation"
+)
+
+// Action represents the type of operation to perform on a stateful resource.
+type Action string
+
+const (
+	// ActionGet retrieves a single item by ID.
+	ActionGet Action = "get"
+	// ActionList retrieves a filtered/paginated collection of items.
+	ActionList Action = "list"
+	// ActionCreate creates a new item.
+	ActionCreate Action = "create"
+	// ActionUpdate replaces an existing item (PUT semantics).
+	ActionUpdate Action = "update"
+	// ActionPatch partially updates an existing item (PATCH semantics).
+	ActionPatch Action = "patch"
+	// ActionDelete removes an item by ID.
+	ActionDelete Action = "delete"
+	// ActionCustom executes a multi-step custom operation via the OperationExecutor.
+	ActionCustom Action = "custom"
+)
+
+// ResultStatus indicates the outcome of a bridge operation.
+type ResultStatus int
+
+const (
+	// StatusSuccess indicates the operation completed successfully.
+	StatusSuccess ResultStatus = iota
+	// StatusCreated indicates a new item was created.
+	StatusCreated
+	// StatusNotFound indicates the requested item/resource was not found.
+	StatusNotFound
+	// StatusConflict indicates a duplicate ID conflict.
+	StatusConflict
+	// StatusValidationError indicates invalid input.
+	StatusValidationError
+	// StatusCapacityExceeded indicates the resource is at maximum capacity.
+	StatusCapacityExceeded
+	// StatusError indicates an internal or unexpected error.
+	StatusError
+)
+
+// OperationRequest is a protocol-agnostic request to perform a CRUD operation
+// on a stateful resource. Protocol handlers (SOAP, GraphQL, gRPC, etc.)
+// translate their wire format into this struct before calling Bridge.Execute().
+type OperationRequest struct {
+	// WorkspaceID identifies which workspace's resources to operate on.
+	// Empty string means the default workspace.
+	WorkspaceID string
+	// Resource is the name of the stateful resource (e.g., "users", "orders").
+	Resource string
+	// Action is the CRUD action to perform.
+	Action Action
+	// OperationName is the name of a registered custom operation (e.g., "TransferFunds").
+	// Used when Action is ActionCustom. If empty, falls back to Resource for backwards compatibility.
+	OperationName string
+	// ResourceID is the item ID for single-item operations (get, update, patch, delete).
+	ResourceID string
+	// Data is the request payload, already deserialized into a map by the protocol adapter.
+	Data map[string]interface{}
+	// Params contains protocol-extracted path parameters (for nested resources).
+	Params map[string]string
+	// Filter contains query/filter/pagination parameters for list operations.
+	Filter *QueryFilter
+}
+
+// OperationResult is the protocol-agnostic response from a bridge operation.
+// Protocol handlers translate this back to their wire format (JSON, XML, protobuf, etc.).
+type OperationResult struct {
+	// Status is the outcome of the operation.
+	Status ResultStatus
+	// Item is the result for single-item operations (get, create, update, patch).
+	// Nil for list operations. For delete, contains the deleted item (for response templates).
+	Item *ResourceItem
+	// List is the result for list operations.
+	// Nil for single-item operations.
+	List *PaginatedResponse
+	// Error is the domain error, if any. Nil on success.
+	// Protocol adapters should inspect Error to generate protocol-specific error responses
+	// (e.g., HTTP status codes, SOAP faults, gRPC status codes).
+	Error error
+}
+
+// Bridge is a protocol-agnostic service layer that routes operation requests
+// to stateful resources. Any protocol handler (HTTP, SOAP, GraphQL, gRPC, etc.)
+// can call Bridge.Execute() to perform CRUD operations on stateful resources.
+//
+// The Bridge also fires Observer hooks on every operation, making the Observer
+// pattern live (previously it was defined but never wired).
+type Bridge struct {
+	store     *StateStore
+	observer  Observer
+	executor  *OperationExecutor
+	tracer    *tracing.Tracer
+	customMu  sync.RWMutex
+	customOps map[string]map[string]*CustomOperation // workspaceID → name → op
+}
+
+// NewBridge creates a new Bridge backed by the given StateStore.
+// The Bridge uses the store's observer for metrics/logging hooks.
+func NewBridge(store *StateStore) *Bridge {
+	if store == nil {
+		panic("stateful.NewBridge: store must not be nil")
+	}
+	return &Bridge{
+		store:     store,
+		observer:  store.GetObserver(),
+		executor:  NewOperationExecutor(store),
+		customOps: make(map[string]map[string]*CustomOperation),
+	}
+}
+
+// GetResponseConfig returns the response transform config for a named resource.
+// Used by protocol adapters (SOAP, GraphQL) to apply item transforms.
+// Returns nil if the resource doesn't exist or has no transforms configured.
+func (b *Bridge) GetResponseConfig(workspaceID string, name string) *config.ResponseTransform {
+	r := b.store.Get(workspaceID, name)
+	if r == nil {
+		return nil
+	}
+	return r.ResponseConfig()
+}
+
+// SetTracer configures an optional tracer for custom operation spans.
+func (b *Bridge) SetTracer(t *tracing.Tracer) {
+	b.tracer = t
+	if b.executor != nil {
+		b.executor.SetTracer(t)
+	}
+}
+
+// RegisterCustomOperation registers a named custom operation in a workspace.
+// Operations are referenced by name in OperationRequest.Resource when Action is "custom".
+func (b *Bridge) RegisterCustomOperation(workspaceID string, name string, op *CustomOperation) {
+	b.customMu.Lock()
+	defer b.customMu.Unlock()
+	ws := b.customOps[workspaceID]
+	if ws == nil {
+		ws = make(map[string]*CustomOperation)
+		b.customOps[workspaceID] = ws
+	}
+	ws[name] = op
+}
+
+// GetCustomOperation returns a registered custom operation by workspace and name.
+func (b *Bridge) GetCustomOperation(workspaceID string, name string) *CustomOperation {
+	b.customMu.RLock()
+	defer b.customMu.RUnlock()
+	ws := b.customOps[workspaceID]
+	if ws == nil {
+		return nil
+	}
+	return ws[name]
+}
+
+// DeleteCustomOperation removes a registered custom operation by workspace and name.
+func (b *Bridge) DeleteCustomOperation(workspaceID string, name string) {
+	b.customMu.Lock()
+	defer b.customMu.Unlock()
+	ws := b.customOps[workspaceID]
+	if ws == nil {
+		return
+	}
+	delete(ws, name)
+	if len(ws) == 0 {
+		delete(b.customOps, workspaceID)
+	}
+}
+
+// ClearCustomOperations removes all registered custom operations for a workspace.
+func (b *Bridge) ClearCustomOperations(workspaceID string) {
+	b.customMu.Lock()
+	defer b.customMu.Unlock()
+	delete(b.customOps, workspaceID)
+}
+
+// ClearAllCustomOperations removes all registered custom operations across all workspaces.
+// Used when replacing the entire configuration (replace=true).
+func (b *Bridge) ClearAllCustomOperations() {
+	b.customMu.Lock()
+	defer b.customMu.Unlock()
+	b.customOps = make(map[string]map[string]*CustomOperation)
+}
+
+// ListCustomOperations returns all registered custom operations for a workspace as a name→operation map.
+func (b *Bridge) ListCustomOperations(workspaceID string) map[string]*CustomOperation {
+	b.customMu.RLock()
+	defer b.customMu.RUnlock()
+	ws := b.customOps[workspaceID]
+	if len(ws) == 0 {
+		return nil
+	}
+	// Return a copy to prevent external mutation
+	result := make(map[string]*CustomOperation, len(ws))
+	for name, op := range ws {
+		result[name] = op
+	}
+	return result
+}
+
+// ListAllCustomOperations returns all registered custom operations across all workspaces,
+// merged into a single name→operation map. Used by Export to serialize all custom
+// operation definitions back to config format.
+func (b *Bridge) ListAllCustomOperations() map[string]*CustomOperation {
+	b.customMu.RLock()
+	defer b.customMu.RUnlock()
+	var result map[string]*CustomOperation
+	for _, ws := range b.customOps {
+		for name, op := range ws {
+			if result == nil {
+				result = make(map[string]*CustomOperation)
+			}
+			result[name] = op
+		}
+	}
+	return result
+}
+
+// Execute performs a CRUD operation on a stateful resource.
+// This is the single entry point for all protocol adapters.
+//
+// The method:
+//  1. Resolves the resource by name from the store
+//  2. Dispatches to the appropriate CRUD method based on Action
+//  3. Fires Observer hooks with operation timing
+//  4. Returns a protocol-agnostic OperationResult
+func (b *Bridge) Execute(ctx context.Context, req *OperationRequest) *OperationResult {
+	if req == nil {
+		return &OperationResult{
+			Status: StatusError,
+			Error:  errors.New("operation request must not be nil"),
+		}
+	}
+
+	// Custom operations are dispatched before resource lookup because
+	// req.Resource contains the operation name, not a resource name.
+	// The operation's individual steps reference resources by name internally.
+	if req.Action == ActionCustom {
+		return b.executeCustom(ctx, req)
+	}
+
+	resource := b.store.Get(req.WorkspaceID, req.Resource)
+	if resource == nil {
+		err := &NotFoundError{Resource: req.Resource}
+		b.observer.OnError(req.Resource, string(req.Action), err)
+		return &OperationResult{
+			Status: StatusNotFound,
+			Error:  err,
+		}
+	}
+
+	switch req.Action {
+	case ActionGet:
+		return b.executeGet(resource, req)
+	case ActionList:
+		return b.executeList(resource, req)
+	case ActionCreate:
+		return b.executeCreate(ctx, resource, req)
+	case ActionUpdate:
+		return b.executeUpdate(ctx, resource, req)
+	case ActionPatch:
+		return b.executePatch(ctx, resource, req)
+	case ActionDelete:
+		return b.executeDelete(resource, req)
+	default:
+		err := fmt.Errorf("unsupported action: %s", req.Action)
+		b.observer.OnError(req.Resource, string(req.Action), err)
+		return &OperationResult{
+			Status: StatusError,
+			Error:  err,
+		}
+	}
+}
+
+func (b *Bridge) executeGet(resource *StatefulResource, req *OperationRequest) *OperationResult {
+	start := time.Now()
+
+	if req.ResourceID == "" {
+		err := &ValidationError{Message: "resource ID is required for get operations"}
+		b.observer.OnError(resource.Name(), "get", err)
+		return &OperationResult{Status: StatusValidationError, Error: err}
+	}
+
+	item := resource.Get(req.ResourceID)
+	if item == nil {
+		err := &NotFoundError{Resource: resource.Name(), ID: req.ResourceID}
+		b.observer.OnError(resource.Name(), "get", err)
+		return &OperationResult{Status: StatusNotFound, Error: err}
+	}
+
+	b.observer.OnRead(resource.Name(), req.ResourceID, time.Since(start))
+	return &OperationResult{Status: StatusSuccess, Item: item}
+}
+
+func (b *Bridge) executeList(resource *StatefulResource, req *OperationRequest) *OperationResult {
+	start := time.Now()
+
+	filter := req.Filter
+	if filter == nil {
+		filter = DefaultQueryFilter()
+	}
+
+	// Inject parent params from the request if applicable
+	if resource.ParentField() != "" && req.Params != nil {
+		if parentID, ok := req.Params[resource.ParentField()]; ok {
+			filter.ParentID = parentID
+			filter.ParentField = resource.ParentField()
+		}
+	}
+
+	result := resource.List(filter)
+
+	b.observer.OnList(resource.Name(), result.Meta.Count, time.Since(start))
+	return &OperationResult{Status: StatusSuccess, List: result}
+}
+
+func (b *Bridge) executeCreate(ctx context.Context, resource *StatefulResource, req *OperationRequest) *OperationResult {
+	start := time.Now()
+
+	if req.Data == nil {
+		req.Data = make(map[string]interface{})
+	}
+
+	// Run input validation if configured (all protocols get this for free)
+	if resource.HasValidation() {
+		result := resource.ValidateCreate(ctx, req.Data, req.Params)
+		if !result.Valid && shouldRejectValidation(result, resource.GetValidationMode()) {
+			err := &ValidationError{Message: "validation failed"}
+			b.observer.OnError(resource.Name(), "create", err)
+			return &OperationResult{Status: StatusValidationError, Error: err}
+		}
+	}
+
+	item, err := resource.Create(req.Data, req.Params)
+	if err != nil {
+		b.observer.OnError(resource.Name(), "create", err)
+		return errorToResult(err)
+	}
+
+	b.observer.OnCreate(resource.Name(), item.ID, time.Since(start))
+	return &OperationResult{Status: StatusCreated, Item: item}
+}
+
+func (b *Bridge) executeUpdate(ctx context.Context, resource *StatefulResource, req *OperationRequest) *OperationResult {
+	return b.executeMutate(ctx, resource, req, "update", resource.Update)
+}
+
+func (b *Bridge) executePatch(ctx context.Context, resource *StatefulResource, req *OperationRequest) *OperationResult {
+	return b.executeMutate(ctx, resource, req, "patch", resource.Patch)
+}
+
+// executeMutate is the shared implementation for update and patch operations.
+// Both require an ID, validate input, call a mutate function, and fire OnUpdate.
+func (b *Bridge) executeMutate(ctx context.Context, resource *StatefulResource, req *OperationRequest, action string, mutate func(string, map[string]interface{}) (*ResourceItem, error)) *OperationResult {
+	start := time.Now()
+
+	if req.ResourceID == "" {
+		err := &ValidationError{Message: "resource ID is required for " + action + " operations"}
+		b.observer.OnError(resource.Name(), action, err)
+		return &OperationResult{Status: StatusValidationError, Error: err}
+	}
+
+	if req.Data == nil {
+		req.Data = make(map[string]interface{})
+	}
+
+	// Run input validation if configured (all protocols get this for free)
+	if resource.HasValidation() {
+		result := resource.ValidateUpdate(ctx, req.Data, req.Params)
+		if !result.Valid && shouldRejectValidation(result, resource.GetValidationMode()) {
+			err := &ValidationError{Message: "validation failed"}
+			b.observer.OnError(resource.Name(), action, err)
+			return &OperationResult{Status: StatusValidationError, Error: err}
+		}
+	}
+
+	item, err := mutate(req.ResourceID, req.Data)
+	if err != nil {
+		b.observer.OnError(resource.Name(), action, err)
+		return errorToResult(err)
+	}
+
+	b.observer.OnUpdate(resource.Name(), item.ID, time.Since(start))
+	return &OperationResult{Status: StatusSuccess, Item: item}
+}
+
+func (b *Bridge) executeDelete(resource *StatefulResource, req *OperationRequest) *OperationResult {
+	start := time.Now()
+
+	if req.ResourceID == "" {
+		err := &ValidationError{Message: "resource ID is required for delete operations"}
+		b.observer.OnError(resource.Name(), "delete", err)
+		return &OperationResult{Status: StatusValidationError, Error: err}
+	}
+
+	item, err := resource.Delete(req.ResourceID)
+	if err != nil {
+		b.observer.OnError(resource.Name(), "delete", err)
+		return errorToResult(err)
+	}
+
+	b.observer.OnDelete(resource.Name(), req.ResourceID, time.Since(start))
+	return &OperationResult{Status: StatusSuccess, Item: item}
+}
+
+func (b *Bridge) executeCustom(ctx context.Context, req *OperationRequest) *OperationResult {
+	start := time.Now()
+
+	// Use OperationName if set (protocol adapters provide it), fall back to Resource
+	// for backwards compatibility with direct callers.
+	opName := req.OperationName
+	if opName == "" {
+		opName = req.Resource
+	}
+
+	var span *tracing.Span
+	if b.tracer != nil {
+		ctx, span = b.tracer.Start(ctx, "stateful.custom_operation")
+		span.SetKind(tracing.SpanKindInternal)
+		span.SetAttribute("stateful.custom_operation.name", opName)
+		defer span.End()
+	}
+	b.customMu.RLock()
+	var op *CustomOperation
+	if ws := b.customOps[req.WorkspaceID]; ws != nil {
+		op = ws[opName]
+	}
+	b.customMu.RUnlock()
+	if op == nil {
+		err := &NotFoundError{Resource: "custom operation: " + opName}
+		if span != nil {
+			span.SetStatus(tracing.StatusError, err.Error())
+			span.SetAttribute("error.code", GetErrorCode(err).String())
+		}
+		b.observer.OnError(opName, "custom", err)
+		return &OperationResult{
+			Status: StatusNotFound,
+			Error:  err,
+		}
+	}
+	if span != nil {
+		mode, _ := normalizeConsistencyMode(op.Consistency)
+		span.SetAttribute("stateful.custom_operation.consistency", string(mode))
+		span.SetAttribute("stateful.custom_operation.step_count", strconv.Itoa(len(op.Steps)))
+	}
+
+	result := b.executor.Execute(ctx, op, req)
+	if result.Error != nil {
+		if span != nil {
+			span.SetStatus(tracing.StatusError, result.Error.Error())
+			span.SetAttribute("error.code", GetErrorCode(result.Error).String())
+		}
+		b.observer.OnError(opName, "custom", result.Error)
+	} else {
+		if span != nil {
+			span.SetStatus(tracing.StatusOK, "")
+		}
+		b.observer.OnRead(opName, "custom", time.Since(start))
+	}
+
+	return result
+}
+
+// errorToResult converts a domain error to an OperationResult with the appropriate status.
+// Uses errors.As for proper unwrapping of wrapped errors.
+func errorToResult(err error) *OperationResult {
+	var nf *NotFoundError
+	if errors.As(err, &nf) {
+		return &OperationResult{Status: StatusNotFound, Error: err}
+	}
+	var cf *ConflictError
+	if errors.As(err, &cf) {
+		return &OperationResult{Status: StatusConflict, Error: err}
+	}
+	var ve *ValidationError
+	if errors.As(err, &ve) {
+		return &OperationResult{Status: StatusValidationError, Error: err}
+	}
+	var ce *CapacityError
+	if errors.As(err, &ce) {
+		return &OperationResult{Status: StatusCapacityExceeded, Error: err}
+	}
+	return &OperationResult{Status: StatusError, Error: err}
+}
+
+// shouldRejectValidation determines whether validation errors should reject the request
+// based on the validation mode. Mirrors the HTTP handler's validation logic so all
+// protocols get identical validation behavior.
+//   - strict (default): reject on any validation error
+//   - warn: never reject (log only — handled by caller)
+//   - permissive: reject only on required-field errors
+func shouldRejectValidation(result *validation.Result, mode string) bool {
+	if mode == validation.ModeWarn {
+		return false
+	}
+	if mode == validation.ModePermissive {
+		for _, err := range result.Errors {
+			if err.Code == validation.ErrCodeRequired {
+				return true
+			}
+		}
+		return false
+	}
+	// strict (default)
+	return true
+}
+
+// Store returns the underlying StateStore.
+func (b *Bridge) Store() *StateStore {
+	return b.store
+}

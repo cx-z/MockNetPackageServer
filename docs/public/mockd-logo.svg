@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 401.15 332.19">
+  <defs>
+    <linearGradient id="c">
+      <stop offset="0" stop-color="#4338ca"/>
+      <stop offset="1" stop-color="#3730a3"/>
+    </linearGradient>
+    <linearGradient id="b">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+    <linearGradient id="a">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient xlink:href="#a" id="f" x1="20.08" x2="412.74" y1="168.09" y2="168.09" gradientTransform="translate(-20.05 -2.33)" gradientUnits="userSpaceOnUse"/>
+    <linearGradient xlink:href="#b" id="e" x1="287.5" x2="296.5" y1="225.38" y2="234.63" gradientTransform="translate(-20.05 -2.33)" gradientUnits="userSpaceOnUse"/>
+    <linearGradient xlink:href="#c" id="d" x1="388.25" x2="388.25" y1="233" y2="296" gradientTransform="translate(-20.05 -2.33)" gradientUnits="userSpaceOnUse"/>
+  </defs>
+  <path fill="url(#d)" d="m392.68 6.6-30.34 27.41-26.72 29.76c-.26 48.49-.26 169.19-.05 248.95.01 4.38 3.36 9.25 6.84 12.47 2.99 2.76 7.14 4.16 11.12 5.01 9.55 2.05 19.8 2.27 29.3-.03 3.5-.84 6.9-2.55 9.6-4.92 3.84-3.35 8.74-7.46 8.72-12.56-.02-7.39-.11-190.52-.28-287.83-.57-5.7-1.1-8.62-3.06-12.4-1.2-2.3-5.13-5.85-5.13-5.85z"/>
+  <path fill="url(#e)" d="m66.04 1.74-45.43.17s-3.17.4-4.6 1.06c-4.2 1.95-8.35 4.6-11.13 8.31C2.16 14.91.1 24.01.1 24.01L.03 286.83l79.05-71.66-.63-109.5s.03-3.27 1.1-4.75a6.1 6.1 0 0 1 3.53-1.97c1.63-.1 4 1.1 4 1.1 56.46 50.36 115.97 95.41 168.38 150.12l24.5 23.75s4.56 3.56 7.24 4.5c4.52 1.6 9.5 2.35 14.25 1.75 3.64-.46 6.74-2.19 9.9-4.05 2.47-1.45 89.73-81.57 89.73-81.57l-.05-65.48-14.08.35-84.6 77.69s-2.61 1.77-3.89 1.65c-1.27-.11-3.76-2.34-3.76-2.34L84.25 9.34s-5.6-4.36-8.57-5.62c-3.15-1.32-9.64-1.98-9.64-1.98Z"/>
+  <path fill="url(#f)" d="M392.7 6.62c-1.65-1.76-8.35-6.3-13.25-6.33-20.81-.11-36.53-.45-58-.2C316.66.14 311 2.23 305 7.59L.03 286.82s-.1 17.39.06 25.65c.11 5.17 4.25 9.87 8.1 13.25 3.68 3.21 8.79 4.53 13.57 5.5a51.7 51.7 0 0 0 18.23.3c3.46-.54 8.15-2.27 9.93-3.39 0 0 234.79-208.3 342.77-321.51z"/>
+</svg>

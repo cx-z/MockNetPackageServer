@@ -1,0 +1,424 @@
+// Package cli provides command-line interface commands for the mock server.
+// This file contains shared server configuration utilities used by start.go and serve.go.
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/getmockd/mockd/pkg/admin"
+	"github.com/getmockd/mockd/pkg/audit"
+	"github.com/getmockd/mockd/pkg/chaos"
+	"github.com/getmockd/mockd/pkg/cli/internal/output"
+	"github.com/getmockd/mockd/pkg/cliconfig"
+	"github.com/getmockd/mockd/pkg/config"
+	"github.com/getmockd/mockd/pkg/engine"
+	"github.com/getmockd/mockd/pkg/graphql"
+	"github.com/getmockd/mockd/pkg/oauth"
+	"github.com/getmockd/mockd/pkg/validation"
+)
+
+// ServerFlags holds common server configuration flags used by start and serve commands.
+type ServerFlags struct {
+	// Port configuration
+	Port      int
+	AdminPort int
+	HTTPSPort int
+
+	// Config file
+	ConfigFile string
+
+	// Timeouts
+	ReadTimeout    int
+	WriteTimeout   int
+	RequestTimeout int
+
+	// Limits
+	MaxLogEntries  int
+	MaxConnections int
+
+	// TLS flags
+	TLSCert  string
+	TLSKey   string
+	TLSAuto  bool
+	AutoCert bool
+
+	// mTLS flags
+	MTLSEnabled    bool
+	MTLSClientAuth string
+	MTLSCA         string
+	MTLSAllowedCNs string
+
+	// Audit flags
+	AuditEnabled bool
+	AuditFile    string
+	AuditLevel   string
+
+	// GraphQL flags
+	GraphQLSchema string
+	GraphQLPath   string
+
+	// OAuth flags
+	OAuthEnabled bool
+	OAuthIssuer  string
+	OAuthPort    int
+
+	// Chaos flags
+	ChaosEnabled   bool
+	ChaosLatency   string
+	ChaosErrorRate float64
+
+	// Validation flags
+	ValidateSpec string
+	ValidateFail bool
+
+	// Auth flags
+	NoAuth bool
+
+	// Storage flags
+	DataDir string
+}
+
+// RegisterServerFlags adds common server flags to a FlagSet.
+func RegisterServerFlags(fs *flag.FlagSet, f *ServerFlags) {
+	// Port flags
+	fs.IntVar(&f.Port, "port", cliconfig.DefaultPort, "HTTP server port")
+	fs.IntVar(&f.Port, "p", cliconfig.DefaultPort, "HTTP server port (shorthand)")
+
+	fs.IntVar(&f.AdminPort, "admin-port", cliconfig.DefaultAdminPort, "Admin API port")
+	fs.IntVar(&f.AdminPort, "a", cliconfig.DefaultAdminPort, "Admin API port (shorthand)")
+
+	fs.IntVar(&f.HTTPSPort, "https-port", cliconfig.DefaultHTTPSPort, "HTTPS server port (0 = disabled)")
+
+	// Config file
+	fs.StringVar(&f.ConfigFile, "config", "", "Path to mock configuration file")
+	fs.StringVar(&f.ConfigFile, "c", "", "Path to mock configuration file (shorthand)")
+
+	// Timeouts
+	fs.IntVar(&f.ReadTimeout, "read-timeout", cliconfig.DefaultReadTimeout, "Read timeout in seconds")
+	fs.IntVar(&f.WriteTimeout, "write-timeout", cliconfig.DefaultWriteTimeout, "Write timeout in seconds")
+	fs.IntVar(&f.RequestTimeout, "request-timeout", 0, "Request timeout in seconds (sets both read and write timeout, 0 = use individual timeouts)")
+
+	// Limits
+	fs.IntVar(&f.MaxLogEntries, "max-log-entries", cliconfig.DefaultMaxLogEntries, "Maximum request log entries")
+	fs.IntVar(&f.MaxConnections, "max-connections", 0, "Maximum concurrent HTTP connections (0 = unlimited)")
+	fs.BoolVar(&f.AutoCert, "auto-cert", cliconfig.DefaultAutoCert, "Auto-generate TLS certificate")
+
+	// TLS flags
+	fs.StringVar(&f.TLSCert, "tls-cert", "", "Path to TLS certificate file")
+	fs.StringVar(&f.TLSKey, "tls-key", "", "Path to TLS private key file")
+	fs.BoolVar(&f.TLSAuto, "tls-auto", false, "Auto-generate self-signed certificate")
+
+	// mTLS flags
+	fs.BoolVar(&f.MTLSEnabled, "mtls-enabled", false, "Enable mTLS client certificate validation")
+	fs.StringVar(&f.MTLSClientAuth, "mtls-client-auth", "require-and-verify", "Client auth mode (none, request, require, verify-if-given, require-and-verify)")
+	fs.StringVar(&f.MTLSCA, "mtls-ca", "", "Path to CA certificate for client validation")
+	fs.StringVar(&f.MTLSAllowedCNs, "mtls-allowed-cns", "", "Comma-separated list of allowed Common Names")
+
+	// Audit flags
+	fs.BoolVar(&f.AuditEnabled, "audit-enabled", false, "Enable audit logging")
+	fs.StringVar(&f.AuditFile, "audit-file", "", "Path to audit log file")
+	fs.StringVar(&f.AuditLevel, "audit-level", "info", "Log level (debug, info, warn, error)")
+
+	// GraphQL flags
+	fs.StringVar(&f.GraphQLSchema, "graphql-schema", "", "Path to GraphQL schema file")
+	fs.StringVar(&f.GraphQLPath, "graphql-path", "/graphql", "GraphQL endpoint path")
+
+	// OAuth flags
+	fs.BoolVar(&f.OAuthEnabled, "oauth-enabled", false, "Enable OAuth provider")
+	fs.StringVar(&f.OAuthIssuer, "oauth-issuer", "", "OAuth issuer URL")
+	fs.IntVar(&f.OAuthPort, "oauth-port", 0, "OAuth server port")
+
+	// Chaos flags
+	fs.BoolVar(&f.ChaosEnabled, "chaos-enabled", false, "Enable chaos injection")
+	fs.StringVar(&f.ChaosLatency, "chaos-latency", "", "Add random latency (e.g., \"10ms-100ms\")")
+	fs.Float64Var(&f.ChaosErrorRate, "chaos-error-rate", 0, "Error rate (0.0-1.0)")
+
+	// Validation flags
+	fs.StringVar(&f.ValidateSpec, "validate-spec", "", "Path to OpenAPI spec for request validation")
+	fs.BoolVar(&f.ValidateFail, "validate-fail", false, "Fail on validation error")
+
+	// Auth flags
+	fs.BoolVar(&f.NoAuth, "no-auth", false, "Disable API key authentication")
+
+	// Storage flags
+	fs.StringVar(&f.DataDir, "data-dir", "", "Data directory for persistent storage (default: ~/.local/share/mockd)")
+}
+
+// BuildServerConfig creates a ServerConfiguration from the flags.
+func BuildServerConfig(f *ServerFlags) *config.ServerConfiguration {
+	readTimeout := f.ReadTimeout
+	writeTimeout := f.WriteTimeout
+	// --request-timeout is a convenience flag that sets both read and write timeout
+	if f.RequestTimeout > 0 {
+		readTimeout = f.RequestTimeout
+		writeTimeout = f.RequestTimeout
+	}
+
+	serverCfg := &config.ServerConfiguration{
+		HTTPPort:       f.Port,
+		HTTPSPort:      f.HTTPSPort,
+		AdminPort:      f.AdminPort,
+		ReadTimeout:    readTimeout,
+		WriteTimeout:   writeTimeout,
+		MaxConnections: f.MaxConnections,
+		MaxLogEntries:  f.MaxLogEntries,
+		LogRequests:    true,
+	}
+
+	// Configure TLS if any TLS flags are set or HTTPS port is configured
+	if f.TLSCert != "" || f.TLSKey != "" || f.TLSAuto || f.HTTPSPort > 0 {
+		serverCfg.TLS = BuildTLSConfig(f)
+	}
+
+	// Configure mTLS if enabled
+	if f.MTLSEnabled {
+		serverCfg.MTLS = BuildMTLSConfig(f)
+	}
+
+	// Configure audit if enabled
+	if f.AuditEnabled {
+		serverCfg.Audit = BuildAuditConfig(f)
+	}
+
+	// Configure GraphQL if schema specified
+	if f.GraphQLSchema != "" {
+		serverCfg.GraphQL = BuildGraphQLConfig(f)
+	}
+
+	// Configure OAuth if enabled
+	if f.OAuthEnabled {
+		serverCfg.OAuth = BuildOAuthConfig(f)
+	}
+
+	// Configure validation if spec specified
+	if f.ValidateSpec != "" {
+		serverCfg.Validation = BuildValidationConfig(f)
+	}
+
+	return serverCfg
+}
+
+// BuildTLSConfig creates TLS configuration from flags.
+func BuildTLSConfig(f *ServerFlags) *config.TLSConfig {
+	return &config.TLSConfig{
+		Enabled:          true,
+		CertFile:         f.TLSCert,
+		KeyFile:          f.TLSKey,
+		AutoGenerateCert: f.TLSAuto || f.AutoCert,
+	}
+}
+
+// BuildMTLSConfig creates mTLS configuration from flags.
+func BuildMTLSConfig(f *ServerFlags) *config.MTLSConfig {
+	var allowedCNs []string
+	if f.MTLSAllowedCNs != "" {
+		for _, cn := range strings.Split(f.MTLSAllowedCNs, ",") {
+			cn = strings.TrimSpace(cn)
+			if cn != "" {
+				allowedCNs = append(allowedCNs, cn)
+			}
+		}
+	}
+	return &config.MTLSConfig{
+		Enabled:    true,
+		ClientAuth: f.MTLSClientAuth,
+		CACertFile: f.MTLSCA,
+		AllowedCNs: allowedCNs,
+	}
+}
+
+// BuildAuditConfig creates audit configuration from flags.
+func BuildAuditConfig(f *ServerFlags) *audit.AuditConfig {
+	return &audit.AuditConfig{
+		Enabled:    true,
+		Level:      f.AuditLevel,
+		OutputFile: f.AuditFile,
+	}
+}
+
+// BuildGraphQLConfig creates GraphQL configuration from flags.
+func BuildGraphQLConfig(f *ServerFlags) []*graphql.GraphQLConfig {
+	return []*graphql.GraphQLConfig{{
+		ID:            "cli-graphql",
+		Path:          f.GraphQLPath,
+		SchemaFile:    f.GraphQLSchema,
+		Introspection: true,
+		Enabled:       true,
+	}}
+}
+
+// BuildOAuthConfig creates OAuth configuration from flags.
+func BuildOAuthConfig(f *ServerFlags) []*oauth.OAuthConfig {
+	issuer := f.OAuthIssuer
+	if issuer == "" {
+		issuer = fmt.Sprintf("http://localhost:%d", f.OAuthPort)
+	}
+	return []*oauth.OAuthConfig{{
+		ID:      "cli-oauth",
+		Issuer:  issuer,
+		Enabled: true,
+	}}
+}
+
+// BuildValidationConfig creates validation configuration from flags.
+func BuildValidationConfig(f *ServerFlags) *validation.ValidationConfig {
+	return &validation.ValidationConfig{
+		Enabled:         true,
+		SpecFile:        f.ValidateSpec,
+		ValidateRequest: true,
+		FailOnError:     f.ValidateFail,
+	}
+}
+
+// BuildChaosConfig creates chaos configuration from flags and applies it to the server config.
+// Returns the chaos config if enabled, nil otherwise.
+func BuildChaosConfig(f *ServerFlags) *chaos.ChaosConfig {
+	if !f.ChaosEnabled {
+		return nil
+	}
+
+	chaosCfg := &chaos.ChaosConfig{
+		Enabled: true,
+	}
+	if f.ChaosLatency != "" {
+		min, max := ParseLatencyRange(f.ChaosLatency)
+		chaosCfg.GlobalRules = &chaos.GlobalChaosRules{
+			Latency: &chaos.LatencyFault{
+				Min:         min,
+				Max:         max,
+				Probability: 1.0,
+			},
+		}
+	}
+	if f.ChaosErrorRate > 0 {
+		if chaosCfg.GlobalRules == nil {
+			chaosCfg.GlobalRules = &chaos.GlobalChaosRules{}
+		}
+		chaosCfg.GlobalRules.ErrorRate = &chaos.ErrorRateFault{
+			Probability: f.ChaosErrorRate,
+			DefaultCode: 500,
+		}
+	}
+	return chaosCfg
+}
+
+// ParseLatencyRange parses a latency range string like "10ms-100ms" into min and max values.
+// Bare numbers without units (e.g., "100") are treated as milliseconds.
+func ParseLatencyRange(s string) (min, max string) {
+	parts := strings.Split(s, "-")
+	if len(parts) == 2 {
+		return normalizeLatency(strings.TrimSpace(parts[0])), normalizeLatency(strings.TrimSpace(parts[1]))
+	}
+	// If no range, use the same value for both
+	v := normalizeLatency(s)
+	return v, v
+}
+
+// normalizeLatency ensures a latency value has a time unit. Bare numbers default to milliseconds.
+func normalizeLatency(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	// If it already has a unit suffix, leave it alone.
+	if _, err := time.ParseDuration(s); err == nil {
+		return s
+	}
+	// Bare number — treat as milliseconds.
+	return s + "ms"
+}
+
+// WaitForShutdown blocks until interrupt, then gracefully stops servers.
+func WaitForShutdown(server *engine.Server, adminAPI *admin.API) {
+	WaitForShutdownWithCallback(server, adminAPI, nil)
+}
+
+// ShutdownCallback is called during shutdown for additional cleanup.
+type ShutdownCallback func()
+
+// WaitForShutdownWithCallback blocks until interrupt, then gracefully stops servers.
+// The callback is invoked before stopping servers for additional cleanup (e.g., deregistration).
+func WaitForShutdownWithCallback(server *engine.Server, adminAPI *admin.API, callback ShutdownCallback) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	<-sigChan
+	fmt.Println("\nShutting down...")
+
+	// Run callback if provided (e.g., deregister from control plane)
+	if callback != nil {
+		callback()
+	}
+
+	// Stop admin API first
+	if err := adminAPI.Stop(); err != nil {
+		output.Warn("admin API shutdown error: %v", err)
+	}
+
+	// Stop mock server
+	if err := server.Stop(); err != nil {
+		output.Warn("server shutdown error: %v", err)
+	}
+
+	fmt.Println("Server stopped")
+}
+
+// WaitForShutdownWithContext blocks until interrupt or context cancellation,
+// then gracefully stops servers. This variant supports context cancellation
+// for coordinated shutdown (e.g., runtime mode with heartbeat loops).
+func WaitForShutdownWithContext(ctx context.Context, server *engine.Server, adminAPI *admin.API, callback ShutdownCallback) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case <-sigChan:
+	case <-ctx.Done():
+	}
+
+	fmt.Println("\nShutting down...")
+
+	// Run callback if provided
+	if callback != nil {
+		callback()
+	}
+
+	// Stop admin API first
+	if err := adminAPI.Stop(); err != nil {
+		output.Warn("admin API shutdown error: %v", err)
+	}
+
+	// Stop mock server
+	if err := server.Stop(); err != nil {
+		output.Warn("server shutdown error: %v", err)
+	}
+
+	fmt.Println("Server stopped")
+}
+
+// isAddrInUseError checks if an error is caused by a port already being in use (EADDRINUSE).
+func isAddrInUseError(err error) bool {
+	var sysErr *os.SyscallError
+	if errors.As(err, &sysErr) {
+		return errors.Is(sysErr.Err, syscall.EADDRINUSE)
+	}
+	// Fallback: check error message for common indicators
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "address already in use") || strings.Contains(msg, "eaddrinuse")
+}
+
+// isPermissionDeniedError checks if an error indicates bind/listen was blocked by permissions.
+func isPermissionDeniedError(err error) bool {
+	if errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "permission denied") || strings.Contains(msg, "operation not permitted")
+}

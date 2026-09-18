@@ -1,0 +1,127 @@
+version: "2"
+
+run:
+  timeout: 10m
+
+linters:
+  default: none
+  enable:
+    # Bug detection
+    - govet          # Reports suspicious constructs
+    - ineffassign    # Detects unused variable assignments
+    - staticcheck    # Comprehensive static analysis
+    - unused         # Checks for unused code
+    - errcheck       # Check for unchecked errors
+    - bodyclose      # Check HTTP response bodies are closed
+    - nilerr         # Check for nil error returns
+    - copyloopvar    # Check for loop variable capture issues
+    - exhaustive     # Check switch statements cover all enum cases
+
+    # Code quality
+    - misspell       # Check for spelling errors
+    - unconvert      # Remove unnecessary type conversions
+    - unparam        # Detect unused function parameters
+    - prealloc       # Find slice declarations that could be pre-allocated
+    - dupl           # Detect copy-pasted code blocks
+    - gocyclo        # Flag functions with high cyclomatic complexity
+    - gocritic       # Broad set of style, performance, and correctness checks
+    - perfsprint     # Detect fmt.Sprintf calls that can be simplified
+
+    # Security
+    - gosec          # Security checks
+
+    # Dependency hygiene
+    - depguard       # Enforce package import restrictions
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    misspell:
+      extra-words:
+        - typo: "mosquitto"
+          correction: "mosquitto"  # Eclipse Mosquitto MQTT broker (not a misspelling)
+    gosec:
+      excludes:
+        - G104  # Audit errors not checked (too noisy)
+        - G304  # File path provided as taint input (needed for file operations)
+        - G301  # Directory permissions (we use 0755 intentionally)
+        - G302  # File permissions (we use 0644 intentionally for config files)
+        - G306  # WriteFile permissions (we use 0644 intentionally)
+        - G112  # Slowloris (proxy server doesn't need ReadHeaderTimeout)
+        - G101  # Hardcoded credentials (false positive on env var names)
+        - G115  # Integer overflow (too strict for our use case)
+        - G404  # Weak random (chaos testing intentionally uses math/rand)
+        - G204  # Subprocess with variable (benchmark runner needs this)
+    staticcheck:
+      checks:
+        - all
+        - -SA1019  # Deprecated usage (too strict for some stdlib)
+    gocyclo:
+      min-complexity: 30
+    dupl:
+      threshold: 150
+    exhaustive:
+      default-signifies-exhaustive: true
+    depguard:
+      rules:
+        leaf-packages:
+          files:
+            - "**/pkg/ratelimit/*.go"
+            - "**/pkg/httputil/*.go"
+            - "**/pkg/util/*.go"
+          deny:
+            - pkg: "github.com/getmockd/mockd/pkg/admin"
+              desc: "leaf packages must not import application packages"
+            - pkg: "github.com/getmockd/mockd/pkg/engine"
+              desc: "leaf packages must not import application packages"
+            - pkg: "github.com/getmockd/mockd/pkg/cli"
+              desc: "leaf packages must not import application packages"
+        no-admin-engine-coupling:
+          files:
+            - "**/pkg/admin/*.go"
+          deny:
+            - pkg: "github.com/getmockd/mockd/pkg/engine"
+              desc: "admin must not import engine directly — use engineclient HTTP interface"
+
+  exclusions:
+    rules:
+      # Test files have looser requirements
+      - path: "_test\\.go"
+        linters:
+          - errcheck
+          - gosec
+          - ineffassign
+          - unparam
+          - prealloc
+          - dupl
+          - gocyclo
+          - gocritic
+          - perfsprint
+          - exhaustive
+      # Benchmarks
+      # Mock OAuth server — every FormValue/ParseForm triggers G120 (22 occurrences)
+      # but this is a mock server, not a production auth boundary
+      - path: "^pkg/oauth/"
+        linters:
+          - gosec
+        text: "G120"
+      - path: "^benchmarks/"
+        linters:
+          - errcheck
+          - ineffassign
+          - gosec
+          - dupl
+          - gocyclo
+          - gocritic
+          - perfsprint
+      - path: "^tests/"
+        linters:
+          - errcheck
+          - gosec
+          - unparam
+          - prealloc
+          - dupl
+          - gocyclo
+          - gocritic
+          - perfsprint

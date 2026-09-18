@@ -1,0 +1,1824 @@
+package admin
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/getmockd/mockd/pkg/admin/engineclient"
+	"github.com/getmockd/mockd/pkg/mock"
+	"github.com/getmockd/mockd/pkg/store"
+)
+
+// ============================================================================
+// Unified Mocks API Handlers
+// These handlers provide a single API for all mock types (HTTP, WebSocket,
+// GraphQL, gRPC, SOAP, MQTT) using the unified Mock type.
+// ============================================================================
+
+// MocksListResponse is the response for GET /mocks (unified API uses Total, legacy uses Count)
+// Note: For backward compatibility with tests, we also include Count in the handlers
+type MocksListResponse struct {
+	Mocks []*mock.Mock `json:"mocks"`
+	Total int          `json:"total"`
+	Count int          `json:"count"`
+}
+
+// getMockStore returns the mock store to use.
+func (a *API) getMockStore() store.MockStore {
+	if a.dataStore == nil {
+		return nil
+	}
+	return a.dataStore.Mocks()
+}
+
+// MockFilter contains filter criteria for listing mocks in-memory.
+type MockFilter struct {
+	Type        string
+	ParentID    string
+	FolderID    string
+	Enabled     *bool
+	WorkspaceID string
+}
+
+// applyPagination applies offset and limit query parameters to a mock slice.
+func applyPagination(mocks []*mock.Mock, query interface{ Get(string) string }) ([]*mock.Mock, error) {
+	offset := 0
+	limit := 0
+	if v := query.Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			if n < 0 {
+				return nil, errors.New("offset must be non-negative")
+			}
+			offset = n
+		}
+	}
+	if v := query.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			if n < 0 {
+				return nil, errors.New("limit must be non-negative")
+			}
+			limit = n
+		}
+	}
+	if offset <= 0 && limit <= 0 {
+		return mocks, nil
+	}
+	if offset > 0 {
+		if offset >= len(mocks) {
+			return []*mock.Mock{}, nil
+		}
+		mocks = mocks[offset:]
+	}
+	if limit > 0 && limit < len(mocks) {
+		mocks = mocks[:limit]
+	}
+	return mocks, nil
+}
+
+// applyMockFilter filters mocks in-memory based on filter criteria.
+func applyMockFilter(mocks []*mock.Mock, filter *MockFilter) []*mock.Mock {
+	if filter == nil {
+		return mocks
+	}
+
+	if filter.Type != "" {
+		filtered := make([]*mock.Mock, 0, len(mocks))
+		for _, m := range mocks {
+			if m.Type == mock.Type(filter.Type) {
+				filtered = append(filtered, m)
+			}
+		}
+		mocks = filtered
+	}
+
+	if filter.ParentID != "" {
+		filtered := make([]*mock.Mock, 0, len(mocks))
+		for _, m := range mocks {
+			if m.ParentID == filter.ParentID {
+				filtered = append(filtered, m)
+			}
+		}
+		mocks = filtered
+	}
+
+	if filter.FolderID != "" {
+		filtered := make([]*mock.Mock, 0, len(mocks))
+		for _, m := range mocks {
+			if m.ParentID == filter.FolderID {
+				filtered = append(filtered, m)
+			}
+		}
+		mocks = filtered
+	}
+
+	if filter.Enabled != nil {
+		filtered := make([]*mock.Mock, 0, len(mocks))
+		for _, m := range mocks {
+			mEnabled := m.Enabled == nil || *m.Enabled
+			if mEnabled == *filter.Enabled {
+				filtered = append(filtered, m)
+			}
+		}
+		mocks = filtered
+	}
+
+	if filter.WorkspaceID != "" {
+		filtered := make([]*mock.Mock, 0, len(mocks))
+		for _, m := range mocks {
+			if m.WorkspaceID == filter.WorkspaceID {
+				filtered = append(filtered, m)
+			}
+		}
+		mocks = filtered
+	}
+
+	return mocks
+}
+
+// getMockPort extracts the port from a mock if it uses a dedicated port (MQTT, gRPC).
+// Returns 0 if the mock type doesn't use a dedicated port.
+func getMockPort(m *mock.Mock) int {
+	switch m.Type { //nolint:exhaustive // only MQTT and gRPC use dedicated ports
+	case mock.TypeMQTT:
+		if m.MQTT != nil {
+			return m.MQTT.Port
+		}
+	case mock.TypeGRPC:
+		if m.GRPC != nil {
+			return m.GRPC.Port
+		}
+	}
+	return 0
+}
+
+// PortConflict represents a port conflict between mocks.
+type PortConflict struct {
+	Port         int
+	ConflictID   string
+	ConflictName string
+	ConflictType mock.Type
+}
+
+// PortCheckResult represents the result of checking port availability.
+type PortCheckResult struct {
+	// Conflict is set if there's a blocking conflict (cross-workspace or cross-protocol)
+	Conflict *PortConflict
+	// MergeTarget is set if the new mock should be merged into an existing mock
+	// (same port, same protocol, same workspace)
+	MergeTarget *mock.Mock
+}
+
+// isPortError checks if an error message indicates a port-related issue
+// (port in use, permission denied, bind failed, etc.)
+func isPortError(errMsg string) bool {
+	errLower := strings.ToLower(errMsg)
+	portIndicators := []string{
+		"port",
+		"address already in use",
+		"bind:",
+		"listen:",
+		"eaddrinuse",
+		"permission denied",
+		"cannot assign requested address",
+	}
+	for _, indicator := range portIndicators {
+		if strings.Contains(errLower, indicator) {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidationError checks if an error indicates a validation or configuration issue
+// that should be surfaced to the client rather than hidden behind a generic error.
+func isValidationError(errMsg string) bool {
+	indicators := []string{
+		"failed to parse proto",
+		"failed to start grpc",
+		"failed to create",
+		"proto file",
+		"schema",
+		"validation",
+	}
+	lower := strings.ToLower(errMsg)
+	for _, ind := range indicators {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkPortAvailability checks port availability and returns merge opportunities.
+// This is the richer version of checkPortConflict that also identifies merge targets.
+func (a *API) checkPortAvailability(ctx context.Context, m *mock.Mock, excludeID string) *PortCheckResult {
+	port := getMockPort(m)
+	if port == 0 {
+		return &PortCheckResult{} // Mock doesn't use a dedicated port
+	}
+
+	// Get all mocks from the admin store (source of truth) to check for conflicts
+	var allMocks []*mock.Mock
+	var err error
+
+	if a.dataStore != nil {
+		allMocks, err = a.dataStore.Mocks().List(ctx, nil)
+	}
+
+	if err != nil {
+		a.logger().Warn("failed to list mocks for port conflict check", "error", err)
+		return &PortCheckResult{} // Don't block on error, let runtime catch it
+	}
+
+	// Determine which workspaces to check for conflicts.
+	// If the workspace is assigned to an engine, check all sibling workspaces on that engine.
+	// Otherwise, only check within the same workspace.
+	workspacesToCheck := []string{m.WorkspaceID}
+	if a.engineRegistry != nil && m.WorkspaceID != "" {
+		siblings := a.engineRegistry.GetSiblingWorkspaceIDs(m.WorkspaceID)
+		if len(siblings) > 0 {
+			workspacesToCheck = siblings
+		}
+	}
+
+	// Build a set of workspaces to check
+	workspaceSet := make(map[string]bool)
+	for _, wsID := range workspacesToCheck {
+		workspaceSet[wsID] = true
+	}
+
+	for _, existing := range allMocks {
+		// Skip the mock being updated
+		if existing.ID == excludeID {
+			continue
+		}
+
+		// Only check mocks in relevant workspaces
+		if !workspaceSet[existing.WorkspaceID] {
+			continue
+		}
+
+		existingPort := getMockPort(existing)
+		if existingPort == port {
+			// Same port found - determine if it's a conflict or merge opportunity
+
+			// Cross-protocol conflict: gRPC and MQTT can't share ports
+			if existing.Type != m.Type {
+				return &PortCheckResult{
+					Conflict: &PortConflict{
+						Port:         port,
+						ConflictID:   existing.ID,
+						ConflictName: existing.Name,
+						ConflictType: existing.Type,
+					},
+				}
+			}
+
+			// Cross-workspace conflict: same port can't be used across workspaces on same engine
+			if existing.WorkspaceID != m.WorkspaceID {
+				return &PortCheckResult{
+					Conflict: &PortConflict{
+						Port:         port,
+						ConflictID:   existing.ID,
+						ConflictName: existing.Name,
+						ConflictType: existing.Type,
+					},
+				}
+			}
+
+			// Same port + same protocol + same workspace = merge opportunity
+			// gRPC: multiple services on one server
+			// MQTT: multiple topics on one broker
+			return &PortCheckResult{
+				MergeTarget: existing,
+			}
+		}
+	}
+
+	return &PortCheckResult{}
+}
+
+// MergeResult contains information about a merge operation.
+type MergeResult struct {
+	TargetMockID    string   `json:"targetMockId"`
+	Action          string   `json:"action"`                    // "merged" or "created"
+	AddedServices   []string `json:"addedServices,omitempty"`   // For gRPC
+	AddedTopics     []string `json:"addedTopics,omitempty"`     // For MQTT
+	TotalServices   []string `json:"totalServices,omitempty"`   // For gRPC
+	TotalTopics     []string `json:"totalTopics,omitempty"`     // For MQTT
+	ServiceConflict string   `json:"serviceConflict,omitempty"` // If service/method already exists
+}
+
+// mergeGRPCMock merges a new gRPC mock's services into an existing mock.
+// Returns the merge result or an error if there's a service/method conflict.
+func mergeGRPCMock(target *mock.Mock, source *mock.Mock) (*MergeResult, error) {
+	if target.GRPC == nil || source.GRPC == nil {
+		return nil, errors.New("both mocks must have gRPC configuration")
+	}
+
+	result := &MergeResult{
+		TargetMockID: target.ID,
+		Action:       "merged",
+	}
+
+	// Initialize services map if nil
+	if target.GRPC.Services == nil {
+		target.GRPC.Services = make(map[string]mock.ServiceConfig)
+	}
+
+	// Check for conflicts and merge services
+	for serviceName, serviceConfig := range source.GRPC.Services {
+		if existingService, exists := target.GRPC.Services[serviceName]; exists {
+			// Service exists - merge each method into it.
+			if existingService.Methods == nil {
+				existingService.Methods = make(map[string]mock.MethodConfig)
+			}
+			for methodName, methodConfig := range serviceConfig.Methods {
+				if existingMethod, methodExists := existingService.Methods[methodName]; methodExists {
+					// Method already configured. Rather than reject (which broke
+					// issue #30), append the new config as an additional match
+					// variant — UNLESS its Match would shadow an existing config
+					// (identical or empty Match), in which case we error to avoid
+					// silently overwriting the earlier mock.
+					merged, err := appendMethodVariant(existingMethod, methodConfig)
+					if err != nil {
+						return nil, fmt.Errorf("service '%s' method '%s' already exists on port %d: %w",
+							serviceName, methodName, target.GRPC.Port, err)
+					}
+					existingService.Methods[methodName] = merged
+					result.AddedServices = append(result.AddedServices, serviceName+"/"+methodName)
+					continue
+				}
+				// New method on existing service.
+				existingService.Methods[methodName] = methodConfig
+				result.AddedServices = append(result.AddedServices, serviceName+"/"+methodName)
+			}
+			target.GRPC.Services[serviceName] = existingService
+		} else {
+			// New service - add entirely
+			target.GRPC.Services[serviceName] = serviceConfig
+			for methodName := range serviceConfig.Methods {
+				result.AddedServices = append(result.AddedServices, serviceName+"/"+methodName)
+			}
+		}
+	}
+
+	// Merge proto files
+	if source.GRPC.ProtoFile != "" && target.GRPC.ProtoFile != source.GRPC.ProtoFile {
+		// Add to ProtoFiles list if different
+		found := false
+		for _, pf := range target.GRPC.ProtoFiles {
+			if pf == source.GRPC.ProtoFile {
+				found = true
+				break
+			}
+		}
+		if !found {
+			if target.GRPC.ProtoFile != "" && len(target.GRPC.ProtoFiles) == 0 {
+				target.GRPC.ProtoFiles = []string{target.GRPC.ProtoFile}
+			}
+			target.GRPC.ProtoFiles = append(target.GRPC.ProtoFiles, source.GRPC.ProtoFile)
+		}
+	}
+	for _, pf := range source.GRPC.ProtoFiles {
+		found := false
+		for _, existing := range target.GRPC.ProtoFiles {
+			if existing == pf {
+				found = true
+				break
+			}
+		}
+		if !found {
+			target.GRPC.ProtoFiles = append(target.GRPC.ProtoFiles, pf)
+		}
+	}
+
+	// Merge import paths
+	for _, ip := range source.GRPC.ImportPaths {
+		found := false
+		for _, existing := range target.GRPC.ImportPaths {
+			if existing == ip {
+				found = true
+				break
+			}
+		}
+		if !found {
+			target.GRPC.ImportPaths = append(target.GRPC.ImportPaths, ip)
+		}
+	}
+
+	// Collect total services
+	for serviceName, svc := range target.GRPC.Services {
+		for methodName := range svc.Methods {
+			result.TotalServices = append(result.TotalServices, serviceName+"/"+methodName)
+		}
+	}
+
+	return result, nil
+}
+
+// appendMethodVariant adds incoming as an additional match variant of existing
+// for the same service+method. It returns the merged MethodConfig.
+//
+// Variants live in a flat ordered list on the primary config: existing is the
+// primary, and incoming (plus any variants it carries) is appended after the
+// existing variants. To keep an unconditioned/default variant from shadowing
+// later, more-specific variants, an empty-Match incoming config is placed at
+// the end (which is naturally where appends land).
+//
+// It returns an error when incoming would shadow a config that is already
+// present — i.e. incoming has no Match (or an empty Match) while existing
+// already has a config that also matches everything, or incoming's Match is
+// identical to one already configured. This preserves the previous
+// "already exists" protection for true duplicates while allowing genuinely
+// distinct match variants (issue #30).
+func appendMethodVariant(existing, incoming mock.MethodConfig) (mock.MethodConfig, error) {
+	// Flatten incoming into its primary + nested variants so callers may pass
+	// a config that itself already carries variants.
+	incomingConfigs := flattenMethodVariants(incoming)
+
+	for _, inc := range incomingConfigs {
+		// Compare the incoming variant against the primary and every existing
+		// variant. A match that is identical to one already present, or an
+		// empty match that collides with another empty/default match, would
+		// shadow and is rejected.
+		for _, present := range flattenMethodVariants(existing) {
+			if grpcMatchShadows(present.Match, inc.Match) {
+				return mock.MethodConfig{}, errors.New("a config with the same (or empty) match condition already exists")
+			}
+		}
+		// Strip nested variants before appending — the list is kept flat.
+		inc.Variants = nil
+		existing.Variants = append(existing.Variants, inc)
+	}
+
+	return existing, nil
+}
+
+// flattenMethodVariants returns the primary config followed by its variants as
+// a flat slice. Nested variants are not recursed (only one level is meaningful).
+func flattenMethodVariants(cfg mock.MethodConfig) []mock.MethodConfig {
+	out := make([]mock.MethodConfig, 0, 1+len(cfg.Variants))
+	primary := cfg
+	primary.Variants = nil
+	out = append(out, primary)
+	for _, v := range cfg.Variants {
+		v.Variants = nil
+		out = append(out, v)
+	}
+	return out
+}
+
+// grpcMatchShadows reports whether a config with match b would shadow a config
+// with match a — that is, b can never be reached because a already matches the
+// same (or a superset of) requests. This is true when both matches are empty
+// (both match everything) or when they are exactly equal.
+func grpcMatchShadows(a, b *mock.MethodMatch) bool {
+	aEmpty := grpcMatchEmpty(a)
+	bEmpty := grpcMatchEmpty(b)
+	if aEmpty && bEmpty {
+		// Two unconditioned configs — the second is unreachable.
+		return true
+	}
+	if aEmpty || bEmpty {
+		// One is a catch-all default and the other is specific; the specific
+		// one is still reachable when ordered first, so this is not shadowing.
+		return false
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+// grpcMatchEmpty reports whether a match condition matches every request
+// (nil or no metadata/request constraints).
+func grpcMatchEmpty(m *mock.MethodMatch) bool {
+	return m == nil || (len(m.Metadata) == 0 && len(m.Request) == 0)
+}
+
+// mergeMQTTMock merges a new MQTT mock's topics into an existing mock.
+// Returns the merge result or an error if there's a topic conflict.
+func mergeMQTTMock(target *mock.Mock, source *mock.Mock) (*MergeResult, error) {
+	if target.MQTT == nil || source.MQTT == nil {
+		return nil, errors.New("both mocks must have MQTT configuration")
+	}
+
+	result := &MergeResult{
+		TargetMockID: target.ID,
+		Action:       "merged",
+	}
+
+	// Check for topic conflicts and merge
+	existingTopics := make(map[string]bool)
+	for _, topic := range target.MQTT.Topics {
+		existingTopics[topic.Topic] = true
+	}
+
+	for _, topic := range source.MQTT.Topics {
+		if existingTopics[topic.Topic] {
+			return nil, fmt.Errorf("topic '%s' already exists on port %d", topic.Topic, target.MQTT.Port)
+		}
+		target.MQTT.Topics = append(target.MQTT.Topics, topic)
+		result.AddedTopics = append(result.AddedTopics, topic.Topic)
+	}
+
+	// Collect total topics
+	for _, topic := range target.MQTT.Topics {
+		result.TotalTopics = append(result.TotalTopics, topic.Topic)
+	}
+
+	return result, nil
+}
+
+// WorkspacePortConflict represents a port conflict when assigning a workspace to an engine.
+type WorkspacePortConflict struct {
+	Port              int    `json:"port"`
+	MockID            string `json:"mockId"`
+	MockName          string `json:"mockName"`
+	ConflictMockID    string `json:"conflictMockId"`
+	ConflictMockName  string `json:"conflictMockName"`
+	ConflictWorkspace string `json:"conflictWorkspace"`
+}
+
+// checkWorkspaceEnginePortConflicts checks if assigning a workspace to an engine would create
+// port conflicts with mocks in other workspaces already on that engine.
+// Returns a list of conflicts (empty if none).
+func (a *API) checkWorkspaceEnginePortConflicts(ctx context.Context, engineID, workspaceID string) []WorkspacePortConflict {
+	var conflicts []WorkspacePortConflict
+
+	// Get the engine to find other workspaces
+	engine, err := a.engineRegistry.Get(engineID)
+	if err != nil {
+		return conflicts // Engine not found, no conflicts to report
+	}
+
+	// Get mocks from the workspace being assigned
+	var allMocks []*mock.Mock
+	if a.dataStore != nil {
+		allMocks, err = a.dataStore.Mocks().List(ctx, &store.MockFilter{WorkspaceID: workspaceID})
+		if err != nil {
+			a.logger().Warn("failed to list mocks for workspace port conflict check", "error", err)
+			return conflicts
+		}
+	}
+
+	// Collect ports used by the new workspace's mocks
+	newWorkspacePorts := make(map[int]*mock.Mock) // port -> mock using it
+	for _, m := range allMocks {
+		port := getMockPort(m)
+		if port > 0 {
+			newWorkspacePorts[port] = m
+		}
+	}
+
+	if len(newWorkspacePorts) == 0 {
+		return conflicts // No dedicated ports in new workspace
+	}
+
+	// Check against mocks in existing workspaces on this engine
+	for _, ws := range engine.Workspaces {
+		if ws.WorkspaceID == workspaceID {
+			continue // Skip the workspace being added (in case of re-assignment)
+		}
+
+		// Get mocks from this sibling workspace
+		var siblingMocks []*mock.Mock
+		if a.dataStore != nil {
+			siblingMocks, _ = a.dataStore.Mocks().List(ctx, &store.MockFilter{WorkspaceID: ws.WorkspaceID})
+		}
+
+		for _, sibling := range siblingMocks {
+			siblingPort := getMockPort(sibling)
+			if siblingPort > 0 {
+				if newMock, exists := newWorkspacePorts[siblingPort]; exists {
+					conflicts = append(conflicts, WorkspacePortConflict{
+						Port:              siblingPort,
+						MockID:            newMock.ID,
+						MockName:          newMock.Name,
+						ConflictMockID:    sibling.ID,
+						ConflictMockName:  sibling.Name,
+						ConflictWorkspace: ws.WorkspaceID,
+					})
+				}
+			}
+		}
+	}
+
+	return conflicts
+}
+
+// applyMockPatch applies common (metadata) patch fields to a mock.
+// Protocol-specific fields (http, websocket, graphql, grpc, soap, mqtt, oauth)
+// are intentionally NOT patched here — use PUT for full mock replacement.
+// This is by design: protocol changes may involve port conflicts, schema
+// validation, and listener restarts that require the full update pipeline.
+func applyMockPatch(m *mock.Mock, patch map[string]interface{}) {
+	if name, ok := patch["name"].(string); ok {
+		m.Name = name
+	}
+	if description, ok := patch["description"].(string); ok {
+		m.Description = description
+	}
+	if enabled, ok := patch["enabled"].(bool); ok {
+		m.Enabled = &enabled
+	}
+	if parentID, ok := patch["parentId"].(string); ok {
+		m.ParentID = parentID
+	}
+	if metaSortKey, ok := patch["metaSortKey"].(float64); ok {
+		m.MetaSortKey = metaSortKey
+	}
+
+	// Apply protocol-specific spec patches. Merge patch fields into the
+	// existing spec so that unspecified fields (e.g. matcher) are preserved.
+	// If no existing spec exists, the patch becomes the full spec.
+	mergeProtocolPatch(patch, "http", m.HTTP, func(data []byte) {
+		var s mock.HTTPSpec
+		if json.Unmarshal(data, &s) == nil {
+			m.HTTP = &s
+		}
+	})
+	mergeProtocolPatch(patch, "websocket", m.WebSocket, func(data []byte) {
+		var s mock.WebSocketSpec
+		if json.Unmarshal(data, &s) == nil {
+			m.WebSocket = &s
+		}
+	})
+	mergeProtocolPatch(patch, "graphql", m.GraphQL, func(data []byte) {
+		var s mock.GraphQLSpec
+		if json.Unmarshal(data, &s) == nil {
+			m.GraphQL = &s
+		}
+	})
+	mergeProtocolPatch(patch, "grpc", m.GRPC, func(data []byte) {
+		var s mock.GRPCSpec
+		if json.Unmarshal(data, &s) == nil {
+			m.GRPC = &s
+		}
+	})
+	mergeProtocolPatch(patch, "soap", m.SOAP, func(data []byte) {
+		var s mock.SOAPSpec
+		if json.Unmarshal(data, &s) == nil {
+			m.SOAP = &s
+		}
+	})
+	mergeProtocolPatch(patch, "mqtt", m.MQTT, func(data []byte) {
+		var s mock.MQTTSpec
+		if json.Unmarshal(data, &s) == nil {
+			m.MQTT = &s
+		}
+	})
+	mergeProtocolPatch(patch, "oauth", m.OAuth, func(data []byte) {
+		var s mock.OAuthSpec
+		if json.Unmarshal(data, &s) == nil {
+			m.OAuth = &s
+		}
+	})
+
+	m.UpdatedAt = time.Now()
+}
+
+// mergeProtocolPatch merges patch fields into an existing protocol spec.
+// It serializes the existing spec to a map, overlays the patch keys on top,
+// then re-serializes and calls apply. This preserves fields the client did
+// not include in the patch (e.g., updating statefulBinding without losing the
+// matcher). If existing is nil, the patch is used as-is (new spec creation).
+// Patch values that are explicitly null remove the corresponding field.
+func mergeProtocolPatch(patch map[string]interface{}, key string, existing interface{}, apply func([]byte)) {
+	patchSpec, ok := patch[key]
+	if !ok {
+		return // key not in patch at all — nothing to do
+	}
+
+	patchMap, _ := patchSpec.(map[string]interface{})
+	if patchMap == nil {
+		// Patch value is null — clear the spec entirely.
+		apply([]byte("null"))
+		return
+	}
+
+	// Build the base map from the existing spec (if any).
+	var base map[string]interface{}
+	if existing != nil {
+		if data, err := json.Marshal(existing); err == nil {
+			_ = json.Unmarshal(data, &base)
+		}
+	}
+	if base == nil {
+		base = make(map[string]interface{})
+	}
+
+	// Overlay patch fields onto the base. Explicit null values in the patch
+	// remove the field from the base (e.g., "response": null clears the
+	// response while preserving the matcher).
+	for k, v := range patchMap {
+		if v == nil {
+			delete(base, k)
+		} else {
+			base[k] = v
+		}
+	}
+
+	if data, err := json.Marshal(base); err == nil {
+		apply(data)
+	}
+}
+
+// handleListUnifiedMocks returns all mocks with optional filtering.
+// GET /mocks?type=http&parentId=folder123&enabled=true&search=user
+//
+// The admin store is the single source of truth for mock configuration.
+// All mocks — whether loaded from config files or created via the API — are
+// written to the admin store, so we always query from there.
+func (a *API) handleListUnifiedMocks(w http.ResponseWriter, r *http.Request) {
+	mockStore := a.getMockStore()
+	if mockStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Mock store is not available")
+		return
+	}
+
+	query := r.URL.Query()
+
+	filter := &store.MockFilter{}
+
+	// Filter by type
+	if t := query.Get("type"); t != "" {
+		filter.Type = mock.Type(t)
+	}
+
+	// Filter by parent folder (parentId or folderId)
+	if parentID := query.Get("parentId"); parentID != "" {
+		filter.ParentID = &parentID
+	} else if query.Has("parentId") {
+		// Explicitly set to root level (empty string)
+		empty := ""
+		filter.ParentID = &empty
+	}
+	// folderId is an alias for parentId — apply if parentId wasn't already set
+	if filter.ParentID == nil {
+		if folderID := query.Get("folderId"); folderID != "" {
+			filter.ParentID = &folderID
+		} else if query.Has("folderId") {
+			empty := ""
+			filter.ParentID = &empty
+		}
+	}
+
+	// Filter by enabled state
+	filter.Enabled = parseOptionalBool(query.Get("enabled"))
+
+	// Filter by search query
+	if search := query.Get("search"); search != "" {
+		filter.Search = search
+	}
+
+	// Filter by workspace
+	if wsID := query.Get("workspaceId"); wsID != "" {
+		filter.WorkspaceID = wsID
+	}
+
+	mocks, err := mockStore.List(r.Context(), filter)
+	if err != nil {
+		a.logger().Error("failed to list mocks from store", "error", err)
+		writeError(w, http.StatusInternalServerError, "list_error", ErrMsgInternalError)
+		return
+	}
+
+	total := len(mocks)
+	mocks, err = applyPagination(mocks, query)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, MocksListResponse{
+		Mocks: mocks,
+		Total: total,
+		Count: len(mocks),
+	})
+}
+
+// handleGetUnifiedMock returns a single mock by ID.
+// GET /mocks/{id}
+//
+// The admin store is the single source of truth — always read from there.
+func (a *API) handleGetUnifiedMock(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "missing mock id")
+		return
+	}
+
+	mockStore := a.getMockStore()
+	if mockStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Mock store is not available")
+		return
+	}
+
+	m, err := mockStore.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "mock not found")
+			return
+		}
+		a.logger().Error("failed to get mock from store", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "get_error", ErrMsgInternalError)
+		return
+	}
+
+	// Enrich gRPC mocks with proto content if the file is in our managed protos dir
+	if m.Type == mock.TypeGRPC && m.GRPC != nil && m.GRPC.ProtoFile != "" {
+		dataDir := a.dataDir
+		if dataDir == "" {
+			dataDir = store.DefaultDataDir()
+		}
+		protosDir := filepath.Join(dataDir, "protos")
+		if strings.HasPrefix(m.GRPC.ProtoFile, protosDir) {
+			if content, err := os.ReadFile(m.GRPC.ProtoFile); err == nil { //nolint:gosec // G703 — path is validated to be within managed protos dir
+				m.GRPC.ProtoContent = string(content)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, m)
+}
+
+// handleCreateUnifiedMock creates a new mock.
+// POST /mocks
+func (a *API) handleCreateUnifiedMock(w http.ResponseWriter, r *http.Request) {
+	mockStore := a.getMockStore()
+	if mockStore == nil {
+		writeError(w, http.StatusNotImplemented, "not_implemented", "Unified mocks API requires persistent storage - coming soon")
+		return
+	}
+
+	var m mock.Mock
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+
+	// Validate required fields
+	if m.Type == "" {
+		writeError(w, http.StatusBadRequest, "missing_type", "type is required")
+		return
+	}
+
+	// Generate ID if not provided (needed before Validate since ID is required)
+	if m.ID == "" {
+		m.ID = generateMockID(m.Type)
+	}
+
+	// Import proto from file path (reads file, inlines as protoContent)
+	if m.Type == mock.TypeGRPC && m.GRPC != nil {
+		if err := inlineProtoFromFile(&m); err != nil {
+			writeError(w, http.StatusBadRequest, "proto_read_error", err.Error())
+			return
+		}
+	}
+
+	// Resolve inline proto content to a managed file
+	if m.Type == mock.TypeGRPC && m.GRPC != nil && m.GRPC.ProtoContent != "" {
+		if err := a.resolveInlineProtoContent(&m); err != nil {
+			writeError(w, http.StatusInternalServerError, "proto_write_error", err.Error())
+			return
+		}
+	}
+
+	// Validate the full mock configuration
+	if err := m.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+
+	// Check store for duplicate ID (admin store is the source of truth)
+	if existing, err := mockStore.Get(r.Context(), m.ID); err == nil && existing != nil {
+		writeError(w, http.StatusConflict, "duplicate_id", "Mock with this ID already exists")
+		return
+	}
+
+	// Set timestamps
+	now := time.Now()
+	m.CreatedAt = now
+	m.UpdatedAt = now
+
+	// Set default metaSortKey if not set (negative timestamp = newest first)
+	if m.MetaSortKey == 0 {
+		m.MetaSortKey = float64(-now.UnixMilli())
+	}
+
+	// Set workspaceId: use request body, then query param, then default
+	if m.WorkspaceID == "" {
+		m.WorkspaceID = r.URL.Query().Get("workspaceId")
+	}
+	if m.WorkspaceID == "" {
+		m.WorkspaceID = store.DefaultWorkspaceID
+	}
+
+	// Check for route collisions across workspaces (after base path prefixing).
+	// Two mocks from different workspaces can have the same path in the admin
+	// store, but if their effective engine paths collide the second mock would
+	// be silently shadowed. Reject at creation time with a clear error.
+	if collision := a.checkMockRouteCollision(r.Context(), &m); collision != nil {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"error":     "route_collision",
+			"message":   fmt.Sprintf("Route %s %s collides with existing mock %q (workspace %q) — both resolve to %s on the engine", collision.Method, m.HTTP.Matcher.Path, collision.ExistingMockName, collision.WorkspaceName, collision.EffectivePath),
+			"collision": collision,
+		})
+		return
+	}
+
+	// Check for port conflicts or merge opportunities
+	portResult := a.checkPortAvailability(r.Context(), &m, "")
+
+	// Handle blocking conflicts (cross-workspace or cross-protocol)
+	if portResult.Conflict != nil {
+		conflict := portResult.Conflict
+		// Determine the type of conflict for better error message
+		if conflict.ConflictType != m.Type {
+			writeError(w, http.StatusConflict, "port_conflict",
+				fmt.Sprintf("Port %d is in use by protocol '%s'. Different protocols cannot share ports.",
+					conflict.Port, conflict.ConflictType))
+		} else {
+			conflictName := conflict.ConflictName
+			if conflictName == "" {
+				conflictName = conflict.ConflictID
+			}
+			writeError(w, http.StatusConflict, "port_conflict",
+				fmt.Sprintf("Port %d is in use by workspace '%s'. Ports cannot be shared across workspaces.",
+					conflict.Port, conflictName))
+		}
+		return
+	}
+
+	// Handle merge opportunity (same port, same protocol, same workspace)
+	if portResult.MergeTarget != nil {
+		a.handleMergeMock(w, r, &m, portResult.MergeTarget, mockStore)
+		return
+	}
+
+	// No conflict, no merge - create new mock
+	if err := mockStore.Create(r.Context(), &m); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			writeError(w, http.StatusConflict, "duplicate_id", "Mock with this ID already exists")
+			return
+		}
+		a.logger().Error("failed to create mock in store", "id", m.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "create_error", ErrMsgInternalError)
+		return
+	}
+
+	// Push to all engines (local + registered remote) via fan-out.
+	// Admin = control plane, Engine(s) = data plane.
+	if _, err := a.pushCreateToEngines(r.Context(), &m); err != nil {
+		// Rollback the store operation - mock can't actually run
+		if deleteErr := mockStore.Delete(r.Context(), m.ID); deleteErr != nil {
+			a.logger().Warn("failed to rollback mock after engine error", "id", m.ID, "error", deleteErr)
+		}
+
+		a.logger().Error("failed to activate mock in engine(s)", "id", m.ID, "error", err)
+		errMsg := err.Error()
+		switch {
+		case isPortError(errMsg):
+			writeError(w, http.StatusConflict, "port_unavailable",
+				"Failed to start mock: the port may be in use by another process")
+		case isValidationError(errMsg):
+			writeError(w, http.StatusBadRequest, "validation_error", errMsg)
+		default:
+			writeError(w, http.StatusServiceUnavailable, "engine_error", ErrMsgEngineUnavailable)
+		}
+		return
+	}
+
+	// Return created response with action indicator
+	response := map[string]interface{}{
+		"id":      m.ID,
+		"action":  "created",
+		"message": fmt.Sprintf("Created %s mock", m.Type),
+		"mock":    m,
+	}
+	writeJSON(w, http.StatusCreated, response)
+}
+
+// handleMergeMock handles merging a new mock's services/topics into an existing mock.
+// This is called when creating a gRPC/MQTT mock on a port that already has a mock.
+func (a *API) handleMergeMock(w http.ResponseWriter, r *http.Request, newMock *mock.Mock, target *mock.Mock, mockStore store.MockStore) {
+	var mergeResult *MergeResult
+	var err error
+
+	switch newMock.Type {
+	case mock.TypeGRPC:
+		mergeResult, err = mergeGRPCMock(target, newMock)
+		if err != nil {
+			writeError(w, http.StatusConflict, "service_conflict", err.Error())
+			return
+		}
+	case mock.TypeMQTT:
+		mergeResult, err = mergeMQTTMock(target, newMock)
+		if err != nil {
+			writeError(w, http.StatusConflict, "topic_conflict", err.Error())
+			return
+		}
+	default:
+		// Non-mergeable protocol - this shouldn't happen based on checkPortAvailability
+		writeError(w, http.StatusConflict, "port_conflict",
+			fmt.Sprintf("Port %d is already in use and cannot be shared for protocol %s",
+				getMockPort(newMock), newMock.Type))
+		return
+	}
+
+	// Update the target mock in the store
+	target.UpdatedAt = time.Now()
+	if err := mockStore.Update(r.Context(), target); err != nil {
+		a.logger().Error("failed to merge mock into store", "targetId", target.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "update_error", ErrMsgInternalError)
+		return
+	}
+
+	// Push merged mock update to all engines via fan-out
+	if _, err := a.pushUpdateToEngines(r.Context(), target.ID, target); err != nil {
+		a.logger().Warn("failed to notify engine(s) of merged mock", "id", target.ID, "error", err)
+		// Don't fail - the mock is updated in store, engine will pick it up on next sync
+	}
+
+	// Build response
+	port := getMockPort(target)
+	var message string
+	if newMock.Type == mock.TypeGRPC {
+		message = fmt.Sprintf("Merged into existing gRPC server on port %d", port)
+	} else {
+		message = fmt.Sprintf("Merged into existing MQTT broker on port %d", port)
+	}
+
+	response := map[string]interface{}{
+		"id":           target.ID,
+		"action":       "merged",
+		"message":      message,
+		"targetMockId": target.ID,
+		"mock":         target,
+	}
+
+	if len(mergeResult.AddedServices) > 0 {
+		response["addedServices"] = mergeResult.AddedServices
+		response["totalServices"] = mergeResult.TotalServices
+	}
+	if len(mergeResult.AddedTopics) > 0 {
+		response["addedTopics"] = mergeResult.AddedTopics
+		response["totalTopics"] = mergeResult.TotalTopics
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// handleUpdateUnifiedMock updates an existing mock (full replacement).
+// PUT /mocks/{id}
+func (a *API) handleUpdateUnifiedMock(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "missing mock id")
+		return
+	}
+
+	var m mock.Mock
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+
+	// Ensure ID matches path
+	m.ID = id
+	m.UpdatedAt = time.Now()
+
+	mockStore := a.getMockStore()
+	if mockStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Mock store is not available")
+		return
+	}
+
+	// Get existing mock to preserve createdAt and workspaceID
+	existing, err := mockStore.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "mock not found")
+			return
+		}
+		a.logger().Error("failed to get mock for update", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "get_error", ErrMsgInternalError)
+		return
+	}
+
+	// Preserve createdAt and workspaceID if not provided
+	m.CreatedAt = existing.CreatedAt
+	if m.WorkspaceID == "" {
+		m.WorkspaceID = existing.WorkspaceID
+	}
+
+	// Check for port conflicts (excluding this mock)
+	// For updates, we don't support merging - any port collision is a conflict.
+	portResult := a.checkPortAvailability(r.Context(), &m, id)
+	if portResult.Conflict != nil {
+		conflictName := portResult.Conflict.ConflictName
+		if conflictName == "" {
+			conflictName = portResult.Conflict.ConflictID
+		}
+		writeError(w, http.StatusConflict, "port_conflict",
+			fmt.Sprintf("Port %d is already in use by '%s' (%s) in this workspace",
+				portResult.Conflict.Port, conflictName, portResult.Conflict.ConflictType))
+		return
+	}
+	// Treat merge targets as conflicts for updates (no auto-merging on update)
+	if portResult.MergeTarget != nil {
+		conflictName := portResult.MergeTarget.Name
+		if conflictName == "" {
+			conflictName = portResult.MergeTarget.ID
+		}
+		writeError(w, http.StatusConflict, "port_conflict",
+			fmt.Sprintf("Port %d is already in use by '%s' (%s) in this workspace",
+				getMockPort(&m), conflictName, portResult.MergeTarget.Type))
+		return
+	}
+
+	// Import proto from file path (reads file, inlines as protoContent)
+	if m.Type == mock.TypeGRPC && m.GRPC != nil {
+		if err := inlineProtoFromFile(&m); err != nil {
+			writeError(w, http.StatusBadRequest, "proto_read_error", err.Error())
+			return
+		}
+	}
+
+	// Resolve inline proto content to a managed file
+	if m.Type == mock.TypeGRPC && m.GRPC != nil && m.GRPC.ProtoContent != "" {
+		if err := a.resolveInlineProtoContent(&m); err != nil {
+			writeError(w, http.StatusInternalServerError, "proto_write_error", err.Error())
+			return
+		}
+	}
+
+	// Validate the full mock configuration before persisting
+	if err := m.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+
+	// Check for route collisions across workspaces (after base path prefixing).
+	// The mock's ID is set, so checkRouteCollision will skip self.
+	if collision := a.checkMockRouteCollision(r.Context(), &m); collision != nil {
+		mockPath := ""
+		if m.HTTP != nil && m.HTTP.Matcher != nil {
+			mockPath = m.HTTP.Matcher.Path
+		}
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"error":     "route_collision",
+			"message":   fmt.Sprintf("Route %s %s collides with existing mock %q (workspace %q) — both resolve to %s on the engine", collision.Method, mockPath, collision.ExistingMockName, collision.WorkspaceName, collision.EffectivePath),
+			"collision": collision,
+		})
+		return
+	}
+
+	// Persist to store (source of truth)
+	if err := mockStore.Update(r.Context(), &m); err != nil {
+		a.logger().Error("failed to update mock in store", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "update_error", ErrMsgInternalError)
+		return
+	}
+
+	// Push update to all engines via fan-out
+	if _, err := a.pushUpdateToEngines(r.Context(), id, &m); err != nil {
+		a.logger().Error("failed to update mock in engine(s)", "id", m.ID, "error", err)
+		errMsg := err.Error()
+		// Rollback the store operation - restore the existing mock
+		if rollbackErr := mockStore.Update(r.Context(), existing); rollbackErr != nil {
+			a.logger().Warn("failed to rollback mock update after engine error", "id", m.ID, "error", rollbackErr)
+		}
+		switch {
+		case isPortError(errMsg):
+			writeError(w, http.StatusConflict, "port_unavailable",
+				"Failed to update mock: the port may be in use by another process")
+		case isValidationError(errMsg):
+			writeError(w, http.StatusBadRequest, "validation_error", errMsg)
+		default:
+			writeError(w, http.StatusServiceUnavailable, "engine_error", ErrMsgEngineUnavailable)
+		}
+		return
+	}
+
+	response := map[string]interface{}{
+		"id":      m.ID,
+		"action":  "updated",
+		"message": fmt.Sprintf("Updated %s mock", m.Type),
+		"mock":    m,
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// handlePatchUnifiedMock partially updates a mock.
+// PATCH /mocks/{id}
+func (a *API) handlePatchUnifiedMock(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "missing mock id")
+		return
+	}
+
+	// Decode patch into a map first to see which fields are being updated
+	var patch map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+
+	mockStore := a.getMockStore()
+	if mockStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Mock store is not available")
+		return
+	}
+
+	// Get existing mock from store
+	existing, err := mockStore.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "mock not found")
+			return
+		}
+		a.logger().Error("failed to get mock for patch", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "get_error", ErrMsgInternalError)
+		return
+	}
+
+	// Save pre-patch state for rollback
+	prePatch := *existing
+
+	// Apply patch to existing mock
+	applyMockPatch(existing, patch)
+
+	// Import proto from file path (reads file, inlines as protoContent)
+	if existing.Type == mock.TypeGRPC && existing.GRPC != nil {
+		if err := inlineProtoFromFile(existing); err != nil {
+			writeError(w, http.StatusBadRequest, "proto_read_error", err.Error())
+			return
+		}
+	}
+
+	// Resolve inline proto content to a managed file
+	if existing.Type == mock.TypeGRPC && existing.GRPC != nil && existing.GRPC.ProtoContent != "" {
+		if err := a.resolveInlineProtoContent(existing); err != nil {
+			writeError(w, http.StatusInternalServerError, "proto_write_error", err.Error())
+			return
+		}
+	}
+
+	// Validate the patched mock configuration before persisting
+	if err := existing.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+
+	// Check for route collisions across workspaces (after base path prefixing).
+	// The mock's ID is preserved, so checkRouteCollision will skip self.
+	if collision := a.checkMockRouteCollision(r.Context(), existing); collision != nil {
+		mockPath := ""
+		if existing.HTTP != nil && existing.HTTP.Matcher != nil {
+			mockPath = existing.HTTP.Matcher.Path
+		}
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"error":     "route_collision",
+			"message":   fmt.Sprintf("Route %s %s collides with existing mock %q (workspace %q) — both resolve to %s on the engine", collision.Method, mockPath, collision.ExistingMockName, collision.WorkspaceName, collision.EffectivePath),
+			"collision": collision,
+		})
+		return
+	}
+
+	// Persist to store (source of truth)
+	if err := mockStore.Update(r.Context(), existing); err != nil {
+		a.logger().Error("failed to update mock in store (patch)", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "update_error", ErrMsgInternalError)
+		return
+	}
+
+	// Push patch update to all engines via fan-out
+	if _, err := a.pushUpdateToEngines(r.Context(), id, existing); err != nil {
+		a.logger().Error("failed to apply mock patch in engine(s)", "id", existing.ID, "error", err)
+		errMsg := err.Error()
+		// Rollback the store to pre-patch state
+		if rollbackErr := mockStore.Update(r.Context(), &prePatch); rollbackErr != nil {
+			a.logger().Warn("failed to rollback mock patch after engine error", "id", id, "error", rollbackErr)
+		}
+		switch {
+		case isPortError(errMsg):
+			writeError(w, http.StatusConflict, "port_unavailable",
+				"Failed to update mock: the port may be in use by another process")
+		case isValidationError(errMsg):
+			writeError(w, http.StatusBadRequest, "validation_error", errMsg)
+		default:
+			writeError(w, http.StatusServiceUnavailable, "engine_error", ErrMsgEngineUnavailable)
+		}
+		return
+	}
+
+	response := map[string]interface{}{
+		"id":      existing.ID,
+		"action":  "updated",
+		"message": fmt.Sprintf("Updated %s mock", existing.Type),
+		"mock":    existing,
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// handleDeleteUnifiedMock deletes a mock by ID.
+// DELETE /mocks/{id}
+//
+// The admin store is the source of truth. All mocks — whether loaded from a
+// config file or created via the API — are written to the admin store first,
+// then pushed to the engine. Delete follows the same pattern: store first,
+// then notify the engine to stop serving.
+func (a *API) handleDeleteUnifiedMock(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "missing mock id")
+		return
+	}
+
+	mockStore := a.getMockStore()
+	if mockStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Mock store is not available")
+		return
+	}
+
+	// Get the mock first so we can rollback if engine delete fails
+	existing, err := mockStore.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "mock not found")
+			return
+		}
+		a.logger().Error("failed to get mock for delete", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "get_error", ErrMsgInternalError)
+		return
+	}
+
+	// Delete from store (source of truth)
+	if err := mockStore.Delete(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "mock not found")
+			return
+		}
+		a.logger().Error("failed to delete mock from store", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "delete_error", ErrMsgInternalError)
+		return
+	}
+
+	// Push delete to all engines via fan-out
+	if err := a.pushDeleteToEngines(r.Context(), id); err != nil {
+		a.logger().Error("failed to delete mock from engine(s)", "id", id, "error", err)
+		// Rollback: re-create the mock in the store
+		if rollbackErr := mockStore.Create(r.Context(), existing); rollbackErr != nil {
+			a.logger().Warn("failed to rollback mock deletion after engine error", "id", id, "error", rollbackErr)
+		}
+		writeError(w, http.StatusServiceUnavailable, "engine_error",
+			sanitizeEngineError(err, a.logger(), "delete mock from engine"))
+		return
+	}
+
+	// Clean up managed proto file for gRPC mocks
+	if existing.Type == mock.TypeGRPC && existing.GRPC != nil && existing.GRPC.ProtoFile != "" {
+		dataDir := a.dataDir
+		if dataDir == "" {
+			dataDir = store.DefaultDataDir()
+		}
+		protosDir := filepath.Join(dataDir, "protos")
+		if strings.HasPrefix(existing.GRPC.ProtoFile, protosDir) {
+			_ = os.Remove(existing.GRPC.ProtoFile) //nolint:gosec // G703 — path is validated to be within managed protos dir
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDeleteAllUnifiedMocks deletes all mocks, optionally filtered by type.
+// DELETE /mocks?type=http
+func (a *API) handleDeleteAllUnifiedMocks(w http.ResponseWriter, r *http.Request) {
+	mockStore := a.getMockStore()
+	if mockStore == nil {
+		writeError(w, http.StatusNotImplemented, "not_implemented", "Unified mocks API requires persistent storage - coming soon")
+		return
+	}
+
+	mockType := mock.Type(r.URL.Query().Get("type"))
+
+	// List mocks before deleting so we can notify the engine for each
+	var filter *store.MockFilter
+	if mockType != "" {
+		filter = &store.MockFilter{Type: mockType}
+	}
+	mocksToDelete, listErr := mockStore.List(r.Context(), filter)
+	if listErr != nil {
+		a.logger().Error("failed to list mocks before delete-all", "type", mockType, "error", listErr)
+		writeError(w, http.StatusInternalServerError, "delete_error", ErrMsgInternalError)
+		return
+	}
+
+	var err error
+	if mockType != "" {
+		err = mockStore.DeleteByType(r.Context(), mockType)
+	} else {
+		err = mockStore.DeleteAll(r.Context())
+	}
+
+	if err != nil {
+		a.logger().Error("failed to delete mocks from store", "type", mockType, "error", err)
+		writeError(w, http.StatusInternalServerError, "delete_error", ErrMsgInternalError)
+		return
+	}
+
+	// Push deletes to all engines via fan-out
+	a.pushDeleteBulkToEngines(r.Context(), mocksToDelete)
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleToggleUnifiedMock toggles the enabled state of a mock.
+// POST /mocks/{id}/toggle
+//
+// Store-first: update the admin store (source of truth), then notify the engine.
+func (a *API) handleToggleUnifiedMock(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "missing mock id")
+		return
+	}
+
+	mockStore := a.getMockStore()
+	if mockStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Mock store is not available")
+		return
+	}
+
+	m, err := mockStore.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "mock not found")
+			return
+		}
+		a.logger().Error("failed to get mock for toggle", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "get_error", ErrMsgInternalError)
+		return
+	}
+
+	currentEnabled := m.Enabled == nil || *m.Enabled
+	newEnabled := !currentEnabled
+	m.Enabled = &newEnabled
+	m.UpdatedAt = time.Now()
+
+	if err := mockStore.Update(r.Context(), m); err != nil {
+		a.logger().Error("failed to update mock toggle in store", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "update_error", ErrMsgInternalError)
+		return
+	}
+
+	// Push toggle to all engines via fan-out
+	if _, err := a.pushToggleToEngines(r.Context(), id, newEnabled); err != nil {
+		a.logger().Error("failed to toggle mock in engine(s)", "id", id, "error", err)
+		// Rollback store
+		m.Enabled = &currentEnabled
+		if rollbackErr := mockStore.Update(r.Context(), m); rollbackErr != nil {
+			a.logger().Warn("failed to rollback toggle after engine error", "id", id, "error", rollbackErr)
+		}
+		writeError(w, http.StatusServiceUnavailable, "engine_error",
+			sanitizeEngineError(err, a.logger(), "toggle mock in engine"))
+		return
+	}
+
+	state := "disabled"
+	if newEnabled {
+		state = "enabled"
+	}
+	response := map[string]interface{}{
+		"id":      m.ID,
+		"action":  "toggled",
+		"message": "Mock " + state,
+		"mock":    m,
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// BulkPortConflict represents a port conflict found during bulk operations.
+type BulkPortConflict struct {
+	MockIndex    int       `json:"mockIndex"`
+	MockID       string    `json:"mockId"`
+	MockName     string    `json:"mockName"`
+	Port         int       `json:"port"`
+	ConflictWith string    `json:"conflictWith"` // "existing" or mock ID from the batch
+	ConflictID   string    `json:"conflictId,omitempty"`
+	ConflictName string    `json:"conflictName,omitempty"`
+	ConflictType mock.Type `json:"conflictType,omitempty"`
+}
+
+// checkBulkPortConflicts validates port conflicts for a batch of mocks.
+// It checks both conflicts within the batch and against existing mocks.
+// Returns a list of conflicts if any are found.
+//
+// Simple rule: one port = one mock. No port sharing allowed, even for same protocol.
+// If you want multiple topics on one MQTT broker, define them all in one mock config.
+func (a *API) checkBulkPortConflicts(ctx context.Context, mocks []*mock.Mock) []BulkPortConflict {
+	var conflicts []BulkPortConflict
+
+	// Track ports used within the batch (grouped by workspace and port)
+	// Key: "workspaceID:port" -> first mock using it
+	type portUsage struct {
+		index int
+	}
+	batchPorts := make(map[string]portUsage)
+
+	for i, m := range mocks {
+		port := getMockPort(m)
+		if port == 0 {
+			continue // Skip mocks without dedicated ports
+		}
+
+		key := fmt.Sprintf("%s:%d", m.WorkspaceID, port)
+
+		// Check for conflict within the batch - any duplicate port is a conflict
+		if firstUsage, exists := batchPorts[key]; exists {
+			firstMock := mocks[firstUsage.index]
+
+			conflicts = append(conflicts, BulkPortConflict{
+				MockIndex:    i,
+				MockID:       m.ID,
+				MockName:     m.Name,
+				Port:         port,
+				ConflictWith: firstMock.ID,
+				ConflictID:   firstMock.ID,
+				ConflictName: firstMock.Name,
+				ConflictType: firstMock.Type,
+			})
+			continue
+		}
+
+		// Check for conflict with existing mocks
+		// For bulk creates, we don't support merging - any port collision is a conflict.
+		// Use checkPortAvailability to detect both conflicts and merge targets.
+		portResult := a.checkPortAvailability(ctx, m, "")
+		if portResult.Conflict != nil {
+			conflicts = append(conflicts, BulkPortConflict{
+				MockIndex:    i,
+				MockID:       m.ID,
+				MockName:     m.Name,
+				Port:         port,
+				ConflictWith: "existing",
+				ConflictID:   portResult.Conflict.ConflictID,
+				ConflictName: portResult.Conflict.ConflictName,
+				ConflictType: portResult.Conflict.ConflictType,
+			})
+			continue
+		}
+		// Treat merge targets as conflicts for bulk creates (no auto-merging)
+		if portResult.MergeTarget != nil {
+			conflicts = append(conflicts, BulkPortConflict{
+				MockIndex:    i,
+				MockID:       m.ID,
+				MockName:     m.Name,
+				Port:         port,
+				ConflictWith: "existing",
+				ConflictID:   portResult.MergeTarget.ID,
+				ConflictName: portResult.MergeTarget.Name,
+				ConflictType: portResult.MergeTarget.Type,
+			})
+			continue
+		}
+
+		// No conflict, record this port as used
+		batchPorts[key] = portUsage{index: i}
+	}
+
+	return conflicts
+}
+
+// handleBulkCreateUnifiedMocks creates multiple mocks in a single request.
+// POST /mocks/bulk
+func (a *API) handleBulkCreateUnifiedMocks(w http.ResponseWriter, r *http.Request) {
+	mockStore := a.getMockStore()
+	if mockStore == nil {
+		writeError(w, http.StatusNotImplemented, "not_implemented", "Unified mocks API requires persistent storage - coming soon")
+		return
+	}
+
+	// Override the default body limit — bulk imports can be large.
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10MB
+
+	var mocks []*mock.Mock
+	if err := json.NewDecoder(r.Body).Decode(&mocks); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+
+	// Check for duplicate IDs within the batch
+	seenIDs := make(map[string]bool)
+	for i, m := range mocks {
+		if m.ID != "" {
+			if seenIDs[m.ID] {
+				writeError(w, http.StatusBadRequest, "duplicate_id",
+					fmt.Sprintf("duplicate mock ID '%s' at index %d", m.ID, i))
+				return
+			}
+			seenIDs[m.ID] = true
+		}
+	}
+
+	now := time.Now()
+	queryWorkspaceID := r.URL.Query().Get("workspaceId")
+	prepareBulkMocks(mocks, now, queryWorkspaceID)
+
+	// If replace=true, delete existing mocks with matching IDs first.
+	// This enables idempotent `mockd up` — re-running with the same config works.
+	if replace := parseOptionalBool(r.URL.Query().Get("replace")); replace != nil && *replace {
+		for _, m := range mocks {
+			if m.ID != "" {
+				_ = mockStore.Delete(r.Context(), m.ID) // Ignore not-found errors
+				// Also remove from all engines so they re-create cleanly
+				_ = a.pushDeleteToEngines(r.Context(), m.ID)
+			}
+		}
+	}
+
+	// Check for port conflicts within the batch and against existing mocks
+	if conflicts := a.checkBulkPortConflicts(r.Context(), mocks); len(conflicts) > 0 {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"error":     "port_conflict",
+			"message":   fmt.Sprintf("Found %d port conflict(s) in the batch", len(conflicts)),
+			"conflicts": conflicts,
+		})
+		return
+	}
+
+	if err := mockStore.BulkCreate(r.Context(), mocks); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			writeError(w, http.StatusConflict, "already_exists", "one or more mocks already exist")
+			return
+		}
+		a.logger().Error("failed to bulk create mocks in store", "error", err)
+		writeError(w, http.StatusInternalServerError, "bulk_create_error", ErrMsgInternalError)
+		return
+	}
+
+	// Push each mock to all engines via fan-out.
+	// Track any engine errors for reporting and roll back failed mocks from store.
+	var engineErrors []string
+	var failedIDs []string
+	for _, m := range mocks {
+		if _, err := a.pushCreateToEngines(r.Context(), m); err != nil {
+			a.logger().Warn("failed to push bulk mock create to engine(s)", "id", m.ID, "error", err)
+			failedIDs = append(failedIDs, m.ID)
+			if isPortError(err.Error()) {
+				engineErrors = append(engineErrors, m.ID+": port may be in use by another process")
+			} else {
+				engineErrors = append(engineErrors, m.ID+": "+err.Error())
+			}
+		}
+	}
+
+	// Roll back mocks that failed to register with the engine
+	for _, failedID := range failedIDs {
+		if err := mockStore.Delete(r.Context(), failedID); err != nil {
+			a.logger().Warn("failed to roll back mock from store after engine error", "id", failedID, "error", err)
+		}
+	}
+
+	// Remove failed mocks from the response list
+	if len(failedIDs) > 0 {
+		failedSet := make(map[string]bool, len(failedIDs))
+		for _, id := range failedIDs {
+			failedSet[id] = true
+		}
+		successMocks := make([]*mock.Mock, 0, len(mocks)-len(failedIDs))
+		for _, m := range mocks {
+			if !failedSet[m.ID] {
+				successMocks = append(successMocks, m)
+			}
+		}
+		mocks = successMocks
+	}
+
+	response := map[string]interface{}{
+		"created": len(mocks),
+		"mocks":   mocks,
+	}
+	if len(engineErrors) > 0 {
+		response["warnings"] = engineErrors
+	}
+	if len(failedIDs) > 0 {
+		response["failedIds"] = failedIDs
+	}
+
+	writeJSON(w, http.StatusCreated, response)
+}
+
+// prepareBulkMocks assigns IDs, timestamps, and workspace IDs to bulk-created mocks.
+func prepareBulkMocks(mocks []*mock.Mock, now time.Time, queryWorkspaceID string) {
+	for _, m := range mocks {
+		if m.ID == "" {
+			m.ID = generateMockID(m.Type)
+		}
+		m.CreatedAt = now
+		m.UpdatedAt = now
+		if m.MetaSortKey == 0 {
+			m.MetaSortKey = float64(-now.UnixMilli())
+		}
+		if m.WorkspaceID == "" && queryWorkspaceID != "" {
+			m.WorkspaceID = queryWorkspaceID
+		}
+		if m.WorkspaceID == "" {
+			m.WorkspaceID = store.DefaultWorkspaceID
+		}
+	}
+}
+
+// generateMockID generates a unique ID for a mock based on its type.
+func generateMockID(t mock.Type) string {
+	// Use type-prefixed IDs for easier identification
+	prefix := string(t)
+	if prefix == "" {
+		prefix = "mock"
+	}
+	return prefix + "_" + generateShortID()
+}
+
+// generateShortID generates a short unique ID.
+func generateShortID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based ID
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
+func mapMockLookupError(err error, log *slog.Logger, operation string) (int, string, string) {
+	if errors.Is(err, engineclient.ErrNotFound) {
+		return http.StatusNotFound, "not_found", "mock not found"
+	}
+	return http.StatusServiceUnavailable, "engine_error", sanitizeEngineError(err, log, operation)
+}
+
+// inlineProtoFromFile reads a user-provided protoFile path and imports the
+// content as protoContent, making the mock self-contained. This is "import from
+// file" semantics — the content is snapshot'd at create/update time. Changes to
+// the original file are NOT picked up; the user must re-import.
+// Only applies to single protoFile; protoFiles (plural) is left as-is for now.
+func inlineProtoFromFile(m *mock.Mock) error {
+	if m.GRPC == nil || m.GRPC.ProtoContent != "" || m.GRPC.ProtoFile == "" {
+		// Already has inline content, or no file to import — nothing to do
+		return nil
+	}
+
+	content, err := os.ReadFile(m.GRPC.ProtoFile) //nolint:gosec // G703 — proto file path from mock config, validated before use
+	if err != nil {
+		return fmt.Errorf("failed to read proto file %q: %w", m.GRPC.ProtoFile, err)
+	}
+
+	m.GRPC.ProtoContent = string(content)
+	// protoFile will be overwritten by resolveInlineProtoContent to point
+	// at the managed copy in {data-dir}/protos/
+	return nil
+}
+
+// resolveInlineProtoContent writes inline proto content to the data dir for
+// persistence and also sets protoFile for backwards compatibility with file-based
+// workflows. ProtoContent is KEPT in the stored mock so it travels to remote
+// engines (the engine prefers protoContent over protoFile when available).
+func (a *API) resolveInlineProtoContent(m *mock.Mock) error {
+	if m.GRPC == nil || m.GRPC.ProtoContent == "" {
+		return nil
+	}
+
+	dataDir := a.dataDir
+	if dataDir == "" {
+		dataDir = store.DefaultDataDir()
+	}
+
+	protosDir := filepath.Join(dataDir, "protos")
+	if err := os.MkdirAll(protosDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create protos directory: %w", err)
+	}
+
+	filename := m.ID + ".proto"
+	protoPath := filepath.Join(protosDir, filename)
+
+	if err := os.WriteFile(protoPath, []byte(m.GRPC.ProtoContent), 0o644); err != nil { //nolint:gosec // G703 — protoPath is constructed from managed data dir + mock ID
+		return fmt.Errorf("failed to write proto file: %w", err)
+	}
+
+	// Set protoFile for local filesystem access (backwards compat).
+	// ProtoContent stays — engine uses it directly for remote parsing.
+	m.GRPC.ProtoFile = protoPath
+	return nil
+}

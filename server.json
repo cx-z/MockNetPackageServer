@@ -1,0 +1,27 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.mockd/mockd",
+  "title": "mockd",
+  "description": "Multi-protocol API mock server: HTTP, GraphQL, gRPC, WebSocket, MQTT, SSE, SOAP.",
+  "version": "0.6.2",
+  "websiteUrl": "https://mockd.io",
+  "repository": {
+    "url": "https://github.com/getmockd/mockd",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/getmockd/mockd",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeArguments": [
+        {
+          "type": "positional",
+          "valueHint": "mcp"
+        }
+      ]
+    }
+  ]
+}

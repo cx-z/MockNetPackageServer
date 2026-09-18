@@ -1,0 +1,515 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/beevik/etree"
+	"github.com/charmbracelet/huh"
+	"github.com/getmockd/mockd/pkg/cli/internal/parse"
+	"github.com/getmockd/mockd/pkg/portability"
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+)
+
+var soapCmd = &cobra.Command{
+	Use:   "soap",
+	Short: "Manage and test SOAP endpoints",
+}
+
+var soapAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add a new SOAP mock endpoint",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Use huh interactive forms if attributes are missing
+		// Skip interactive mode when stateful flags are provided (non-interactive use)
+		if !cmd.Flags().Changed("path") && !cmd.Flags().Changed("table") {
+			var formPath, formAction, formResponse string
+
+			form := huh.NewForm(
+				huh.NewGroup(
+					huh.NewInput().
+						Title("What is the SOAP endpoint path?").
+						Placeholder("/soap/calculator").
+						Value(&formPath).
+						Validate(func(s string) error {
+							if s == "" {
+								return errors.New("path is required")
+							}
+							return nil
+						}),
+					huh.NewInput().
+						Title("SOAP Action").
+						Placeholder("http://example.com/Add").
+						Value(&formAction).
+						Validate(func(s string) error {
+							if s == "" {
+								return errors.New("action is required")
+							}
+							return nil
+						}),
+					huh.NewText().
+						Title("Response XML").
+						Placeholder("<AddResponse><Result>3</Result></AddResponse>").
+						Value(&formResponse),
+				),
+			)
+			if err := form.Run(); err != nil {
+				return err
+			}
+			addPath = formPath
+			addOperation = formAction
+			addResponse = formResponse
+		}
+		addMockType = "soap"
+		return runAdd(cmd, args)
+	},
+}
+
+var (
+	soapHeaders        string
+	soapPretty         bool
+	soapCallAction     string
+	soapCallSOAP12     bool
+	soapCallTimeout    int
+	soapCallBodyFile   string
+	soapImportStateful bool
+	soapImportOutput   string
+	soapImportFormat   string
+	soapAddTable       string
+	soapAddBindAction  string
+)
+
+var soapImportCmd = &cobra.Command{
+	Use:   "import <wsdl-file>",
+	Short: "Import a WSDL file and generate SOAP mock configuration",
+	Long: `Parse a WSDL 1.1 file and generate mockd SOAP mock definitions.
+
+By default, operations get canned XML responses generated from XSD types.
+Use --stateful to map CRUD-like operations (GetUser, CreateOrder, etc.)
+to stateful resources with appropriate actions.
+
+Examples:
+  mockd soap import service.wsdl
+  mockd soap import service.wsdl --stateful
+  mockd soap import service.wsdl --stateful -o mocks.yaml
+  mockd soap import service.wsdl --format json`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSOAPImport,
+}
+
+func init() {
+	rootCmd.AddCommand(soapCmd)
+	soapCmd.AddCommand(soapAddCmd)
+
+	soapAddCmd.Flags().StringVar(&addPath, "path", "", "URL path to match")
+	soapAddCmd.Flags().StringVar(&addOperation, "action", "", "SOAP action")
+	soapAddCmd.Flags().StringVar(&addResponse, "response", "", "XML response body")
+	soapAddCmd.Flags().StringVar(&soapAddTable, "table", "", "Bind to a stateful resource table (e.g., users)")
+	soapAddCmd.Flags().StringVar(&soapAddBindAction, "bind", "", "Stateful action: list, get, create, update, patch, delete, custom")
+
+	// Add list/get/delete generic aliases
+	soapCmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List SOAP mocks",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			listMockType = "soap"
+			return runList(cmd, args)
+		},
+	})
+	soapCmd.AddCommand(&cobra.Command{
+		Use:   "get",
+		Short: "Get details of a SOAP mock",
+		RunE:  runGet,
+	})
+	soapCmd.AddCommand(&cobra.Command{
+		Use:   "delete",
+		Short: "Delete a SOAP mock",
+		RunE:  runDelete,
+	})
+
+	soapCmd.AddCommand(soapValidateCmd)
+
+	soapImportCmd.Flags().BoolVar(&soapImportStateful, "stateful", false, "Map CRUD operations to stateful resources")
+	soapImportCmd.Flags().StringVarP(&soapImportOutput, "output", "o", "", "Write output to file instead of stdout")
+	soapImportCmd.Flags().StringVar(&soapImportFormat, "format", "yaml", "Output format (yaml or json)")
+	soapCmd.AddCommand(soapImportCmd)
+
+	soapCallCmd.Flags().StringVarP(&soapHeaders, "header", "H", "", "Additional headers (key:value,key2:value2)")
+	soapCallCmd.Flags().BoolVar(&soapPretty, "pretty", true, "Pretty print output")
+	soapCallCmd.Flags().StringVar(&soapCallAction, "action", "", "SOAPAction header value")
+	soapCallCmd.Flags().BoolVar(&soapCallSOAP12, "soap12", false, "Use SOAP 1.2 envelope format")
+	soapCallCmd.Flags().IntVar(&soapCallTimeout, "timeout", 30, "Request timeout in seconds")
+	soapCallCmd.Flags().StringVarP(&soapCallBodyFile, "body-file", "f", "", "Read SOAP body XML from file (use - for stdin)")
+	soapCmd.AddCommand(soapCallCmd)
+}
+
+var soapValidateCmd = &cobra.Command{
+	Use:   "validate <wsdl-file>",
+	Short: "Validate a WSDL file",
+	RunE:  runSOAPValidate,
+}
+
+var soapCallCmd = &cobra.Command{
+	Use:   "call <endpoint> <action> <body>",
+	Short: "Execute a SOAP call against an endpoint",
+	RunE:  runSOAPCall,
+}
+
+// runSOAPValidate validates a WSDL file.
+func runSOAPValidate(cmd *cobra.Command, args []string) error {
+	if len(args) < 1 {
+		return errors.New("wsdl file is required")
+	}
+
+	wsdlFile := args[0]
+
+	// Read WSDL file
+	wsdlBytes, err := os.ReadFile(wsdlFile)
+	if err != nil {
+		return fmt.Errorf("failed to read WSDL file: %w", err)
+	}
+
+	// Parse as XML
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(wsdlBytes); err != nil {
+		return fmt.Errorf("wsdl validation failed: invalid XML: %w", err)
+	}
+
+	// Validate basic WSDL structure
+	root := doc.Root()
+	if root == nil {
+		return errors.New("wsdl validation failed: empty document")
+	}
+
+	// Check for definitions element (WSDL 1.1) or description element (WSDL 2.0)
+	if root.Tag != "definitions" && root.Tag != "description" {
+		return fmt.Errorf("wsdl validation failed: root element must be 'definitions' (WSDL 1.1) or 'description' (WSDL 2.0), got '%s'", root.Tag)
+	}
+
+	// Validate namespace — check both default xmlns and prefixed xmlns:prefix declarations.
+	// etree stores default xmlns as Key="xmlns", but prefixed xmlns:wsdl as Key="wsdl" Space="xmlns".
+	wsdlNS := false
+	for _, attr := range root.Attr {
+		isNS := attr.Key == "xmlns" || attr.Space == "xmlns"
+		if isNS && (strings.Contains(attr.Value, "wsdl") || strings.Contains(attr.Value, "schemas.xmlsoap.org")) {
+			wsdlNS = true
+			break
+		}
+	}
+	if !wsdlNS {
+		return errors.New("wsdl validation failed: missing WSDL namespace declaration")
+	}
+
+	// Count elements using the portability package's namespace-aware helpers,
+	// which handle both prefixed (wsdl:service) and unprefixed (service) elements.
+	services := findWSDLElements(root, "service")
+	portTypes := findWSDLElements(root, "portType")
+	bindings := findWSDLElements(root, "binding")
+	messages := findWSDLElements(root, "message")
+	operations := findWSDLOperations(portTypes)
+
+	// Build structured result
+	serviceNames := make([]string, 0, len(services))
+	for _, svc := range services {
+		serviceNames = append(serviceNames, svc.SelectAttrValue("name", "unnamed"))
+	}
+	opNames := make([]string, 0, len(operations))
+	for _, pt := range portTypes {
+		ptName := pt.SelectAttrValue("name", "unnamed")
+		for _, op := range findWSDLChildElements(pt, "operation") {
+			opNames = append(opNames, ptName+"."+op.SelectAttrValue("name", "unnamed"))
+		}
+	}
+
+	printResult(map[string]any{
+		"valid":      true,
+		"file":       wsdlFile,
+		"services":   len(services),
+		"portTypes":  len(portTypes),
+		"bindings":   len(bindings),
+		"operations": len(operations),
+		"messages":   len(messages),
+	}, func() {
+		fmt.Printf("WSDL valid: %s\n", wsdlFile)
+		fmt.Printf("  Services: %d\n", len(services))
+		fmt.Printf("  Port Types: %d\n", len(portTypes))
+		fmt.Printf("  Bindings: %d\n", len(bindings))
+		fmt.Printf("  Operations: %d\n", len(operations))
+		fmt.Printf("  Messages: %d\n", len(messages))
+
+		if len(serviceNames) > 0 {
+			fmt.Println("\nServices:")
+			for _, svc := range services {
+				svcName := svc.SelectAttrValue("name", "unnamed")
+				fmt.Printf("  %s\n", svcName)
+
+				for _, port := range findWSDLChildElements(svc, "port") {
+					portName := port.SelectAttrValue("name", "unnamed")
+					binding := port.SelectAttrValue("binding", "")
+					fmt.Printf("    Port: %s (binding: %s)\n", portName, binding)
+				}
+			}
+		}
+
+		if len(opNames) > 0 {
+			fmt.Println("\nOperations:")
+			for _, name := range opNames {
+				fmt.Printf("  %s\n", name)
+			}
+		}
+	})
+	return nil
+}
+
+// runSOAPCall executes a SOAP call against an endpoint.
+func runSOAPCall(cmd *cobra.Command, args []string) error {
+	if len(args) < 2 {
+		return errors.New("endpoint and operation are required")
+	}
+
+	endpoint := args[0]
+	operation := args[1]
+	body := ""
+	if len(args) >= 3 {
+		body = args[2]
+	}
+
+	soapAction := soapCallAction
+	soap12 := soapCallSOAP12
+	timeout := soapCallTimeout
+
+	// Build SOAP body — resolution order: --body-file, @file arg, positional arg, stdin, auto-generate
+	var soapBody string
+	switch {
+	case soapCallBodyFile != "":
+		if soapCallBodyFile == "-" {
+			bodyBytes, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("failed to read body from stdin: %w", err)
+			}
+			soapBody = string(bodyBytes)
+		} else {
+			bodyBytes, err := os.ReadFile(soapCallBodyFile)
+			if err != nil {
+				return fmt.Errorf("failed to read body file: %w", err)
+			}
+			soapBody = string(bodyBytes)
+		}
+	case body != "" && body[0] == '@':
+		bodyBytes, err := os.ReadFile(body[1:])
+		if err != nil {
+			return fmt.Errorf("failed to read body file: %w", err)
+		}
+		soapBody = string(bodyBytes)
+	case body != "":
+		soapBody = body
+	default:
+		// Generate minimal body for operation
+		soapBody = fmt.Sprintf("<%s xmlns=\"http://tempuri.org/\"/>", operation)
+	}
+
+	// Build SOAP envelope
+	var envelope string
+	var contentType string
+	if soap12 {
+		envelope = buildSOAP12Envelope(soapBody)
+		contentType = "application/soap+xml; charset=utf-8"
+		if soapAction != "" {
+			contentType = fmt.Sprintf("application/soap+xml; charset=utf-8; action=\"%s\"", soapAction)
+		}
+	} else {
+		envelope = buildSOAP11Envelope(soapBody)
+		contentType = "text/xml; charset=utf-8"
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequest("POST", endpoint, strings.NewReader(envelope))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", contentType)
+	if !soap12 && soapAction != "" {
+		req.Header.Set("SOAPAction", fmt.Sprintf("\"%s\"", soapAction))
+	}
+
+	// Add custom headers
+	if soapHeaders != "" {
+		for _, header := range parse.SplitHeaders(soapHeaders) {
+			parts := parse.HeaderParts(header)
+			if len(parts) == 2 {
+				req.Header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+			}
+		}
+	}
+
+	// Execute request
+	client := &http.Client{
+		Timeout: secondsToDuration(timeout),
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Read response
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Print response
+	if soapPretty {
+		prettyXML := prettyPrintXML(respBody)
+		fmt.Println(prettyXML)
+	} else {
+		fmt.Println(string(respBody))
+	}
+
+	// Check for SOAP fault
+	if bytes.Contains(respBody, []byte("Fault")) {
+		return fmt.Errorf("SOAP fault received (HTTP %d)", resp.StatusCode)
+	}
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("request failed with status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// buildSOAP11Envelope builds a SOAP 1.1 envelope.
+func buildSOAP11Envelope(body string) string {
+	var buf bytes.Buffer
+	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
+	buf.WriteString(`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">`)
+	buf.WriteString(`<soap:Body>`)
+	buf.WriteString(body)
+	buf.WriteString(`</soap:Body>`)
+	buf.WriteString(`</soap:Envelope>`)
+	return buf.String()
+}
+
+// buildSOAP12Envelope builds a SOAP 1.2 envelope.
+func buildSOAP12Envelope(body string) string {
+	var buf bytes.Buffer
+	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
+	buf.WriteString(`<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope">`)
+	buf.WriteString(`<soap:Body>`)
+	buf.WriteString(body)
+	buf.WriteString(`</soap:Body>`)
+	buf.WriteString(`</soap:Envelope>`)
+	return buf.String()
+}
+
+// prettyPrintXML formats XML with indentation.
+func prettyPrintXML(xmlBytes []byte) string {
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(xmlBytes); err != nil {
+		// If parsing fails, return as-is
+		return string(xmlBytes)
+	}
+	doc.Indent(2)
+	result, err := doc.WriteToString()
+	if err != nil {
+		return string(xmlBytes)
+	}
+	return result
+}
+
+// secondsToDuration converts seconds to time.Duration.
+func secondsToDuration(seconds int) time.Duration {
+	return time.Duration(seconds) * time.Second
+}
+
+// runSOAPImport handles the "mockd soap import <wsdl-file>" command.
+func runSOAPImport(cmd *cobra.Command, args []string) error {
+	wsdlFile := args[0]
+
+	// Read the WSDL file
+	data, err := os.ReadFile(wsdlFile)
+	if err != nil {
+		return fmt.Errorf("failed to read WSDL file: %w", err)
+	}
+
+	// Create the importer with options
+	importer := &portability.WSDLImporter{
+		Stateful: soapImportStateful,
+	}
+
+	// Import
+	collection, err := importer.Import(data)
+	if err != nil {
+		return fmt.Errorf("failed to import WSDL: %w", err)
+	}
+
+	// Serialize output
+	var output []byte
+	switch strings.ToLower(soapImportFormat) {
+	case "json":
+		output, err = json.MarshalIndent(collection, "", "  ")
+	case "yaml", "yml", "":
+		output, err = yaml.Marshal(collection)
+	default:
+		return fmt.Errorf("unsupported output format %q (use yaml or json)", soapImportFormat)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to serialize output: %w", err)
+	}
+
+	// Write output
+	if soapImportOutput != "" {
+		if err := os.WriteFile(soapImportOutput, output, 0o644); err != nil { //nolint:gosec // G703 — CLI flag value, operator-controlled
+			return fmt.Errorf("failed to write output file: %w", err)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Imported %d mock(s) from %s → %s\n",
+			len(collection.Mocks), wsdlFile, soapImportOutput)
+		if soapImportStateful && len(collection.StatefulResources) > 0 {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generated %d stateful resource(s)\n",
+				len(collection.StatefulResources))
+		}
+	} else {
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), string(output))
+	}
+
+	return nil
+}
+
+// --- WSDL namespace-aware helpers for soap validate ---
+// These mirror the helpers in pkg/portability/wsdl.go, matching child elements
+// by local name regardless of namespace prefix (handles both <service> and <wsdl:service>).
+
+// findWSDLElements returns all direct child elements of parent matching the local name.
+// etree stores the local name in Tag (e.g., "service" even for <wsdl:service>).
+func findWSDLElements(parent *etree.Element, localName string) []*etree.Element {
+	var results []*etree.Element
+	for _, child := range parent.ChildElements() {
+		if child.Tag == localName {
+			results = append(results, child)
+		}
+	}
+	return results
+}
+
+// findWSDLChildElements is an alias for findWSDLElements for readability at call sites.
+func findWSDLChildElements(parent *etree.Element, localName string) []*etree.Element {
+	return findWSDLElements(parent, localName)
+}
+
+// findWSDLOperations collects all operation elements from a slice of portType elements.
+func findWSDLOperations(portTypes []*etree.Element) []*etree.Element {
+	ops := make([]*etree.Element, 0, len(portTypes))
+	for _, pt := range portTypes {
+		ops = append(ops, findWSDLElements(pt, "operation")...)
+	}
+	return ops
+}

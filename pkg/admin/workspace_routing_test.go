@@ -1,0 +1,586 @@
+package admin
+
+import (
+	"testing"
+
+	"github.com/getmockd/mockd/pkg/mock"
+	"github.com/getmockd/mockd/pkg/store"
+)
+
+func TestSlugifyWorkspaceName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"simple", "Payment API", "payment-api"},
+		{"version suffix", "Users Service v2", "users-service-v2"},
+		{"already slugged", "payment-api", "payment-api"},
+		{"single word", "Default", "default"},
+		{"extra spaces", "  My  Workspace  ", "my-workspace"},
+		{"underscores", "my_workspace_test", "my-workspace-test"},
+		{"dots", "api.v2.staging", "api-v2-staging"},
+		{"mixed separators", "My_Cool.API v3", "my-cool-api-v3"},
+		{"numbers only", "123", "123"},
+		{"special chars", "Hello@World!", "helloworld"},
+		{"unicode", "Ünïcödë", "ünïcödë"},
+		{"empty", "", ""},
+		{"only spaces", "   ", ""},
+		{"trailing dash", "foo-", "foo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SlugifyWorkspaceName(tt.input)
+			if got != tt.expected {
+				t.Errorf("SlugifyWorkspaceName(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestWorkspaceBasePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		basePath string
+		expected string
+	}{
+		{"empty (root)", "", ""},
+		{"with leading slash", "/payment-api", "/payment-api"},
+		{"without leading slash", "payment-api", "/payment-api"},
+		{"nested", "/api/v2", "/api/v2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws := &store.Workspace{BasePath: tt.basePath}
+			got := WorkspaceBasePath(ws)
+			if got != tt.expected {
+				t.Errorf("WorkspaceBasePath(%q) = %q, want %q", tt.basePath, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestEffectiveMockPath(t *testing.T) {
+	rootWS := &store.Workspace{ID: store.DefaultWorkspaceID, BasePath: ""}
+	paymentWS := &store.Workspace{ID: "ws_pay", BasePath: "/payment-api"}
+	usersWS := &store.Workspace{ID: "ws_usr", BasePath: "users"} // no leading slash
+
+	tests := []struct {
+		name            string
+		mockPath        string
+		workspaceID     string
+		ws              *store.Workspace
+		rootWorkspaceID string
+		expected        string
+	}{
+		{"root workspace - no prefix", "/payments/charge", store.DefaultWorkspaceID, rootWS, store.DefaultWorkspaceID, "/payments/charge"},
+		{"non-root - gets prefix", "/payments/charge", "ws_pay", paymentWS, store.DefaultWorkspaceID, "/payment-api/payments/charge"},
+		{"non-root is root on this engine", "/payments/charge", "ws_pay", paymentWS, "ws_pay", "/payments/charge"},
+		{"no leading slash on basePath", "/api/users", "ws_usr", usersWS, store.DefaultWorkspaceID, "/users/api/users"},
+		{"root path", "/", "ws_pay", paymentWS, store.DefaultWorkspaceID, "/payment-api/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := effectiveMockPath(tt.mockPath, tt.workspaceID, tt.ws, tt.rootWorkspaceID)
+			if got != tt.expected {
+				t.Errorf("effectiveMockPath(%q, %q, ws{%q}, %q) = %q, want %q",
+					tt.mockPath, tt.workspaceID, tt.ws.BasePath, tt.rootWorkspaceID, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestPrefixMockForEngine_HTTP(t *testing.T) {
+	paymentWS := &store.Workspace{ID: "ws_pay", BasePath: "/payment-api"}
+
+	original := &mock.Mock{
+		ID:          "mock_1",
+		Type:        mock.TypeHTTP,
+		WorkspaceID: "ws_pay",
+		HTTP: &mock.HTTPSpec{
+			Matcher: &mock.HTTPMatcher{
+				Method: "POST",
+				Path:   "/payments/charge",
+			},
+		},
+	}
+
+	// Non-root workspace → should prefix
+	result := prefixMockForEngine(original, paymentWS, store.DefaultWorkspaceID)
+
+	if result.HTTP.Matcher.Path != "/payment-api/payments/charge" {
+		t.Errorf("expected prefixed path, got %q", result.HTTP.Matcher.Path)
+	}
+	// Original should be unmodified
+	if original.HTTP.Matcher.Path != "/payments/charge" {
+		t.Errorf("original mock was mutated: %q", original.HTTP.Matcher.Path)
+	}
+	// ID should be the same
+	if result.ID != original.ID {
+		t.Errorf("mock ID changed: %q → %q", original.ID, result.ID)
+	}
+}
+
+func TestPrefixMockForEngine_RootWorkspace(t *testing.T) {
+	rootWS := &store.Workspace{ID: store.DefaultWorkspaceID, BasePath: ""}
+
+	original := &mock.Mock{
+		ID:          "mock_1",
+		Type:        mock.TypeHTTP,
+		WorkspaceID: store.DefaultWorkspaceID,
+		HTTP: &mock.HTTPSpec{
+			Matcher: &mock.HTTPMatcher{
+				Method: "GET",
+				Path:   "/api/users",
+			},
+		},
+	}
+
+	// Root workspace → no prefix
+	result := prefixMockForEngine(original, rootWS, store.DefaultWorkspaceID)
+
+	if result.HTTP.Matcher.Path != "/api/users" {
+		t.Errorf("root workspace mock should not be prefixed, got %q", result.HTTP.Matcher.Path)
+	}
+	// Should return the SAME pointer (no clone needed)
+	if result != original {
+		t.Errorf("root workspace mock should return same pointer (no clone)")
+	}
+}
+
+func TestPrefixMockForEngine_NonRootIsRootOnEngine(t *testing.T) {
+	paymentWS := &store.Workspace{ID: "ws_pay", BasePath: "/payment-api"}
+
+	original := &mock.Mock{
+		ID:          "mock_1",
+		Type:        mock.TypeHTTP,
+		WorkspaceID: "ws_pay",
+		HTTP: &mock.HTTPSpec{
+			Matcher: &mock.HTTPMatcher{
+				Method: "POST",
+				Path:   "/charge",
+			},
+		},
+	}
+
+	// ws_pay is root on THIS engine → no prefix
+	result := prefixMockForEngine(original, paymentWS, "ws_pay")
+
+	if result.HTTP.Matcher.Path != "/charge" {
+		t.Errorf("mock from root workspace should not be prefixed, got %q", result.HTTP.Matcher.Path)
+	}
+}
+
+func TestPrefixMockForEngine_WebSocket(t *testing.T) {
+	paymentWS := &store.Workspace{ID: "ws_pay", BasePath: "/payment-api"}
+
+	original := &mock.Mock{
+		ID:          "mock_ws",
+		Type:        mock.TypeWebSocket,
+		WorkspaceID: "ws_pay",
+		WebSocket: &mock.WebSocketSpec{
+			Path: "/ws/events",
+		},
+	}
+
+	result := prefixMockForEngine(original, paymentWS, store.DefaultWorkspaceID)
+
+	if result.WebSocket.Path != "/payment-api/ws/events" {
+		t.Errorf("WebSocket path should be prefixed, got %q", result.WebSocket.Path)
+	}
+}
+
+func TestPrefixMockForEngine_GRPC_NoPrefix(t *testing.T) {
+	paymentWS := &store.Workspace{ID: "ws_pay", BasePath: "/payment-api"}
+
+	original := &mock.Mock{
+		ID:          "mock_grpc",
+		Type:        mock.TypeGRPC,
+		WorkspaceID: "ws_pay",
+		GRPC: &mock.GRPCSpec{
+			Port: 50051,
+		},
+	}
+
+	// gRPC is port-based, should not be modified
+	result := prefixMockForEngine(original, paymentWS, store.DefaultWorkspaceID)
+
+	if result != original {
+		t.Errorf("gRPC mock should not be cloned/modified")
+	}
+}
+
+func TestPrefixMockForEngine_MQTT_NoPrefix(t *testing.T) {
+	paymentWS := &store.Workspace{ID: "ws_pay", BasePath: "/payment-api"}
+
+	original := &mock.Mock{
+		ID:          "mock_mqtt",
+		Type:        mock.TypeMQTT,
+		WorkspaceID: "ws_pay",
+		MQTT: &mock.MQTTSpec{
+			Port: 1883,
+		},
+	}
+
+	result := prefixMockForEngine(original, paymentWS, store.DefaultWorkspaceID)
+
+	if result != original {
+		t.Errorf("MQTT mock should not be cloned/modified")
+	}
+}
+
+func TestPrefixMockForEngine_PathPattern(t *testing.T) {
+	paymentWS := &store.Workspace{ID: "ws_pay", BasePath: "/payment-api"}
+
+	original := &mock.Mock{
+		ID:          "mock_regex",
+		Type:        mock.TypeHTTP,
+		WorkspaceID: "ws_pay",
+		HTTP: &mock.HTTPSpec{
+			Matcher: &mock.HTTPMatcher{
+				PathPattern: "^/payments/.*",
+			},
+		},
+	}
+
+	result := prefixMockForEngine(original, paymentWS, store.DefaultWorkspaceID)
+
+	expected := "^/payment-api/payments/.*"
+	if result.HTTP.Matcher.PathPattern != expected {
+		t.Errorf("PathPattern should be prefixed, got %q, want %q", result.HTTP.Matcher.PathPattern, expected)
+	}
+}
+
+func TestPrefixMocksForEngine(t *testing.T) {
+	wsMap := map[string]*store.Workspace{
+		store.DefaultWorkspaceID: {ID: store.DefaultWorkspaceID, BasePath: ""},
+		"ws_pay":                 {ID: "ws_pay", BasePath: "/payment-api"},
+	}
+
+	mocks := []*mock.Mock{
+		{
+			ID: "m1", Type: mock.TypeHTTP, WorkspaceID: store.DefaultWorkspaceID,
+			HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Path: "/health"}},
+		},
+		{
+			ID: "m2", Type: mock.TypeHTTP, WorkspaceID: "ws_pay",
+			HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Path: "/charge"}},
+		},
+	}
+
+	result := prefixMocksForEngine(mocks, wsMap, store.DefaultWorkspaceID)
+
+	if len(result) != 2 {
+		t.Fatalf("expected 2 mocks, got %d", len(result))
+	}
+	if result[0].HTTP.Matcher.Path != "/health" {
+		t.Errorf("root workspace mock path should be unchanged, got %q", result[0].HTTP.Matcher.Path)
+	}
+	if result[1].HTTP.Matcher.Path != "/payment-api/charge" {
+		t.Errorf("non-root mock path should be prefixed, got %q", result[1].HTTP.Matcher.Path)
+	}
+	// Originals should be unmodified
+	if mocks[1].HTTP.Matcher.Path != "/charge" {
+		t.Errorf("original mock was mutated")
+	}
+}
+
+func TestCheckRouteCollision(t *testing.T) {
+	wsMap := map[string]*store.Workspace{
+		store.DefaultWorkspaceID: {ID: store.DefaultWorkspaceID, Name: "Default", BasePath: ""},
+		"ws_pay":                 {ID: "ws_pay", Name: "Payment API", BasePath: "/payment-api"},
+	}
+
+	t.Run("exact collision: same effective path across workspaces", func(t *testing.T) {
+		// Root has /api/status, ws_pay has /status → effective /payment-api/status.
+		// These differ. But if root has /payment-api/status and ws_pay creates /status,
+		// both resolve to /payment-api/status.
+		// Use mocks within the same workspace to test pure exact collision.
+		sameWsMap := map[string]*store.Workspace{
+			store.DefaultWorkspaceID: {ID: store.DefaultWorkspaceID, Name: "Default", BasePath: ""},
+			"ws_a":                   {ID: "ws_a", Name: "Service A", BasePath: "/svc-a"},
+			"ws_b":                   {ID: "ws_b", Name: "Service B", BasePath: "/svc-b"},
+		}
+		existing := []*mock.Mock{
+			{
+				ID: "m1", Type: mock.TypeHTTP, WorkspaceID: "ws_a",
+				HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Method: "GET", Path: "/status"}},
+			},
+		}
+		// ws_b mock whose effective path /svc-b/status differs from ws_a's /svc-a/status
+		newMock := &mock.Mock{
+			ID: "m_new", Type: mock.TypeHTTP, WorkspaceID: "ws_b",
+			HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Method: "GET", Path: "/status"}},
+		}
+		collision := checkRouteCollision(newMock, sameWsMap["ws_b"], existing, sameWsMap, store.DefaultWorkspaceID)
+		if collision != nil {
+			t.Errorf("different basePaths should not collide, got %+v", collision)
+		}
+	})
+
+	t.Run("no collision: different methods", func(t *testing.T) {
+		// Two non-root workspaces with identical paths but different methods
+		sameWsMap := map[string]*store.Workspace{
+			store.DefaultWorkspaceID: {ID: store.DefaultWorkspaceID, Name: "Default", BasePath: ""},
+			"ws_a":                   {ID: "ws_a", Name: "Service A", BasePath: "/svc-a"},
+		}
+		existing := []*mock.Mock{
+			{
+				ID: "m1", Type: mock.TypeHTTP, WorkspaceID: store.DefaultWorkspaceID,
+				HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Method: "GET", Path: "/health"}},
+			},
+		}
+		newMock := &mock.Mock{
+			ID: "m_new", Type: mock.TypeHTTP, WorkspaceID: store.DefaultWorkspaceID,
+			HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Method: "POST", Path: "/health"}},
+		}
+		collision := checkRouteCollision(newMock, sameWsMap[store.DefaultWorkspaceID], existing, sameWsMap, store.DefaultWorkspaceID)
+		if collision != nil {
+			t.Errorf("expected no collision (different methods), got %+v", collision)
+		}
+	})
+
+	t.Run("no collision: different effective paths", func(t *testing.T) {
+		existing := []*mock.Mock{
+			{
+				ID: "m1", Type: mock.TypeHTTP, WorkspaceID: store.DefaultWorkspaceID,
+				HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Method: "GET", Path: "/health"}},
+			},
+		}
+		newMock := &mock.Mock{
+			ID: "m_new", Type: mock.TypeHTTP, WorkspaceID: store.DefaultWorkspaceID,
+			HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Method: "GET", Path: "/ready"}},
+		}
+		collision := checkRouteCollision(newMock, wsMap[store.DefaultWorkspaceID], existing, wsMap, store.DefaultWorkspaceID)
+		if collision != nil {
+			t.Errorf("expected no collision, got %+v", collision)
+		}
+	})
+
+	t.Run("skip self on update", func(t *testing.T) {
+		// Simulating an update: same ID as existing mock, path unchanged
+		existing := []*mock.Mock{
+			{
+				ID: "m1", Type: mock.TypeHTTP, WorkspaceID: store.DefaultWorkspaceID,
+				HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Method: "GET", Path: "/health"}},
+			},
+		}
+		newMock := &mock.Mock{
+			ID: "m1", Type: mock.TypeHTTP, WorkspaceID: store.DefaultWorkspaceID,
+			HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Method: "GET", Path: "/health"}},
+		}
+		collision := checkRouteCollision(newMock, wsMap[store.DefaultWorkspaceID], existing, wsMap, store.DefaultWorkspaceID)
+		if collision != nil {
+			t.Errorf("should skip self, got collision with %s", collision.ExistingMockID)
+		}
+	})
+
+	t.Run("no collision: same workspace same path (priority matching)", func(t *testing.T) {
+		// Two mocks in the same workspace with the same method+path should NOT collide.
+		// The matching engine uses priority to pick the winner.
+		existing := []*mock.Mock{
+			{
+				ID: "m1", Type: mock.TypeHTTP, WorkspaceID: store.DefaultWorkspaceID,
+				HTTP: &mock.HTTPSpec{
+					Priority: 10,
+					Matcher:  &mock.HTTPMatcher{Method: "GET", Path: "/api/users"},
+				},
+			},
+		}
+		newMock := &mock.Mock{
+			ID: "m_new", Type: mock.TypeHTTP, WorkspaceID: store.DefaultWorkspaceID,
+			HTTP: &mock.HTTPSpec{
+				Priority: 100,
+				Matcher:  &mock.HTTPMatcher{Method: "GET", Path: "/api/users"},
+			},
+		}
+		collision := checkRouteCollision(newMock, wsMap[store.DefaultWorkspaceID], existing, wsMap, store.DefaultWorkspaceID)
+		if collision != nil {
+			t.Errorf("same-workspace duplicate paths should not collide (priority matching), got %+v", collision)
+		}
+	})
+
+	t.Run("collision: cross-workspace same effective path", func(t *testing.T) {
+		// Root workspace has /payment-api/charge, ws_pay has /charge → both resolve to /payment-api/charge.
+		// This IS a collision because they're in different workspaces.
+		existing := []*mock.Mock{
+			{
+				ID: "m1", Type: mock.TypeHTTP, WorkspaceID: store.DefaultWorkspaceID,
+				HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Method: "POST", Path: "/payment-api/charge"}},
+			},
+		}
+		newMock := &mock.Mock{
+			ID: "m_new", Type: mock.TypeHTTP, WorkspaceID: "ws_pay",
+			HTTP: &mock.HTTPSpec{Matcher: &mock.HTTPMatcher{Method: "POST", Path: "/charge"}},
+		}
+		collision := checkRouteCollision(newMock, wsMap["ws_pay"], existing, wsMap, store.DefaultWorkspaceID)
+		if collision == nil {
+			t.Error("expected cross-workspace collision when effective paths match")
+		}
+	})
+
+	t.Run("gRPC mock skipped", func(t *testing.T) {
+		existing := []*mock.Mock{}
+		newMock := &mock.Mock{
+			ID: "m_grpc", Type: mock.TypeGRPC, WorkspaceID: "ws_pay",
+			GRPC: &mock.GRPCSpec{Port: 50051},
+		}
+		collision := checkRouteCollision(newMock, wsMap["ws_pay"], existing, wsMap, store.DefaultWorkspaceID)
+		if collision != nil {
+			t.Errorf("gRPC should never collide on path, got %+v", collision)
+		}
+	})
+}
+
+func TestBasePathsOverlap(t *testing.T) {
+	tests := []struct {
+		name     string
+		a, b     string
+		expected bool
+	}{
+		{"exact duplicate", "/api", "/api", true},
+		{"a inside b", "/api/users", "/api", true},
+		{"b inside a", "/api", "/api/users", true},
+		{"similar prefix no overlap", "/api", "/api-v2", false},
+		{"different paths", "/api", "/other", false},
+		{"root vs non-root", "", "/api", false},
+		{"both root", "", "", false},
+		{"deep nesting", "/api/v2/payments", "/api", true},
+		{"partial segment", "/payment", "/payment-api", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := basePathsOverlap(tt.a, tt.b)
+			if got != tt.expected {
+				t.Errorf("basePathsOverlap(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCheckBasePathConflict(t *testing.T) {
+	peers := []*store.Workspace{
+		{ID: store.DefaultWorkspaceID, Name: "Default", BasePath: ""},
+		{ID: "ws_pay", Name: "Payment API", BasePath: "/payment-api"},
+		{ID: "ws_usr", Name: "Users", BasePath: "/users"},
+	}
+
+	t.Run("exact duplicate blocked", func(t *testing.T) {
+		conflict := checkBasePathConflict("/payment-api", "ws_new", peers)
+		if conflict == nil {
+			t.Fatal("expected conflict for exact duplicate /payment-api")
+		}
+		if conflict.ExistingID != "ws_pay" {
+			t.Errorf("expected conflict with ws_pay, got %s", conflict.ExistingID)
+		}
+	})
+
+	t.Run("prefix overlap blocked: new inside existing", func(t *testing.T) {
+		conflict := checkBasePathConflict("/payment-api/v2", "ws_new", peers)
+		if conflict == nil {
+			t.Fatal("expected conflict for /payment-api/v2 inside /payment-api")
+		}
+	})
+
+	t.Run("prefix overlap blocked: existing inside new", func(t *testing.T) {
+		conflict := checkBasePathConflict("/user", "ws_new", peers)
+		// "/user" does NOT overlap with "/users" — different path segment
+		if conflict != nil {
+			t.Errorf("expected no conflict for /user vs /users, got %+v", conflict)
+		}
+	})
+
+	t.Run("no overlap with different paths", func(t *testing.T) {
+		conflict := checkBasePathConflict("/orders", "ws_new", peers)
+		if conflict != nil {
+			t.Errorf("expected no conflict for /orders, got %+v", conflict)
+		}
+	})
+
+	t.Run("similar prefix allowed", func(t *testing.T) {
+		conflict := checkBasePathConflict("/payment-apiv2", "ws_new", peers)
+		if conflict != nil {
+			t.Errorf("expected no conflict for /payment-apiv2, got %+v", conflict)
+		}
+	})
+
+	t.Run("skip self on update", func(t *testing.T) {
+		conflict := checkBasePathConflict("/payment-api", "ws_pay", peers)
+		if conflict != nil {
+			t.Errorf("should skip self, got conflict with %s", conflict.ExistingID)
+		}
+	})
+
+	t.Run("root basePath never conflicts", func(t *testing.T) {
+		conflict := checkBasePathConflict("", "ws_new", peers)
+		if conflict != nil {
+			t.Errorf("root basePath should not conflict, got %+v", conflict)
+		}
+	})
+
+	t.Run("broader namespace blocked", func(t *testing.T) {
+		// Trying to claim /us which would cover /users
+		conflict := checkBasePathConflict("/us", "ws_new", peers)
+		// "/us" does NOT overlap with "/users" — not a segment boundary
+		if conflict != nil {
+			t.Errorf("/us should not overlap /users, got %+v", conflict)
+		}
+	})
+}
+
+func TestPathInvades(t *testing.T) {
+	tests := []struct {
+		name          string
+		effectivePath string
+		basePath      string
+		expected      bool
+	}{
+		{"exact basePath", "/payment-api", "/payment-api", true},
+		{"sub-path", "/payment-api/status", "/payment-api", true},
+		{"deep sub-path", "/payment-api/v2/charge", "/payment-api", true},
+		{"wildcard", "/payment-api/*", "/payment-api", true},
+		{"named param", "/payment-api/{id}", "/payment-api", true},
+		{"similar prefix", "/payment-apiv2/status", "/payment-api", false},
+		{"different path", "/health", "/payment-api", false},
+		{"root path", "/", "/payment-api", false},
+		{"partial overlap", "/payment", "/payment-api", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pathInvades(tt.effectivePath, tt.basePath)
+			if got != tt.expected {
+				t.Errorf("pathInvades(%q, %q) = %v, want %v", tt.effectivePath, tt.basePath, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidateBasePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty", "", ""},
+		{"valid", "/payment-api", "/payment-api"},
+		{"no leading slash", "payment-api", "/payment-api"},
+		{"trailing slash", "/payment-api/", "/payment-api"},
+		{"double slash", "/payment//api", "/payment/api"},
+		{"query string rejected", "/api?foo=bar", ""},
+		{"fragment rejected", "/api#section", ""},
+		{"spaces trimmed", "  /api  ", "/api"},
+		{"nested path", "/api/v2/payments", "/api/v2/payments"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := validateBasePath(tt.input)
+			if got != tt.expected {
+				t.Errorf("validateBasePath(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}

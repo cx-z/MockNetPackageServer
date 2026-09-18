@@ -1,0 +1,847 @@
+package admin
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/getmockd/mockd/pkg/admin/engineclient"
+	types "github.com/getmockd/mockd/pkg/api/types"
+	"github.com/getmockd/mockd/pkg/config"
+	"github.com/getmockd/mockd/pkg/httputil"
+	"github.com/getmockd/mockd/pkg/mock"
+	"github.com/getmockd/mockd/pkg/requestlog"
+	"github.com/getmockd/mockd/pkg/store"
+	"gopkg.in/yaml.v3"
+)
+
+// Type aliases pointing to the canonical shared types.
+type (
+	ErrorResponse    = types.ErrorResponse
+	HealthResponse   = types.HealthResponse
+	ServerStatus     = types.ServerStatus
+	MockListResponse = types.MockListResponse
+)
+
+// writeJSON writes a JSON response using the shared httputil package.
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	httputil.WriteJSON(w, status, data)
+}
+
+// writeError writes an error response.
+func writeError(w http.ResponseWriter, status int, errCode, message string) {
+	httputil.WriteJSON(w, status, ErrorResponse{
+		Error:   errCode,
+		Message: message,
+	})
+}
+
+// handleHealth handles GET /health.
+func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, HealthResponse{
+		Status:    "ok",
+		Uptime:    a.Uptime(),
+		Timestamp: time.Now().UTC(),
+	})
+}
+
+// handleReady handles GET /ready.
+// Returns 200 when config is loaded and server is ready to serve traffic.
+// Returns 503 when still initializing (e.g., importing a large spec).
+func (a *API) handleReady(w http.ResponseWriter, r *http.Request) {
+	if !a.ready.Load() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"status":    "initializing",
+			"timestamp": time.Now().UTC(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":    "ready",
+		"uptime":    a.Uptime(),
+		"timestamp": time.Now().UTC(),
+	})
+}
+
+// handleGetStatus handles GET /status and returns detailed server status.
+func (a *API) handleGetStatus(w http.ResponseWriter, r *http.Request, engine *engineclient.Client) {
+	ctx := r.Context()
+
+	engineStatus, err := engine.Status(ctx)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", sanitizeEngineError(err, a.logger(), "get engine status"))
+		return
+	}
+
+	// Count active mocks from admin store (single source of truth).
+	activeMocks := 0
+	if mockStore := a.getMockStore(); mockStore != nil {
+		allMocks, err := mockStore.List(ctx, nil)
+		if err == nil {
+			for _, m := range allMocks {
+				if m.Enabled == nil || *m.Enabled {
+					activeMocks++
+				}
+			}
+		}
+	}
+
+	version := a.version
+	if version == "" {
+		version = "dev"
+	}
+
+	writeJSON(w, http.StatusOK, ServerStatus{
+		ID:           engineStatus.ID,
+		Name:         engineStatus.Name,
+		Status:       engineStatus.Status,
+		HTTPPort:     protocolPort(engineStatus.Protocols, "http"),
+		HTTPSPort:    protocolPort(engineStatus.Protocols, "https"),
+		AdminPort:    a.port,
+		Uptime:       engineStatus.Uptime,
+		MockCount:    engineStatus.MockCount,
+		ActiveMocks:  activeMocks,
+		RequestCount: engineStatus.RequestCount,
+		TLSEnabled:   protocolEnabled(engineStatus.Protocols, "https"),
+		Version:      version,
+		Protocols:    engineStatus.Protocols,
+		StartedAt:    engineStatus.StartedAt,
+	})
+}
+
+func protocolPort(protocols map[string]types.ProtocolStatus, name string) int {
+	if p, ok := protocols[name]; ok {
+		return p.Port
+	}
+	return 0
+}
+
+func protocolEnabled(protocols map[string]types.ProtocolStatus, name string) bool {
+	if p, ok := protocols[name]; ok {
+		return p.Enabled
+	}
+	return false
+}
+
+// ConfigImportRequest represents a config import request.
+type ConfigImportRequest struct {
+	Replace bool                   `json:"replace"`
+	Config  *config.MockCollection `json:"config"`
+}
+
+// handleExportConfig handles GET /config.
+// Builds the export from the admin store (single source of truth) instead of
+// querying the engine, so config export works even if the engine is temporarily
+// unavailable.
+func (a *API) handleExportConfig(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		name = "mockd-export"
+	}
+
+	// Build the export collection from the admin store.
+	mockStore := a.getMockStore()
+	if mockStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable", "Data store not available")
+		return
+	}
+
+	// Apply workspace filter if provided.
+	var mockFilter *store.MockFilter
+	if workspaceID := r.URL.Query().Get("workspaceId"); workspaceID != "" {
+		mockFilter = &store.MockFilter{WorkspaceID: workspaceID}
+	}
+
+	mocks, err := mockStore.List(ctx, mockFilter)
+	if err != nil {
+		a.logger().Error("failed to list mocks for export", "error", err)
+		writeError(w, http.StatusInternalServerError, "export_error", ErrMsgInternalError)
+		return
+	}
+
+	collection := &config.MockCollection{
+		Version: "1.0",
+		Kind:    "MockCollection",
+		Name:    name,
+		Metadata: &config.CollectionMetadata{
+			Name: name,
+		},
+		Mocks: mocks,
+	}
+
+	// Include stateful resources if available.
+	if a.dataStore != nil {
+		resources, err := a.dataStore.StatefulResources().List(ctx)
+		if err == nil && len(resources) > 0 {
+			collection.StatefulResources = resources
+		}
+		// Include custom operations if available.
+		customOps, err := a.dataStore.CustomOperations().List(ctx)
+		if err == nil && len(customOps) > 0 {
+			collection.CustomOperations = customOps
+		}
+	}
+
+	// Support YAML export via ?format=yaml query parameter.
+	if strings.EqualFold(r.URL.Query().Get("format"), "yaml") {
+		out, err := yaml.Marshal(collection)
+		if err != nil {
+			a.logger().Error("failed to marshal YAML export", "error", err)
+			writeError(w, http.StatusInternalServerError, "export_error", ErrMsgInternalError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-yaml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(out)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, collection)
+}
+
+// decodeImportRequest reads and decodes a ConfigImportRequest from the HTTP
+// request body, handling both YAML and JSON content types. It writes an HTTP
+// error and returns a non-nil error on failure.
+func (a *API) decodeImportRequest(w http.ResponseWriter, r *http.Request) (*ConfigImportRequest, error) {
+	var req ConfigImportRequest
+
+	// Override the default body limit — config imports can be large.
+	const maxImportBodySize = 10 << 20 // 10MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportBodySize)
+
+	// Read the full body so we can try multiple decode strategies.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "Request body too large")
+			return nil, err
+		}
+		writeError(w, http.StatusBadRequest, "read_error", "Failed to read request body")
+		return nil, err
+	}
+
+	// Detect YAML content type and decode accordingly.
+	ct := r.Header.Get("Content-Type")
+	if strings.Contains(ct, "yaml") {
+		if err := yaml.Unmarshal(body, &req); err != nil {
+			a.logger().Debug("YAML parsing failed", "error", err)
+			writeError(w, http.StatusBadRequest, "invalid_yaml", "Invalid YAML in request body")
+			return nil, err
+		}
+	} else {
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeJSONDecodeError(w, err, a.logger())
+			return nil, err
+		}
+	}
+
+	// Support unwrapped format: if the body has no "config" wrapper but
+	// contains a "mocks" key, treat the entire body as a MockCollection.
+	// This allows the output of GET /config (export) to be directly
+	// re-imported via POST /config without manual wrapping.
+	if req.Config == nil {
+		var collection config.MockCollection
+		if strings.Contains(ct, "yaml") {
+			if err := yaml.Unmarshal(body, &collection); err == nil && collection.Mocks != nil {
+				req.Config = &collection
+			}
+		} else {
+			if err := json.Unmarshal(body, &collection); err == nil && collection.Mocks != nil {
+				req.Config = &collection
+			}
+		}
+	}
+
+	if req.Config == nil {
+		writeError(w, http.StatusBadRequest, "missing_config", "config field is required")
+		return nil, errors.New("missing config")
+	}
+
+	return &req, nil
+}
+
+// persistStatefulResources dual-writes stateful resources from the imported
+// config into the file store so they survive restarts.
+//
+// Each resource is stamped with workspaceID before persistence so the (workspace,
+// name) identity is preserved. When replace is true, only resources in the
+// target workspace are cleared — other workspaces are left untouched.
+func (a *API) persistStatefulResources(ctx context.Context, cfg *config.MockCollection, replace bool, workspaceID string) {
+	if len(cfg.StatefulResources) == 0 || a.dataStore == nil {
+		return
+	}
+	resStore := a.dataStore.StatefulResources()
+	if replace {
+		_ = resStore.DeleteAll(ctx, workspaceID)
+	}
+	for _, res := range cfg.StatefulResources {
+		if res == nil {
+			continue
+		}
+		// Stamp the workspace if the imported config didn't pin one explicitly,
+		// so the file store records (workspaceID, name) as identity (issue #12).
+		if res.Workspace == "" {
+			res.Workspace = workspaceID
+		}
+		if err := resStore.Create(ctx, res); err != nil {
+			if errors.Is(err, store.ErrAlreadyExists) {
+				// Resource already exists in this workspace; on replace we already
+				// cleared, so this shouldn't happen, but handle gracefully.
+				a.logger().Debug("stateful resource already exists in file store",
+					"name", res.Name, "workspace", res.Workspace)
+			} else {
+				a.logger().Warn("failed to write stateful resource to file store",
+					"name", res.Name, "workspace", res.Workspace, "error", err)
+			}
+		}
+	}
+}
+
+// persistCustomOperations dual-writes custom operations from the imported
+// config into the file store so they survive restarts.
+//
+// Each operation is stamped with workspaceID before persistence so the
+// (workspace, name) identity is preserved. When replace is true, only operations
+// in the target workspace are cleared — other workspaces are left untouched.
+func (a *API) persistCustomOperations(ctx context.Context, cfg *config.MockCollection, replace bool, workspaceID string) {
+	if len(cfg.CustomOperations) == 0 || a.dataStore == nil {
+		return
+	}
+	opStore := a.dataStore.CustomOperations()
+	if replace {
+		_ = opStore.DeleteAll(ctx, workspaceID)
+	}
+	for _, op := range cfg.CustomOperations {
+		if op == nil {
+			continue
+		}
+		// Stamp the workspace if the imported config didn't pin one explicitly
+		// (issue #12).
+		if op.Workspace == "" {
+			op.Workspace = workspaceID
+		}
+		if err := opStore.Create(ctx, op); err != nil {
+			if errors.Is(err, store.ErrAlreadyExists) {
+				a.logger().Debug("custom operation already exists in file store",
+					"name", op.Name, "workspace", op.Workspace)
+			} else {
+				a.logger().Warn("failed to write custom operation to file store",
+					"name", op.Name, "workspace", op.Workspace, "error", err)
+			}
+		}
+	}
+}
+
+// preValidateImportMocks validates each mock that has a type and protocol config,
+// returning an error that identifies the failing mock by index and ID.
+func preValidateImportMocks(mocks []*mock.Mock) error {
+	for idx, m := range mocks {
+		if m == nil || m.Type == "" {
+			continue
+		}
+		// Only validate mocks that carry protocol-specific config; bare
+		// stubs (type set but no spec) are allowed to pass through.
+		hasSpec := m.HTTP != nil || m.GRPC != nil || m.MQTT != nil ||
+			m.GraphQL != nil || m.WebSocket != nil || m.SOAP != nil || m.OAuth != nil
+		if !hasSpec {
+			continue
+		}
+		if m.ID == "" {
+			m.ID = generateMockID(m.Type)
+		}
+		if err := m.Validate(); err != nil {
+			return fmt.Errorf("mock at index %d (id=%q): %s", idx, m.ID, err.Error())
+		}
+	}
+	return nil
+}
+
+// handleImportConfig handles POST /config.
+func (a *API) handleImportConfig(w http.ResponseWriter, r *http.Request, engine *engineclient.Client) {
+	ctx := r.Context()
+
+	req, err := a.decodeImportRequest(w, r)
+	if err != nil {
+		return
+	}
+
+	// Allow replace=true via query param (in addition to JSON body field).
+	if replace := parseOptionalBool(r.URL.Query().Get("replace")); replace != nil && *replace {
+		req.Replace = true
+	}
+
+	// If dryRun=true, validate and return a preview without applying changes.
+	if dryRun := parseOptionalBool(r.URL.Query().Get("dryRun")); dryRun != nil && *dryRun {
+		mockCount := 0
+		for _, m := range req.Config.Mocks {
+			if m != nil {
+				mockCount++
+			}
+		}
+		result := map[string]any{
+			"dryRun": true,
+			"mocks":  mockCount,
+		}
+		if len(req.Config.StatefulResources) > 0 {
+			result["statefulResources"] = len(req.Config.StatefulResources)
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
+	mockStore := a.getMockStore()
+
+	// Default workspaceId for imported mocks (consistent with POST /mocks and POST /mocks/bulk).
+	workspaceID := r.URL.Query().Get("workspaceId")
+	if workspaceID == "" {
+		workspaceID = store.DefaultWorkspaceID
+	}
+
+	now := time.Now()
+	for _, m := range req.Config.Mocks {
+		if m == nil {
+			continue
+		}
+		if m.WorkspaceID == "" {
+			m.WorkspaceID = workspaceID
+		}
+		// Ensure timestamps are set so imported mocks look like normal mocks.
+		if m.CreatedAt.IsZero() {
+			m.CreatedAt = now
+		}
+		m.UpdatedAt = now
+		// Default enabled to true so imported mocks are active (Enabled is
+		// a *bool; nil would be treated as disabled by consumers).
+		if m.Enabled == nil {
+			enabled := true
+			m.Enabled = &enabled
+		}
+	}
+
+	// If replacing, clear the file store first so we don't leave stale entries.
+	// Scope the deletion to the target workspace — a replace import into one
+	// workspace must NOT delete mocks belonging to other workspaces (issue #12,
+	// same class as the stateful resource fix).
+	if req.Replace && mockStore != nil {
+		existing, _ := mockStore.List(ctx, &store.MockFilter{WorkspaceID: workspaceID})
+		for _, em := range existing {
+			_ = mockStore.Delete(ctx, em.ID)
+		}
+	}
+
+	// Write imported mocks to the admin file store FIRST (dual-write pattern).
+	// This ensures DELETE /mocks/{id} can find them later.
+	imported := 0
+	if mockStore != nil {
+		for _, m := range req.Config.Mocks {
+			if m == nil {
+				continue
+			}
+			// Generate ID if not provided
+			if m.ID == "" {
+				m.ID = generateMockID(m.Type)
+			}
+			// Use Create (skip duplicates) to populate the file store.
+			if err := mockStore.Create(ctx, m); err != nil {
+				// If it already exists, update it instead.
+				if errors.Is(err, store.ErrAlreadyExists) {
+					_ = mockStore.Update(ctx, m)
+				} else {
+					a.logger().Warn("failed to write imported mock to file store",
+						"id", m.ID, "error", err)
+				}
+			}
+		}
+	}
+
+	// Dual-write stateful resources to the file store so they survive restarts.
+	// Pass workspaceID so each entry is bucketed correctly (issue #12).
+	a.persistStatefulResources(ctx, req.Config, req.Replace, workspaceID)
+	// Dual-write custom operations to the file store so they survive restarts.
+	a.persistCustomOperations(ctx, req.Config, req.Replace, workspaceID)
+
+	// Pre-validate mocks so we can surface which mock (by index) is invalid.
+	if err := preValidateImportMocks(req.Config.Mocks); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+
+	// Forward to engine for runtime registration (starts gRPC/MQTT servers, registers handlers).
+	// Pass workspaceID so the engine registers stateful resources and custom operations
+	// under the active workspace bucket — otherwise lookups by mock.WorkspaceID fail at
+	// request time (issue #12).
+	importResult, err := engine.ImportConfig(ctx, req.Config, req.Replace, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "import_error", sanitizeError(err, a.logger(), "import config"))
+		return
+	}
+
+	// Use the engine's actual import counts, not the submitted count.
+	imported = importResult.Imported
+
+	// Get the total mock count from the admin store (single source of truth).
+	total := 0
+	if mockStore != nil {
+		allMocks, err := mockStore.List(ctx, nil)
+		if err == nil {
+			total = len(allMocks)
+		}
+	}
+	response := map[string]any{
+		"message":  "Configuration imported successfully",
+		"imported": imported,
+		"total":    total,
+	}
+	if len(req.Config.StatefulResources) > 0 {
+		response["statefulResources"] = len(req.Config.StatefulResources)
+	}
+	if len(importResult.Errors) > 0 {
+		response["warnings"] = importResult.Errors
+		response["message"] = fmt.Sprintf("Imported %d of %d mocks (%d failed)", imported, importResult.Total, len(importResult.Errors))
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// ImportConfigDirect imports a mock collection without going through HTTP.
+// Used by serve.go to load initial config after both the engine and admin are
+// started. This ensures mocks are written to the persistent store AND pushed
+// to the engine — keeping both in sync from the start.
+func (a *API) ImportConfigDirect(ctx context.Context, collection *config.MockCollection, replace bool) (int, error) {
+	// Ensure at least one engine is reachable.
+	if targets := a.allEngineTargets(); len(targets) == 0 {
+		return 0, errors.New("no engine connected — cannot import config")
+	}
+
+	mockStore := a.getMockStore()
+
+	now := time.Now()
+	for _, m := range collection.Mocks {
+		if m == nil {
+			continue
+		}
+		if m.WorkspaceID == "" {
+			m.WorkspaceID = store.DefaultWorkspaceID
+		}
+		if m.CreatedAt.IsZero() {
+			m.CreatedAt = now
+		}
+		m.UpdatedAt = now
+	}
+
+	// Clear stores if replacing
+	if replace && mockStore != nil {
+		existing, _ := mockStore.List(ctx, nil)
+		for _, em := range existing {
+			_ = mockStore.Delete(ctx, em.ID)
+		}
+	}
+
+	// Write mocks to the admin file store (so CRUD operations find them)
+	if mockStore != nil {
+		for _, m := range collection.Mocks {
+			if m == nil {
+				continue
+			}
+			if m.ID == "" {
+				m.ID = generateMockID(m.Type)
+			}
+			if err := mockStore.Create(ctx, m); err != nil {
+				if errors.Is(err, store.ErrAlreadyExists) {
+					_ = mockStore.Update(ctx, m)
+				} else {
+					a.logger().Warn("failed to write imported mock to file store",
+						"id", m.ID, "error", err)
+				}
+			}
+		}
+	}
+
+	// Persist stateful resources to the default workspace bucket. Per-workspace
+	// imports go through the HTTP path (handleImportConfig).
+	a.persistStatefulResources(ctx, collection, replace, store.DefaultWorkspaceID)
+	// Persist custom operations to the default workspace bucket.
+	a.persistCustomOperations(ctx, collection, replace, store.DefaultWorkspaceID)
+
+	// Pre-validate before sending to engine
+	if err := preValidateImportMocks(collection.Mocks); err != nil {
+		return 0, err
+	}
+
+	// Forward to all engines for runtime registration. Initial config load uses
+	// the default workspace; per-workspace imports go through the HTTP path.
+	importResult, err := a.pushImportToEngines(ctx, collection, replace, store.DefaultWorkspaceID)
+	if err != nil {
+		return 0, fmt.Errorf("engine import failed: %w", err)
+	}
+
+	// Apply chaos config from collection if present — fan out to all engines
+	if collection.ServerConfig != nil && collection.ServerConfig.Chaos != nil && collection.ServerConfig.Chaos.Enabled {
+		chaosAPI := chaosConfigToAPI(collection.ServerConfig.Chaos)
+		for _, target := range a.allEngineTargets() {
+			if err := target.client.SetChaos(ctx, &chaosAPI); err != nil {
+				a.logger().Warn("failed to apply chaos config to engine", "engine", target.label, "error", err)
+			} else {
+				a.logger().Info("chaos config applied from config file",
+					"engine", target.label,
+					"enabled", chaosAPI.Enabled,
+					"rules", len(chaosAPI.Rules))
+			}
+		}
+	}
+
+	return importResult.Imported, nil
+}
+
+// MockCreatorFunc creates a mock through the admin dual-write path: store first,
+// then push to engine. Recording/stream conversion handlers use this instead of
+// calling engine.CreateMock directly, so every mock they produce is visible to
+// list/get/delete/toggle via the admin store.
+type MockCreatorFunc func(ctx context.Context, m *config.MockConfiguration) (*config.MockConfiguration, error)
+
+// mockCreator returns a MockCreatorFunc that dual-writes to the admin store and
+// engine. Callers in the recording subsystem use this so converted recordings
+// are immediately visible in the admin store.
+func (a *API) mockCreator() MockCreatorFunc {
+	return func(ctx context.Context, m *config.MockConfiguration) (*config.MockConfiguration, error) {
+		mockStore := a.getMockStore()
+
+		// Ensure required fields.
+		now := time.Now()
+		if m.ID == "" {
+			m.ID = generateMockID(m.Type)
+		}
+		if m.WorkspaceID == "" {
+			m.WorkspaceID = store.DefaultWorkspaceID
+		}
+		if m.CreatedAt.IsZero() {
+			m.CreatedAt = now
+		}
+		m.UpdatedAt = now
+
+		// 1. Write to the admin store (single source of truth).
+		if mockStore != nil {
+			if err := mockStore.Create(ctx, m); err != nil {
+				if errors.Is(err, store.ErrAlreadyExists) {
+					// Overwrite — the caller built a new mock from a recording.
+					_ = mockStore.Update(ctx, m)
+				} else {
+					return nil, fmt.Errorf("store create failed: %w", err)
+				}
+			}
+		}
+
+		// 2. Push to all engines so they start serving the mock.
+		created, err := a.pushCreateToEngines(ctx, m)
+		if err != nil {
+			// Rollback store on engine failure.
+			if mockStore != nil {
+				_ = mockStore.Delete(ctx, m.ID)
+			}
+			return nil, fmt.Errorf("engine create failed: %w", err)
+		}
+		return created, nil
+	}
+}
+
+// handleListRequests handles GET /requests.
+// Supports filtering by protocol, method, path, and protocol-specific fields.
+//
+// Query Parameters:
+//   - protocol: Filter by protocol (http, grpc, websocket, sse, mqtt, soap, graphql)
+//   - method: Filter by method (HTTP method, gRPC method, MQTT PUBLISH/SUBSCRIBE, etc.)
+//   - path: Filter by path prefix (or topic pattern for MQTT)
+//   - matched: Filter by matched mock ID
+//   - status: Filter by response status code
+//   - hasError: Filter by error presence (true/false)
+//   - limit: Maximum number of entries to return
+//   - offset: Pagination offset
+//
+// Protocol-specific filters:
+//   - grpcService: Filter gRPC by service name
+//   - mqttTopic: Filter MQTT by topic (supports wildcards + and #)
+//   - mqttClientId: Filter MQTT by client ID
+//   - soapOperation: Filter SOAP by operation name
+//   - graphqlOpType: Filter GraphQL by operation type (query, mutation, subscription)
+//   - wsConnectionId: Filter WebSocket by connection ID
+//   - sseConnectionId: Filter SSE by connection ID
+func (a *API) handleListRequests(w http.ResponseWriter, r *http.Request, engine *engineclient.Client) {
+	ctx := r.Context()
+
+	// Build filter from query parameters
+	clientFilter := buildRequestFilter(r.URL.Query())
+	result, err := engine.ListRequests(ctx, clientFilter)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", sanitizeEngineError(err, a.logger(), "list requests"))
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func buildRequestFilter(query interface{ Get(string) string }) *requestlog.Filter {
+	clientFilter := &requestlog.Filter{}
+	if limit, ok := parsePositiveInt(query.Get("limit")); ok {
+		clientFilter.Limit = limit
+	}
+	if offset, ok := parseNonNegativeInt(query.Get("offset")); ok {
+		clientFilter.Offset = offset
+	}
+	if protocol := query.Get("protocol"); protocol != "" {
+		clientFilter.Protocol = protocol
+	}
+	if method := query.Get("method"); method != "" {
+		clientFilter.Method = method
+	}
+	if path := query.Get("path"); path != "" {
+		clientFilter.Path = path
+	}
+	if matched := query.Get("matched"); matched != "" {
+		clientFilter.MatchedID = matched
+	}
+	if status := query.Get("status"); status != "" {
+		if code, err := strconv.Atoi(status); err == nil {
+			clientFilter.StatusCode = code
+		}
+	}
+	if hasError := query.Get("hasError"); hasError != "" {
+		if parsed, err := strconv.ParseBool(hasError); err == nil {
+			clientFilter.HasError = &parsed
+		}
+	}
+	if unmatchedOnly := query.Get("unmatchedOnly"); unmatchedOnly != "" {
+		if parsed, err := strconv.ParseBool(unmatchedOnly); err == nil && parsed {
+			clientFilter.UnmatchedOnly = true
+		}
+	}
+	// Protocol-specific filters
+	if v := query.Get("grpcService"); v != "" {
+		clientFilter.GRPCService = v
+	}
+	if v := query.Get("mqttTopic"); v != "" {
+		clientFilter.MQTTTopic = v
+	}
+	if v := query.Get("mqttClientId"); v != "" {
+		clientFilter.MQTTClientID = v
+	}
+	if v := query.Get("soapOperation"); v != "" {
+		clientFilter.SOAPOperation = v
+	}
+	if v := query.Get("graphqlOpType"); v != "" {
+		clientFilter.GraphQLOpType = v
+	}
+	if v := query.Get("wsConnectionId"); v != "" {
+		clientFilter.WSConnectionID = v
+	}
+	if v := query.Get("sseConnectionId"); v != "" {
+		clientFilter.SSEConnectionID = v
+	}
+	if wsID := query.Get("workspaceId"); wsID != "" {
+		clientFilter.WorkspaceID = wsID
+	}
+	return clientFilter
+}
+
+// handleGetRequest handles GET /requests/{id}.
+func (a *API) handleGetRequest(w http.ResponseWriter, r *http.Request, engine *engineclient.Client) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Request ID is required")
+		return
+	}
+
+	entry, err := engine.GetRequest(ctx, id)
+	if err != nil {
+		if errors.Is(err, engineclient.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", ErrMsgNotFound)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", sanitizeEngineError(err, a.logger(), "get request"))
+		return
+	}
+	writeJSON(w, http.StatusOK, entry)
+}
+
+// handleClearRequests handles DELETE /requests.
+func (a *API) handleClearRequests(w http.ResponseWriter, r *http.Request, engine *engineclient.Client) {
+	ctx := r.Context()
+
+	count, err := engine.ClearRequests(ctx)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "engine_unavailable", sanitizeEngineError(err, a.logger(), "clear requests"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "Request logs cleared",
+		"cleared": count,
+	})
+}
+
+// handleStreamRequests handles GET /requests/stream - SSE endpoint for streaming new requests.
+func (a *API) handleStreamRequests(w http.ResponseWriter, r *http.Request, engine *engineclient.Client) {
+	// Set SSE headers (CORS is handled by the middleware — do not duplicate here)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Get the flusher
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "sse_error", "Streaming not supported")
+		return
+	}
+
+	// Send initial connection message
+	_, _ = fmt.Fprintf(w, "event: connected\ndata: {\"message\": \"Connected to request stream\"}\n\n")
+	flusher.Flush()
+
+	// Poll for request log updates
+	ctx := r.Context()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	lastID := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Get latest requests from engine
+			filter := &requestlog.Filter{Limit: 10}
+			result, err := engine.ListRequests(ctx, filter)
+			if err != nil {
+				continue
+			}
+
+			// Send new entries (result.Requests is newest first)
+			for i := len(result.Requests) - 1; i >= 0; i-- {
+				entry := result.Requests[i]
+				if entry.ID == lastID {
+					break
+				}
+				if lastID == "" && i < len(result.Requests)-1 {
+					// First iteration, only send most recent
+					continue
+				}
+
+				data, _ := json.Marshal(entry)
+				_, _ = fmt.Fprintf(w, "event: request\ndata: %s\n\n", data)
+				flusher.Flush()
+
+				if i == 0 {
+					lastID = entry.ID
+				}
+			}
+			if len(result.Requests) > 0 && lastID == "" {
+				lastID = result.Requests[0].ID
+			}
+		}
+	}
+}

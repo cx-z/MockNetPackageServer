@@ -1,0 +1,646 @@
+// Package config provides configuration types and utilities for the mock server engine.
+package config
+
+import (
+	"strings"
+	"time"
+
+	"github.com/getmockd/mockd/pkg/audit"
+	"github.com/getmockd/mockd/pkg/chaos"
+	"github.com/getmockd/mockd/pkg/graphql"
+	"github.com/getmockd/mockd/pkg/grpc"
+	"github.com/getmockd/mockd/pkg/mock"
+	"github.com/getmockd/mockd/pkg/mqtt"
+	"github.com/getmockd/mockd/pkg/oauth"
+	"github.com/getmockd/mockd/pkg/soap"
+	"github.com/getmockd/mockd/pkg/validation"
+)
+
+// EntityMeta contains common metadata for all stored entities.
+// Embed this in entity types for consistent workspace/sync support.
+type EntityMeta struct {
+	WorkspaceID string `json:"workspaceId,omitempty" yaml:"workspaceId,omitempty"` // Source workspace, defaults to empty string (default workspace)
+	SyncVersion int64  `json:"syncVersion,omitempty" yaml:"syncVersion,omitempty"` // For CRDT/conflict resolution
+}
+
+// OrganizationMeta contains folder organization metadata for sortable/folderable entities.
+// Embed this in entity types that support folder organization.
+type OrganizationMeta struct {
+	// ParentID is the folder ID this item belongs to ("" = root level)
+	ParentID string `json:"parentId,omitempty" yaml:"parentId,omitempty"`
+	// MetaSortKey is used for manual ordering within a folder (negative timestamp = newest first)
+	MetaSortKey float64 `json:"metaSortKey,omitempty" yaml:"metaSortKey,omitempty"`
+}
+
+// Folder represents an organizational container for grouping mocks and endpoints.
+type Folder struct {
+	EntityMeta       `json:",inline" yaml:",inline"`
+	OrganizationMeta `json:",inline" yaml:",inline"`
+
+	// ID is a unique identifier for the folder (prefixed: fld_xxx)
+	ID string `json:"id" yaml:"id"`
+	// Name is the display name
+	Name string `json:"name" yaml:"name"`
+	// Description is an optional longer description
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	// CreatedAt is when the folder was created
+	CreatedAt time.Time `json:"createdAt" yaml:"createdAt"`
+	// UpdatedAt is when the folder was last modified
+	UpdatedAt time.Time `json:"updatedAt" yaml:"updatedAt"`
+}
+
+// MockConfiguration is an alias for mock.Mock for backward compatibility.
+// New code should use mock.Mock directly.
+type MockConfiguration = mock.Mock
+
+// TLSConfig defines TLS/HTTPS configuration for the server.
+type TLSConfig struct {
+	// Enabled enables TLS/HTTPS on the server
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// CertFile is the path to the TLS certificate file
+	CertFile string `json:"certFile,omitempty" yaml:"certFile,omitempty"`
+	// KeyFile is the path to the TLS private key file
+	KeyFile string `json:"keyFile,omitempty" yaml:"keyFile,omitempty"`
+	// AutoGenerateCert enables auto-generation of self-signed certificate
+	AutoGenerateCert bool `json:"autoGenerateCert,omitempty" yaml:"autoGenerateCert,omitempty"`
+}
+
+// MTLSConfig defines mutual TLS (mTLS) configuration for client certificate authentication.
+type MTLSConfig struct {
+	// Enabled enables mTLS client certificate verification
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// ClientAuth specifies the client authentication policy:
+	// - "none": no client certificate requested
+	// - "request": client certificate requested but not required
+	// - "require": client certificate required but not verified
+	// - "verify-if-given": verify client certificate if provided
+	// - "require-and-verify": require and verify client certificate
+	ClientAuth string `json:"clientAuth,omitempty" yaml:"clientAuth,omitempty"`
+	// CACertFile is the path to the CA certificate file for verifying client certificates
+	CACertFile string `json:"caCertFile,omitempty" yaml:"caCertFile,omitempty"`
+	// CACertFiles is a list of CA certificate file paths for verifying client certificates
+	CACertFiles []string `json:"caCertFiles,omitempty" yaml:"caCertFiles,omitempty"`
+	// AllowedCNs restricts access to clients with specific Common Names (optional)
+	AllowedCNs []string `json:"allowedCNs,omitempty" yaml:"allowedCNs,omitempty"`
+	// AllowedOUs restricts access to clients with specific Organizational Units (optional)
+	AllowedOUs []string `json:"allowedOUs,omitempty" yaml:"allowedOUs,omitempty"`
+}
+
+// CORSConfig defines Cross-Origin Resource Sharing settings.
+type CORSConfig struct {
+	// Enabled enables CORS handling. When false, no CORS headers are added.
+	// Default: true (for development convenience)
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// AllowOrigins specifies allowed origins. Use "*" for any origin (not recommended for production).
+	// Empty list defaults to localhost origins only.
+	// Examples: ["https://example.com", "http://localhost:3000"]
+	AllowOrigins []string `json:"allowOrigins,omitempty" yaml:"allowOrigins,omitempty"`
+	// AllowMethods specifies allowed HTTP methods.
+	// Default: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+	AllowMethods []string `json:"allowMethods,omitempty" yaml:"allowMethods,omitempty"`
+	// AllowHeaders specifies allowed request headers.
+	// Default: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"]
+	AllowHeaders []string `json:"allowHeaders,omitempty" yaml:"allowHeaders,omitempty"`
+	// ExposeHeaders specifies headers that browsers are allowed to access.
+	ExposeHeaders []string `json:"exposeHeaders,omitempty" yaml:"exposeHeaders,omitempty"`
+	// AllowCredentials indicates whether credentials are allowed.
+	// Cannot be used with AllowOrigins: ["*"]
+	AllowCredentials bool `json:"allowCredentials,omitempty" yaml:"allowCredentials,omitempty"`
+	// MaxAge is the preflight cache duration in seconds. Default: 86400 (24 hours)
+	MaxAge int `json:"maxAge,omitempty" yaml:"maxAge,omitempty"`
+}
+
+// RateLimitConfig defines rate limiting settings for the mock engine.
+type RateLimitConfig struct {
+	// Enabled enables rate limiting. Default: false
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// RequestsPerSecond is the rate limit (tokens per second). Default: 1000
+	RequestsPerSecond float64 `json:"requestsPerSecond,omitempty" yaml:"requestsPerSecond,omitempty"`
+	// BurstSize is the maximum burst size. Default: 2000
+	BurstSize int `json:"burstSize,omitempty" yaml:"burstSize,omitempty"`
+	// MaxBuckets is the maximum number of per-IP buckets tracked concurrently.
+	// Limits memory usage under high cardinality / spoofed source attacks.
+	// Default: 10000 (from ratelimit.DefaultMaxBuckets)
+	MaxBuckets int `json:"maxBuckets,omitempty" yaml:"maxBuckets,omitempty"`
+	// TrustedProxies is a list of CIDR ranges or IPs for trusted proxies.
+	// When set, X-Forwarded-For headers are trusted from these sources.
+	TrustedProxies []string `json:"trustedProxies,omitempty" yaml:"trustedProxies,omitempty"`
+}
+
+// ServerConfiguration defines the mock server runtime settings and operational parameters.
+type ServerConfiguration struct {
+	// HTTPPort is the port for the HTTP server (0 = disabled unless HTTPAutoPort is true)
+	HTTPPort int `json:"httpPort,omitempty" yaml:"httpPort,omitempty"`
+	// HTTPAutoPort enables OS-assigned port when HTTPPort is 0.
+	// Used by `mockd engine --port 0` to let the OS pick a free port.
+	HTTPAutoPort bool `json:"-" yaml:"-"` // Not serialized — runtime-only flag
+	// HTTPSPort is the port for the HTTPS server (0 = disabled)
+	HTTPSPort int `json:"httpsPort,omitempty" yaml:"httpsPort,omitempty"`
+	// AdminPort is the port for the admin API (required)
+	AdminPort int `json:"adminPort" yaml:"adminPort"`
+	// ManagementPort is the port for the Engine Management API (default: 4281)
+	// This is an internal API used by the Admin server to communicate with the engine.
+	ManagementPort int `json:"managementPort,omitempty" yaml:"managementPort,omitempty"`
+	// TLS configures TLS/HTTPS settings
+	TLS *TLSConfig `json:"tls,omitempty" yaml:"tls,omitempty"`
+	// MTLS configures mutual TLS client certificate authentication
+	MTLS *MTLSConfig `json:"mtls,omitempty" yaml:"mtls,omitempty"`
+	// CORS configures Cross-Origin Resource Sharing. Default allows localhost only.
+	CORS *CORSConfig `json:"cors,omitempty" yaml:"cors,omitempty"`
+	// RateLimit configures rate limiting for the mock engine. Default: disabled.
+	RateLimit *RateLimitConfig `json:"rateLimit,omitempty" yaml:"rateLimit,omitempty"`
+	// LogRequests enables request logging
+	LogRequests bool `json:"logRequests" yaml:"logRequests"`
+	// MaxLogEntries is the maximum number of request log entries to retain
+	MaxLogEntries int `json:"maxLogEntries,omitempty" yaml:"maxLogEntries,omitempty"`
+	// MaxBodySize is the maximum request/response body size in bytes
+	MaxBodySize int `json:"maxBodySize,omitempty" yaml:"maxBodySize,omitempty"`
+	// ReadTimeout is the HTTP read timeout in seconds
+	ReadTimeout int `json:"readTimeout,omitempty" yaml:"readTimeout,omitempty"`
+	// WriteTimeout is the HTTP write timeout in seconds
+	WriteTimeout int `json:"writeTimeout,omitempty" yaml:"writeTimeout,omitempty"`
+	// MaxConnections limits concurrent HTTP connections (default: 0 = unlimited)
+	MaxConnections int `json:"maxConnections,omitempty" yaml:"maxConnections,omitempty"`
+	// Audit configures audit logging for request/response tracking
+	Audit *audit.AuditConfig `json:"audit,omitempty" yaml:"audit,omitempty"`
+
+	// GraphQL defines GraphQL mock endpoint configurations
+	GraphQL []*graphql.GraphQLConfig `json:"graphql,omitempty" yaml:"graphql,omitempty"`
+	// GRPC defines gRPC mock endpoint configurations
+	GRPC []*grpc.GRPCConfig `json:"grpc,omitempty" yaml:"grpc,omitempty"`
+	// OAuth defines OAuth/OIDC mock provider configurations
+	OAuth []*oauth.OAuthConfig `json:"oauth,omitempty" yaml:"oauth,omitempty"`
+	// SOAP defines SOAP mock endpoint configurations
+	SOAP []*soap.SOAPConfig `json:"soap,omitempty" yaml:"soap,omitempty"`
+	// Validation configures OpenAPI request/response validation
+	Validation *validation.ValidationConfig `json:"validation,omitempty" yaml:"validation,omitempty"`
+	// Chaos configures chaos/fault injection for testing resilience
+	Chaos *chaos.ChaosConfig `json:"chaos,omitempty" yaml:"chaos,omitempty"`
+	// MQTT defines MQTT broker configurations
+	MQTT []*mqtt.MQTTConfig `json:"mqtt,omitempty" yaml:"mqtt,omitempty"`
+}
+
+// MockCollection is a container for a set of mock configurations, typically loaded from a single config file.
+type MockCollection struct {
+	// Version is the config format version (e.g., "1.0")
+	Version string `json:"version" yaml:"version"`
+	// Kind identifies the config type (e.g., "MockCollection")
+	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
+	// Metadata contains collection metadata
+	Metadata *CollectionMetadata `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	// Name is the collection name/description (prefer metadata.name for new configs)
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+	// Imports declares external specs to import on startup (OpenAPI, Postman, etc.).
+	// Loaded fresh on every startup. Format is auto-detected.
+	Imports []*ImportEntry `json:"imports,omitempty" yaml:"imports,omitempty"`
+	// Tables defines stateful data tables (pure data, no routing).
+	// Tables are referenced by extend bindings to attach stateful behavior to mocks.
+	Tables []*TableConfig `json:"tables,omitempty" yaml:"tables,omitempty"`
+	// Extend binds imported mocks to stateful tables.
+	// Each entry maps one mock (by operationId or "METHOD /path") to a table + action.
+	Extend []*ExtendBinding `json:"extend,omitempty" yaml:"extend,omitempty"`
+	// Mocks is an array of mock definitions
+	Mocks []*MockConfiguration `json:"mocks" yaml:"mocks"`
+	// ServerConfig contains server settings (if embedded)
+	ServerConfig *ServerConfiguration `json:"serverConfig,omitempty" yaml:"serverConfig,omitempty"`
+	// StatefulResources defines stateful CRUD resources (LEGACY — use tables: + extend: instead).
+	StatefulResources []*StatefulResourceConfig `json:"statefulResources,omitempty" yaml:"statefulResources,omitempty"`
+	// CustomOperations defines multi-step custom operations that compose reads, writes,
+	// and expression-evaluated transforms against stateful resources.
+	CustomOperations []*CustomOperationConfig `json:"customOperations,omitempty" yaml:"customOperations,omitempty"`
+	// WebSocketEndpoints defines WebSocket endpoints
+	WebSocketEndpoints []*WebSocketEndpointConfig `json:"websocketEndpoints,omitempty" yaml:"websocketEndpoints,omitempty"`
+}
+
+// ImportEntry declares an external spec to import on startup.
+// Format is auto-detected from content and file extension.
+// Exactly one of Path or URL must be set.
+type ImportEntry struct {
+	// Path is a local file path (resolved relative to the config file).
+	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+	// URL is a remote URL to fetch the spec from.
+	URL string `json:"url,omitempty" yaml:"url,omitempty"`
+	// As is the namespace prefix for referencing imported mocks.
+	// Imported mocks get OperationID = "{as}.{operationId}".
+	// If empty, the raw operationId is used without a namespace.
+	As string `json:"as,omitempty" yaml:"as,omitempty"`
+	// Format forces a specific import format (e.g., "openapi", "postman").
+	// If empty, the format is auto-detected.
+	Format string `json:"format,omitempty" yaml:"format,omitempty"`
+}
+
+// Relationship defines a foreign key relationship from a table field to another table.
+// Used for ?expand[] support: when a client requests expansion of a field, mockd
+// looks up the related item and inlines the full object.
+type Relationship struct {
+	// Table is the name of the target table to look up (e.g., "customers").
+	Table string `json:"table" yaml:"table"`
+	// Field is the field in the target table to match against. Defaults to the target table's idField.
+	Field string `json:"field,omitempty" yaml:"field,omitempty"`
+}
+
+// TableConfig defines a stateful data table (pure data, no routing).
+// Tables store items and handle CRUD operations but have no knowledge of
+// protocols, routes, or response formats. Use extend: bindings to attach
+// tables to mocks.
+type TableConfig struct {
+	// Name is the unique table identifier (e.g., "customers").
+	Name string `json:"name" yaml:"name"`
+	// IDField is the field name used as the item's primary key (default: "id").
+	IDField string `json:"idField,omitempty" yaml:"idField,omitempty"`
+	// IDStrategy controls how IDs are generated: "uuid" (default), "prefix", "auto-increment", "none".
+	IDStrategy string `json:"idStrategy,omitempty" yaml:"idStrategy,omitempty"`
+	// IDPrefix is prepended to generated IDs (only with idStrategy: prefix).
+	IDPrefix string `json:"idPrefix,omitempty" yaml:"idPrefix,omitempty"`
+	// MaxItems limits the number of items (0 = unlimited).
+	MaxItems int `json:"maxItems,omitempty" yaml:"maxItems,omitempty"`
+	// SeedData is initial data loaded on startup and after reset.
+	SeedData []map[string]interface{} `json:"seedData,omitempty" yaml:"seedData,omitempty"`
+	// Validation defines input validation rules.
+	Validation *validation.ValidationConfig `json:"validation,omitempty" yaml:"validation,omitempty"`
+	// Response is the DEFAULT response transform for this table.
+	// Extend bindings can override this per-mock. If a binding has no
+	// response override, this default is used.
+	Response *ResponseTransform `json:"response,omitempty" yaml:"response,omitempty"`
+	// ParentField is the field name used as a foreign key to a parent resource.
+	// For sub-resource tables (e.g., invoice line items under invoices), this field
+	// is used to filter items by parent ID from the URL path parameter.
+	ParentField string `json:"parentField,omitempty" yaml:"parentField,omitempty"`
+	// Relationships maps field names to related tables for ?expand[] support.
+	// When a client requests expansion (e.g., ?expand[]=customer), mockd looks up the
+	// field value as an ID in the related table and inlines the full object.
+	Relationships map[string]*Relationship `json:"relationships,omitempty" yaml:"relationships,omitempty"`
+}
+
+// ExtendBinding binds a mock to a stateful table with a specific action.
+// This is the core mechanism for adding stateful behavior to imported mocks.
+type ExtendBinding struct {
+	// Mock references a mock by its namespaced operationId (e.g., "stripe.PostCustomers")
+	// or by "METHOD /path" for non-imported mocks (e.g., "POST /api/todos").
+	Mock string `json:"mock" yaml:"mock"`
+	// Table references a TableConfig by name (e.g., "customers").
+	Table string `json:"table" yaml:"table"`
+	// Action is the CRUD action or "custom" for custom operations.
+	// Valid values: create, get, list, update, patch, delete, custom.
+	Action string `json:"action" yaml:"action"`
+	// Operation names a registered custom operation to execute when Action is "custom".
+	// The operation receives the request body as input and executes via Bridge.Execute().
+	// Required when Action is "custom", ignored otherwise.
+	Operation string `json:"operation,omitempty" yaml:"operation,omitempty"`
+	// Response overrides the table's default response transforms for this binding.
+	// If nil, the table's default Response is used.
+	Response *ResponseTransform `json:"response,omitempty" yaml:"response,omitempty"`
+}
+
+// CollectionMetadata contains metadata about a mock collection.
+type CollectionMetadata struct {
+	// Name is the human-readable name
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+	// Description explains what this collection is for
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	// Tags are labels for categorization
+	Tags []string `json:"tags,omitempty" yaml:"tags,omitempty"`
+}
+
+// WebSocketEndpointConfig defines configuration for a WebSocket endpoint.
+type WebSocketEndpointConfig struct {
+	EntityMeta       `json:",inline" yaml:",inline"`
+	OrganizationMeta `json:",inline" yaml:",inline"`
+
+	// ID is a unique identifier for the endpoint
+	ID string `json:"id,omitempty" yaml:"id,omitempty"`
+	// Name is a human-readable name for the endpoint
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+	// Path is the URL path for WebSocket upgrade (e.g., "/ws/chat")
+	Path string `json:"path" yaml:"path"`
+	// Subprotocols lists supported subprotocols for negotiation
+	Subprotocols []string `json:"subprotocols,omitempty" yaml:"subprotocols,omitempty"`
+	// RequireSubprotocol rejects connections without a matching subprotocol
+	RequireSubprotocol bool `json:"requireSubprotocol,omitempty" yaml:"requireSubprotocol,omitempty"`
+	// Matchers contains message matching rules for conditional responses
+	Matchers []*mock.WSMatcherConfig `json:"matchers,omitempty" yaml:"matchers,omitempty"`
+	// DefaultResponse is sent when no matcher matches
+	DefaultResponse *mock.WSMessageResponse `json:"defaultResponse,omitempty" yaml:"defaultResponse,omitempty"`
+	// Scenario defines a scripted message sequence
+	Scenario *mock.WSScenarioConfig `json:"scenario,omitempty" yaml:"scenario,omitempty"`
+	// Heartbeat configures ping/pong keepalive
+	Heartbeat *mock.WSHeartbeatConfig `json:"heartbeat,omitempty" yaml:"heartbeat,omitempty"`
+	// MaxMessageSize is the maximum message size in bytes (default: 65536)
+	MaxMessageSize int64 `json:"maxMessageSize,omitempty" yaml:"maxMessageSize,omitempty"`
+	// IdleTimeout closes connections after inactivity (e.g., "5m")
+	IdleTimeout string `json:"idleTimeout,omitempty" yaml:"idleTimeout,omitempty"`
+	// MaxConnections limits concurrent connections (default: 0 = unlimited)
+	MaxConnections int `json:"maxConnections,omitempty" yaml:"maxConnections,omitempty"`
+	// EchoMode enables automatic echo of received messages
+	EchoMode *bool `json:"echoMode,omitempty" yaml:"echoMode,omitempty"`
+	// Enabled indicates whether the endpoint is active (default: true)
+	Enabled *bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	// SkipOriginVerify skips verification of the Origin header during WebSocket handshake.
+	// Default: true (allows any origin for development/testing convenience).
+	// Set to false to enforce that Origin matches the Host header.
+	SkipOriginVerify *bool `json:"skipOriginVerify,omitempty" yaml:"skipOriginVerify,omitempty"`
+}
+
+// StatefulResourceConfig defines configuration for a stateful CRUD resource.
+// This is the single canonical type used in YAML config, persistence, and API transport.
+type StatefulResourceConfig struct {
+	// Name is the unique resource name within a workspace (e.g., "users", "products").
+	// Two workspaces may each register a resource with the same name.
+	Name string `json:"name" yaml:"name"`
+	// Workspace is the workspace this resource belongs to. An empty value means
+	// the default workspace. This field is persisted and used as part of the
+	// resource's identity (workspaceID, name) by both the file store and the
+	// runtime StateStore.
+	Workspace string `json:"workspace,omitempty" yaml:"workspace,omitempty"`
+	// IDField is the field name for ID (default: "id")
+	IDField string `json:"idField,omitempty" yaml:"idField,omitempty"`
+	// IDStrategy controls how IDs are generated for new items.
+	// Values: "uuid" (default), "prefix", "ulid", "sequence", "short"
+	IDStrategy string `json:"idStrategy,omitempty" yaml:"idStrategy,omitempty"`
+	// IDPrefix is prepended to generated IDs when IDStrategy is "prefix" (e.g., "cus_").
+	IDPrefix string `json:"idPrefix,omitempty" yaml:"idPrefix,omitempty"`
+	// ParentField is the field name for parent FK in nested resources
+	ParentField string `json:"parentField,omitempty" yaml:"parentField,omitempty"`
+	// MaxItems limits the number of items this resource can hold (0 = unlimited).
+	// When the limit is reached, Create operations return an error.
+	MaxItems int `json:"maxItems,omitempty" yaml:"maxItems,omitempty"`
+	// SeedData is the initial data to load on startup/reset
+	SeedData []map[string]interface{} `json:"seedData,omitempty" yaml:"seedData,omitempty"`
+	// Validation defines validation rules for CRUD operations
+	Validation *validation.StatefulValidation `json:"validation,omitempty" yaml:"validation,omitempty"`
+	// Response defines how stateful CRUD responses are transformed before serialization.
+	// This is the API gateway layer — same transforms apply across HTTP, SOAP, and GraphQL.
+	// Nil means no transforms (current behavior, fully backward compatible).
+	Response *ResponseTransform `json:"response,omitempty" yaml:"response,omitempty"`
+	// Relationships maps field names to related tables for ?expand[] support.
+	Relationships map[string]*Relationship `json:"relationships,omitempty" yaml:"relationships,omitempty"`
+}
+
+// ResponseTransform defines how stateful resource responses are shaped.
+// This is the single, protocol-agnostic transform layer applied to all CRUD responses.
+// Item-level transforms (timestamps, fields) apply to every protocol.
+// List/verb overrides are HTTP-specific (SOAP/GraphQL have their own envelope conventions).
+type ResponseTransform struct {
+	// Timestamps controls timestamp format and field naming in responses.
+	Timestamps *TimestampTransform `json:"timestamps,omitempty" yaml:"timestamps,omitempty"`
+	// Fields controls field injection, hiding, and renaming in item responses.
+	Fields *FieldTransform `json:"fields,omitempty" yaml:"fields,omitempty"`
+	// List controls the HTTP JSON list envelope shape (dataField, extraFields, meta renaming).
+	// This is HTTP-specific — SOAP/GraphQL use their own list envelope conventions.
+	List *ListTransform `json:"list,omitempty" yaml:"list,omitempty"`
+	// Create overrides the default HTTP status code for create operations (default: 201).
+	Create *VerbOverride `json:"create,omitempty" yaml:"create,omitempty"`
+	// Delete overrides the default HTTP status code and body for delete operations (default: 204, no body).
+	Delete *VerbOverride `json:"delete,omitempty" yaml:"delete,omitempty"`
+	// Errors customizes the shape of error responses for this resource.
+	// If nil, the default mockd error format is used.
+	Errors *ErrorTransform `json:"errors,omitempty" yaml:"errors,omitempty"`
+}
+
+// TimestampTransform controls how timestamps appear in responses.
+type TimestampTransform struct {
+	// Format is the timestamp output format: "unix" (epoch seconds), "iso8601" (ISO 8601),
+	// "rfc3339" (default, RFC3339Nano), or "none" (omit timestamps entirely).
+	Format string `json:"format,omitempty" yaml:"format,omitempty"`
+	// Fields renames timestamp keys in responses.
+	// Example: {"createdAt": "created", "updatedAt": "updated"}
+	Fields map[string]string `json:"fields,omitempty" yaml:"fields,omitempty"`
+}
+
+// ListWrapConfig defines how a nested array field should be wrapped in a
+// list object envelope: {object: "list", data: [...], has_more: false}.
+type ListWrapConfig struct {
+	// URL template for this sub-resource (e.g., "/v1/subscriptions/{{id}}/items").
+	// Supports {{fieldName}} template substitution from the parent item.
+	URL string `json:"url,omitempty" yaml:"url,omitempty"`
+}
+
+// FieldTransform controls field-level modifications applied to every item response.
+type FieldTransform struct {
+	// Inject adds fields to every item response. Values are literals.
+	// Example: {"object": "customer", "livemode": false}
+	Inject map[string]interface{} `json:"inject,omitempty" yaml:"inject,omitempty"`
+	// Hide removes fields from responses (data is still stored, just not returned).
+	// Example: ["internalNotes", "_metadata"]
+	Hide []string `json:"hide,omitempty" yaml:"hide,omitempty"`
+	// Rename changes field keys in responses (stored data unchanged).
+	// Key is original field name, value is output field name.
+	// Example: {"firstName": "first_name"}
+	Rename map[string]string `json:"rename,omitempty" yaml:"rename,omitempty"`
+	// WrapAsList wraps specified array fields in list object envelopes.
+	// Key is the field name containing an array; value configures the envelope.
+	// The array is moved to "data", and "object":"list", "has_more":false are added.
+	WrapAsList map[string]*ListWrapConfig `json:"wrapAsList,omitempty" yaml:"wrapAsList,omitempty"`
+}
+
+// ListTransform controls the HTTP JSON list response envelope.
+// SOAP and GraphQL use their own envelope conventions — this is HTTP-only.
+type ListTransform struct {
+	// DataField is the key for the items array (default: "data").
+	DataField string `json:"dataField,omitempty" yaml:"dataField,omitempty"`
+	// ExtraFields are injected into the list wrapper (not into individual items).
+	// Example: {"object": "list", "url": "/v1/customers"}
+	ExtraFields map[string]interface{} `json:"extraFields,omitempty" yaml:"extraFields,omitempty"`
+	// MetaFields renames pagination meta keys.
+	// Available keys: "total", "limit", "offset", "count".
+	// Example: {"total": "total_count"}
+	MetaFields map[string]string `json:"metaFields,omitempty" yaml:"metaFields,omitempty"`
+	// HideMeta omits pagination metadata from the response entirely.
+	HideMeta bool `json:"hideMeta,omitempty" yaml:"hideMeta,omitempty"`
+}
+
+// VerbOverride customizes the HTTP status code and/or response body for a specific CRUD verb.
+type VerbOverride struct {
+	// Status overrides the default HTTP status code (e.g., 200 instead of 201 for create).
+	Status int `json:"status,omitempty" yaml:"status,omitempty"`
+	// Body overrides the response body. Supports {{item.fieldName}} template substitution
+	// from the affected item's fields.
+	Body map[string]interface{} `json:"body,omitempty" yaml:"body,omitempty"`
+	// Preserve prevents the item from being removed on delete.
+	// When true, DELETE returns the configured response but the item remains in the store.
+	// Useful for APIs with soft-delete semantics or test environments.
+	Preserve bool `json:"preserve,omitempty" yaml:"preserve,omitempty"`
+}
+
+// ErrorTransform customizes the shape of error responses for a stateful resource.
+// Different APIs have different error formats (Stripe, GitHub, Twilio, etc.).
+// This config lets users match their target API's error convention.
+type ErrorTransform struct {
+	// Wrap is the key to nest the error object under (e.g., "error" for Stripe's {"error":{...}}).
+	// If empty, error fields are at the root level (default mockd behavior).
+	Wrap string `json:"wrap,omitempty" yaml:"wrap,omitempty"`
+	// Fields maps mockd error fields to custom field names.
+	// Available source fields: "message", "code", "type", "resource", "id", "field", "hint".
+	// Example: {"message": "message", "code": "code", "type": "type"}
+	Fields map[string]string `json:"fields,omitempty" yaml:"fields,omitempty"`
+	// Inject adds static fields to every error response (e.g., {"doc_url": "https://..."}).
+	Inject map[string]interface{} `json:"inject,omitempty" yaml:"inject,omitempty"`
+	// TypeMap maps ErrorCode values to custom type strings.
+	// Keys: "NOT_FOUND", "CONFLICT", "VALIDATION_ERROR", "CAPACITY_EXCEEDED", "INTERNAL_ERROR".
+	// Example: {"NOT_FOUND": "invalid_request_error", "VALIDATION_ERROR": "invalid_request_error"}
+	TypeMap map[string]string `json:"typeMap,omitempty" yaml:"typeMap,omitempty"`
+	// CodeMap maps ErrorCode values to custom code strings for the "code" field.
+	// Example: {"NOT_FOUND": "resource_missing", "CONFLICT": "resource_already_exists"}
+	CodeMap map[string]string `json:"codeMap,omitempty" yaml:"codeMap,omitempty"`
+}
+
+// CustomOperationConfig defines a multi-step custom operation in YAML/JSON config.
+// Custom operations compose reads, writes, and expression-evaluated transforms
+// against stateful resources. This enables complex mock scenarios like fund transfers.
+//
+// Example YAML:
+//
+//	customOperations:
+//	  - name: TransferFunds
+//	    steps:
+//	      - type: read
+//	        resource: accounts
+//	        id: "input.sourceId"
+//	        as: source
+//	      - type: read
+//	        resource: accounts
+//	        id: "input.destId"
+//	        as: dest
+//	      - type: update
+//	        resource: accounts
+//	        id: "input.sourceId"
+//	        set:
+//	          balance: "source.balance - input.amount"
+//	      - type: update
+//	        resource: accounts
+//	        id: "input.destId"
+//	        set:
+//	          balance: "dest.balance + input.amount"
+//	    response:
+//	      status: '"completed"'
+type CustomOperationConfig struct {
+	// Name is the unique operation name within a workspace (referenced in
+	// SOAP/GraphQL/gRPC configs). Two workspaces may each register an operation
+	// with the same name.
+	Name string `json:"name" yaml:"name"`
+	// Workspace is the workspace this operation belongs to. An empty value means
+	// the default workspace. This field is persisted and used as part of the
+	// operation's identity (workspaceID, name) by both the file store and the
+	// runtime Bridge.
+	Workspace string `json:"workspace,omitempty" yaml:"workspace,omitempty"`
+	// Consistency controls execution semantics: "best_effort" (default) or "atomic".
+	// "atomic" rolls back prior mutations in the operation if a later step fails.
+	Consistency string `json:"consistency,omitempty" yaml:"consistency,omitempty"`
+	// Steps is the ordered sequence of steps to execute
+	Steps []CustomStepConfig `json:"steps" yaml:"steps"`
+	// Response is a map of field → expression that builds the result
+	Response map[string]string `json:"response,omitempty" yaml:"response,omitempty"`
+}
+
+// CustomStepConfig defines a single step in a custom operation pipeline.
+type CustomStepConfig struct {
+	// Type is the step kind: "read", "update", "delete", "create", "set", "list", "validate"
+	Type string `json:"type" yaml:"type"`
+	// Resource is the stateful resource name (for read/update/delete/create/list)
+	Resource string `json:"resource,omitempty" yaml:"resource,omitempty"`
+	// ID is an expression that resolves to the item ID (for read/update/delete)
+	ID string `json:"id,omitempty" yaml:"id,omitempty"`
+	// As is the variable name to store the result (for read/create/list)
+	As string `json:"as,omitempty" yaml:"as,omitempty"`
+	// Set is a map of field → expression for update/create steps
+	Set map[string]string `json:"set,omitempty" yaml:"set,omitempty"`
+	// Var is the variable name (for set steps)
+	Var string `json:"var,omitempty" yaml:"var,omitempty"`
+	// Value is an expression (for set steps)
+	Value string `json:"value,omitempty" yaml:"value,omitempty"`
+	// Filter contains field → expression mappings for list steps
+	Filter map[string]string `json:"filter,omitempty" yaml:"filter,omitempty"`
+	// Condition is a boolean expression for validate steps (halts on false)
+	Condition string `json:"condition,omitempty" yaml:"condition,omitempty"`
+	// ErrorMessage is returned when a validate step fails
+	ErrorMessage string `json:"errorMessage,omitempty" yaml:"errorMessage,omitempty"`
+	// ErrorStatus is the HTTP status code for validate failures (default: 400)
+	ErrorStatus int `json:"errorStatus,omitempty" yaml:"errorStatus,omitempty"`
+}
+
+// DefaultServerConfiguration returns a ServerConfiguration with sensible defaults.
+func DefaultServerConfiguration() *ServerConfiguration {
+	return &ServerConfiguration{
+		HTTPPort:       4280,
+		HTTPSPort:      0,
+		AdminPort:      4290,
+		ManagementPort: 4281,
+		LogRequests:    true,
+		MaxLogEntries:  1000,
+		MaxBodySize:    10 * 1024 * 1024, // 10MB
+		ReadTimeout:    30,
+		WriteTimeout:   30,
+		CORS:           DefaultCORSConfig(),
+		RateLimit:      nil, // Rate limiting disabled by default
+	}
+}
+
+// DefaultCORSConfig returns a CORSConfig with secure defaults (localhost only).
+func DefaultCORSConfig() *CORSConfig {
+	return &CORSConfig{
+		Enabled: true,
+		AllowOrigins: []string{
+			"http://localhost:3000",
+			"http://localhost:4290",
+			"http://localhost:5173",
+			"http://127.0.0.1:3000",
+			"http://127.0.0.1:4290",
+			"http://127.0.0.1:5173",
+		},
+		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"},
+		AllowHeaders: []string{"Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"},
+		MaxAge:       86400,
+	}
+}
+
+// IsWildcard returns true if the CORS config allows all origins.
+func (c *CORSConfig) IsWildcard() bool {
+	if c == nil {
+		return false
+	}
+	for _, origin := range c.AllowOrigins {
+		if origin == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+// GetAllowOriginValue returns the appropriate Access-Control-Allow-Origin header value
+// for the given request origin. Returns empty string if origin is not allowed.
+func (c *CORSConfig) GetAllowOriginValue(requestOrigin string) string {
+	if c == nil || !c.Enabled {
+		return ""
+	}
+
+	// Check for wildcard
+	for _, origin := range c.AllowOrigins {
+		if origin == "*" {
+			// Cannot use * with credentials
+			if c.AllowCredentials {
+				// Return the actual origin instead of *
+				if requestOrigin != "" {
+					return requestOrigin
+				}
+				return ""
+			}
+			return "*"
+		}
+	}
+
+	// Check if request origin is in allowed list
+	for _, allowed := range c.AllowOrigins {
+		if allowed == requestOrigin {
+			return requestOrigin
+		}
+	}
+
+	// Always allow localhost/127.0.0.1 origins — mockd is a development tool
+	// and cross-port requests from the embedded dashboard are expected.
+	if strings.HasPrefix(requestOrigin, "http://localhost:") ||
+		strings.HasPrefix(requestOrigin, "http://127.0.0.1:") {
+		return requestOrigin
+	}
+
+	return ""
+}

@@ -1,0 +1,2107 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+
+	apitypes "github.com/getmockd/mockd/pkg/api/types"
+	"github.com/getmockd/mockd/pkg/cliconfig"
+	"github.com/getmockd/mockd/pkg/config"
+	"github.com/getmockd/mockd/pkg/mock"
+)
+
+const (
+	// APIKeyHeader is the HTTP header for API key authentication.
+	APIKeyHeader = "X-API-Key"
+)
+
+// AdminClient provides methods for communicating with the mockd admin API.
+type AdminClient interface {
+	// ListMocks returns configured mocks, optionally filtered by workspace.
+	// Pass "" for workspaceID to list all mocks (no filter).
+	ListMocks(workspaceID string) ([]*config.MockConfiguration, error)
+	// ListMocksByType returns mocks filtered by type (http, websocket, graphql, etc.)
+	ListMocksByType(mockType string, workspaceID string) ([]*config.MockConfiguration, error)
+	// GetMock returns a specific mock by ID.
+	GetMock(id string) (*config.MockConfiguration, error)
+	// CreateMock creates a new mock or merges into existing one.
+	// Pass workspaceID to scope the mock to a workspace ("" = default).
+	// Returns a CreateMockResult with the mock and action taken.
+	CreateMock(workspaceID string, mock *config.MockConfiguration) (*CreateMockResult, error)
+	// UpdateMock updates an existing mock by ID.
+	UpdateMock(id string, mock *config.MockConfiguration) (*config.MockConfiguration, error)
+	// ToggleMock atomically toggles a mock's enabled state via POST /mocks/{id}/toggle.
+	ToggleMock(id string) (*config.MockConfiguration, error)
+	// PatchMock partially updates a mock via PATCH /mocks/{id}.
+	PatchMock(id string, patch map[string]interface{}) (*config.MockConfiguration, error)
+	// DeleteMock deletes a mock by ID.
+	DeleteMock(id string) error
+	// ImportConfig imports a mock collection, optionally replacing existing mocks.
+	// Pass workspaceID to stamp imported mocks with a workspace ("" = default).
+	ImportConfig(collection *config.MockCollection, replace bool, workspaceID string) (*ImportResult, error)
+	// ExportConfig exports mocks as a collection, optionally filtered by workspace.
+	// Pass "" for workspaceID to export all mocks.
+	ExportConfig(name string, workspaceID string) (*config.MockCollection, error)
+	// GetLogs returns request log entries with optional filtering.
+	GetLogs(filter *LogFilter) (*LogResult, error)
+	// ClearLogs deletes all request log entries.
+	ClearLogs() (int, error)
+	// Health checks if the server is running.
+	Health() error
+	// GetChaosConfig returns the current chaos configuration.
+	GetChaosConfig() (map[string]interface{}, error)
+	// SetChaosConfig updates the chaos configuration.
+	SetChaosConfig(config map[string]interface{}) error
+	// ListChaosProfiles returns all available built-in chaos profiles.
+	ListChaosProfiles() ([]ChaosProfileInfo, error)
+	// GetChaosProfile returns a specific chaos profile by name.
+	GetChaosProfile(name string) (*ChaosProfileInfo, error)
+	// ApplyChaosProfile applies a named chaos profile.
+	ApplyChaosProfile(name string) error
+	// GetMQTTStatus returns the current MQTT broker status.
+	GetMQTTStatus() (map[string]interface{}, error)
+	// GetStats returns server statistics.
+	GetStats() (*StatsResult, error)
+	// GetPorts returns all ports in use by mockd.
+	GetPorts() ([]PortInfo, error)
+	// GetPortsVerbose returns all ports with optional extended info.
+	GetPortsVerbose(verbose bool) ([]PortInfo, error)
+
+	// CreateStatefulResource registers a new stateful resource definition.
+	// Pass workspaceID to scope to a workspace ("" = default).
+	CreateStatefulResource(workspaceID string, cfg *config.StatefulResourceConfig) error
+	// DeleteStatefulResource fully unregisters a stateful resource.
+	// Pass workspaceID to scope to a workspace ("" = default).
+	DeleteStatefulResource(workspaceID string, name string) error
+	// GetStateOverview returns an overview of all stateful resources.
+	// Pass workspaceID to scope to a workspace ("" = default).
+	GetStateOverview(workspaceID string) (*StateOverviewResult, error)
+	// ListStatefulItems returns paginated items for a stateful resource.
+	// Pass workspaceID to scope to a workspace ("" = default).
+	ListStatefulItems(workspaceID string, resourceName string, limit, offset int, sort, order string) (*StatefulItemsResult, error)
+	// GetStatefulItem returns a specific item from a stateful resource.
+	// Pass workspaceID to scope to a workspace ("" = default).
+	GetStatefulItem(workspaceID string, resourceName, itemID string) (map[string]interface{}, error)
+	// CreateStatefulItem creates a new item in a stateful resource.
+	// Pass workspaceID to scope to a workspace ("" = default).
+	CreateStatefulItem(workspaceID string, resourceName string, data map[string]interface{}) (map[string]interface{}, error)
+	// ResetStatefulResource resets a stateful resource to seed data.
+	// Pass workspaceID to scope to a workspace ("" = default).
+	ResetStatefulResource(workspaceID string, resourceName string) error
+
+	// ListCustomOperations returns all registered custom operations.
+	ListCustomOperations(workspaceID string) ([]CustomOperationInfo, error)
+	// GetCustomOperation returns a specific custom operation by name.
+	GetCustomOperation(workspaceID string, name string) (*CustomOperationDetail, error)
+	// RegisterCustomOperation registers a new custom operation.
+	RegisterCustomOperation(workspaceID string, definition map[string]interface{}) error
+	// DeleteCustomOperation deletes a custom operation by name.
+	DeleteCustomOperation(workspaceID string, name string) error
+	// ExecuteCustomOperation executes a custom operation with the given input.
+	ExecuteCustomOperation(workspaceID string, name string, input map[string]interface{}) (map[string]interface{}, error)
+
+	// Chaos stats
+	// GetChaosStats returns chaos injection statistics.
+	GetChaosStats() (map[string]interface{}, error)
+	// ResetChaosStats resets chaos injection statistics counters.
+	ResetChaosStats() error
+	// GetStatefulFaultStats returns the status of all stateful fault instances
+	// (circuit breakers, retry-after trackers, progressive degradation).
+	GetStatefulFaultStats() (map[string]interface{}, error)
+	// TripCircuitBreaker manually trips a circuit breaker by state key.
+	TripCircuitBreaker(key string) error
+	// ResetCircuitBreaker manually resets a circuit breaker by state key.
+	ResetCircuitBreaker(key string) error
+
+	// Verification
+	// GetMockVerification returns verification status for a mock.
+	GetMockVerification(id string) (map[string]interface{}, error)
+	// VerifyMock posts expected verification criteria and returns pass/fail.
+	VerifyMock(id string, expected map[string]interface{}) (map[string]interface{}, error)
+	// ListMockInvocations returns recorded invocations for a mock.
+	ListMockInvocations(id string) (map[string]interface{}, error)
+	// ResetMockVerification clears verification data for a specific mock.
+	ResetMockVerification(id string) error
+	// ResetAllVerification clears verification data for all mocks.
+	ResetAllVerification() error
+
+	// ListWorkspaces returns all workspaces on the admin server.
+	ListWorkspaces() ([]*WorkspaceDTO, error)
+	// CreateWorkspace creates a new workspace on the admin.
+	CreateWorkspace(name string) (*WorkspaceResult, error)
+	// RegisterEngine registers an engine with the admin.
+	RegisterEngine(name, host string, port int) (*RegisterEngineResult, error)
+	// HeartbeatEngine updates engine liveness on the admin.
+	HeartbeatEngine(engineID, token string) error
+	// AddEngineWorkspace assigns a workspace to an engine.
+	AddEngineWorkspace(engineID, workspaceID, workspaceName string) error
+	// BulkCreateMocks creates multiple mocks in a single request.
+	BulkCreateMocks(mocks []*mock.Mock, workspaceID string) (*BulkCreateResult, error)
+
+	// Connection management
+	// ListWebSocketConnections returns active WebSocket connections.
+	ListWebSocketConnections() (*apitypes.WebSocketConnectionListResponse, error)
+	// GetWebSocketConnection returns a specific WebSocket connection.
+	GetWebSocketConnection(id string) (*apitypes.WebSocketConnection, error)
+	// CloseWebSocketConnection closes a WebSocket connection.
+	CloseWebSocketConnection(id string) error
+	// SendWebSocketMessage sends a message to a WebSocket connection.
+	SendWebSocketMessage(id string, message string, binary bool) error
+	// GetWebSocketStats returns WebSocket statistics.
+	GetWebSocketStats() (*apitypes.WebSocketStats, error)
+
+	// ListSSEConnections returns active SSE connections.
+	ListSSEConnections() (*apitypes.SSEConnectionListResponse, error)
+	// GetSSEConnection returns a specific SSE connection.
+	GetSSEConnection(id string) (*apitypes.SSEConnection, error)
+	// CloseSSEConnection closes an SSE connection.
+	CloseSSEConnection(id string) error
+	// GetSSEStats returns SSE statistics.
+	GetSSEStats() (*apitypes.SSEStats, error)
+
+	// ListMQTTConnections returns active MQTT client connections.
+	ListMQTTConnections() (*apitypes.MQTTConnectionListResponse, error)
+	// GetMQTTConnection returns a specific MQTT client connection.
+	GetMQTTConnection(id string) (*apitypes.MQTTConnection, error)
+	// CloseMQTTConnection disconnects an MQTT client.
+	CloseMQTTConnection(id string) error
+	// GetMQTTStats returns MQTT broker statistics.
+	GetMQTTStats() (*apitypes.MQTTStats, error)
+
+	// ListGRPCStreams returns active gRPC streaming connections.
+	ListGRPCStreams() (*apitypes.GRPCStreamListResponse, error)
+	// GetGRPCStream returns a specific gRPC stream.
+	GetGRPCStream(id string) (*apitypes.GRPCStream, error)
+	// CloseGRPCStream cancels a gRPC stream.
+	CloseGRPCStream(id string) error
+	// GetGRPCStats returns gRPC statistics.
+	GetGRPCStats() (*apitypes.GRPCStats, error)
+}
+
+// LogFilter specifies filtering criteria for request logs.
+type LogFilter struct {
+	Protocol      string // Filter by protocol (http, grpc, mqtt, soap, graphql, websocket, sse)
+	Method        string
+	Path          string
+	MatchedID     string
+	Limit         int
+	Offset        int
+	UnmatchedOnly bool   // Only return unmatched requests (with near-miss data)
+	WorkspaceID   string // Filter by workspace (not yet supported by admin API, prepared for future use)
+}
+
+// LogResult contains request log query results.
+type LogResult struct {
+	Requests []*apitypes.RequestLogEntry
+	Count    int
+	Total    int
+}
+
+// ImportResult contains import operation results.
+type ImportResult struct {
+	Message           string
+	Imported          int
+	Total             int
+	StatefulResources int
+}
+
+// CreateMockResult contains the result of a create mock operation.
+// This can be either a new creation or a merge into an existing mock.
+type CreateMockResult struct {
+	Mock          *config.MockConfiguration
+	Action        string   // "created" or "merged"
+	Message       string   // Human-readable message
+	TargetMockID  string   // For merge: ID of the mock merged into
+	AddedServices []string // For gRPC merge: services/methods added
+	AddedTopics   []string // For MQTT merge: topics added
+	TotalServices []string // For gRPC merge: all services after merge
+	TotalTopics   []string // For MQTT merge: all topics after merge
+
+	AddedOperations []string // For SOAP merge: operations added
+	TotalOperations []string // For SOAP merge: all operations after merge
+}
+
+// IsMerge returns true if this result was a merge operation.
+func (r *CreateMockResult) IsMerge() bool {
+	return r.Action == "merged"
+}
+
+// ChaosProfileInfo describes a built-in chaos profile.
+type ChaosProfileInfo struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Config      map[string]interface{} `json:"config"`
+}
+
+// StatsResult contains server statistics returned by GET /status.
+type StatsResult struct {
+	Uptime       int64 `json:"uptime"`
+	RequestCount int64 `json:"requestCount"`
+	MockCount    int   `json:"mockCount"`
+}
+
+// WorkspaceResult contains the result of creating a workspace.
+type WorkspaceResult struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	BasePath string `json:"basePath"`
+}
+
+// RegisterEngineResult contains the result of registering an engine.
+type RegisterEngineResult struct {
+	ID             string `json:"id"`
+	Token          string `json:"token,omitempty"`
+	ConfigEndpoint string `json:"configEndpoint"`
+}
+
+// BulkCreateResult contains the result of a bulk mock creation.
+type BulkCreateResult struct {
+	Created  int          `json:"created"`
+	Mocks    []*mock.Mock `json:"mocks"`
+	Warnings []string     `json:"warnings,omitempty"`
+}
+
+// StateOverviewResult contains the overview of all stateful resources.
+type StateOverviewResult struct {
+	Resources    []StatefulResourceInfo `json:"resources"`
+	Total        int                    `json:"total"`
+	TotalItems   int                    `json:"totalItems"`
+	ResourceList []string               `json:"resourceList"`
+}
+
+// StatefulResourceInfo describes a single stateful resource.
+type StatefulResourceInfo struct {
+	Name        string `json:"name"`
+	ItemCount   int    `json:"itemCount"`
+	SeedCount   int    `json:"seedCount"`
+	IDField     string `json:"idField"`
+	ParentField string `json:"parentField,omitempty"`
+}
+
+// StatefulItemsResult contains paginated items from a stateful resource.
+type StatefulItemsResult struct {
+	Data []map[string]interface{} `json:"data"`
+	Meta StatefulPaginationMeta   `json:"meta"`
+}
+
+// StatefulPaginationMeta contains pagination metadata.
+type StatefulPaginationMeta struct {
+	Total  int `json:"total"`
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+	Count  int `json:"count"`
+}
+
+// CustomOperationInfo is a summary of a registered custom operation.
+type CustomOperationInfo struct {
+	Name        string `json:"name"`
+	StepCount   int    `json:"stepCount"`
+	Consistency string `json:"consistency,omitempty"`
+}
+
+// CustomOperationDetail is the full definition of a custom operation.
+type CustomOperationDetail struct {
+	Name        string                `json:"name"`
+	Consistency string                `json:"consistency,omitempty"`
+	Steps       []CustomOperationStep `json:"steps"`
+	Response    map[string]string     `json:"response,omitempty"`
+}
+
+// CustomOperationStep describes a single step in a custom operation.
+type CustomOperationStep struct {
+	Type     string            `json:"type"`
+	Resource string            `json:"resource,omitempty"`
+	ID       string            `json:"id,omitempty"`
+	As       string            `json:"as,omitempty"`
+	Set      map[string]string `json:"set,omitempty"`
+	Var      string            `json:"var,omitempty"`
+	Value    string            `json:"value,omitempty"`
+}
+
+// APIError represents an error response from the admin API.
+type APIError struct {
+	StatusCode int
+	ErrorCode  string
+	Message    string
+}
+
+func (e *APIError) Error() string {
+	return e.Message
+}
+
+// adminClient implements AdminClient using HTTP.
+type adminClient struct {
+	baseURL    string
+	httpClient *http.Client
+	apiKey     string
+}
+
+// ClientOption configures an admin client.
+type ClientOption func(*adminClient)
+
+// WithTimeout sets the HTTP timeout for the client.
+func WithTimeout(timeout time.Duration) ClientOption {
+	return func(c *adminClient) {
+		c.httpClient.Timeout = timeout
+	}
+}
+
+// WithAPIKey sets the API key for authentication.
+func WithAPIKey(key string) ClientOption {
+	return func(c *adminClient) {
+		c.apiKey = key
+	}
+}
+
+// LoadAPIKeyFromFile loads the API key from the default file location.
+// Returns the key and nil error if successful, empty string and nil if file doesn't exist,
+// or empty string and error if there was a read error.
+//
+// Deprecated: Use cliconfig.LoadAPIKeyFromFile() instead.
+func LoadAPIKeyFromFile() (string, error) {
+	return cliconfig.LoadAPIKeyFromFile()
+}
+
+// NewAdminClient creates a new admin API client.
+// The baseURL should be the admin API base URL (e.g., "http://localhost:4290").
+func NewAdminClient(baseURL string, opts ...ClientOption) AdminClient {
+	c := &adminClient{
+		baseURL: baseURL,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 50,
+				MaxConnsPerHost:     100,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// NewAdminClientWithAuth creates a new admin API client that automatically
+// loads the API key from all configured sources (env, context, file).
+// This is the recommended way to create a client for CLI commands.
+func NewAdminClientWithAuth(baseURL string, opts ...ClientOption) AdminClient {
+	// Use centralized API key resolution (env > context > file)
+	apiKey := cliconfig.GetAPIKey()
+	if apiKey != "" {
+		opts = append([]ClientOption{WithAPIKey(apiKey)}, opts...)
+	}
+	return NewAdminClient(baseURL, opts...)
+}
+
+// ListMocks returns configured mocks, optionally filtered by workspace.
+func (c *adminClient) ListMocks(workspaceID string) ([]*config.MockConfiguration, error) {
+	path := "/mocks"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+
+	resp, err := c.get(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result struct {
+		Mocks []*config.MockConfiguration `json:"mocks"`
+		Count int                         `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Mocks, nil
+}
+
+// ListMocksByType returns mocks filtered by type.
+func (c *adminClient) ListMocksByType(mockType string, workspaceID string) ([]*config.MockConfiguration, error) {
+	mocks, err := c.ListMocks(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []*config.MockConfiguration
+	for _, m := range mocks {
+		if string(m.Type) == mockType {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered, nil
+}
+
+// GetMock returns a specific mock by ID.
+func (c *adminClient) GetMock(id string) (*config.MockConfiguration, error) {
+	resp, err := c.get("/mocks/" + url.PathEscape(id))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "mock not found: " + id,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var mock config.MockConfiguration
+	if err := json.NewDecoder(resp.Body).Decode(&mock); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &mock, nil
+}
+
+// CreateMock creates a new mock or merges into an existing one.
+func (c *adminClient) CreateMock(workspaceID string, mock *config.MockConfiguration) (*CreateMockResult, error) {
+	body, err := json.Marshal(mock)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode mock: %w", err)
+	}
+
+	path := "/mocks"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+	resp, err := c.post(path, body)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Accept both 200 (merged) and 201 (created)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, c.parseError(resp)
+	}
+
+	// Read response body for parsing
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// First, try to detect if this is a merge response by looking for "action" field
+	var mergeResponse struct {
+		Action        string                    `json:"action"`
+		Message       string                    `json:"message"`
+		TargetMockID  string                    `json:"targetMockId"`
+		AddedServices []string                  `json:"addedServices"`
+		AddedTopics   []string                  `json:"addedTopics"`
+		TotalServices []string                  `json:"totalServices"`
+		TotalTopics   []string                  `json:"totalTopics"`
+		Mock          *config.MockConfiguration `json:"mock"`
+	}
+
+	if err := json.Unmarshal(respBody, &mergeResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// If we have an action and mock field, this is a merge response
+	if mergeResponse.Action != "" && mergeResponse.Mock != nil {
+		return &CreateMockResult{
+			Mock:          mergeResponse.Mock,
+			Action:        mergeResponse.Action,
+			Message:       mergeResponse.Message,
+			TargetMockID:  mergeResponse.TargetMockID,
+			AddedServices: mergeResponse.AddedServices,
+			AddedTopics:   mergeResponse.AddedTopics,
+			TotalServices: mergeResponse.TotalServices,
+			TotalTopics:   mergeResponse.TotalTopics,
+		}, nil
+	}
+
+	// Otherwise, this is a standard create response - the body IS the mock
+	var created config.MockConfiguration
+	if err := json.Unmarshal(respBody, &created); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &CreateMockResult{
+		Mock:   &created,
+		Action: "created",
+	}, nil
+}
+
+// UpdateMock updates an existing mock by ID.
+func (c *adminClient) UpdateMock(id string, mock *config.MockConfiguration) (*config.MockConfiguration, error) {
+	body, err := json.Marshal(mock)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode mock: %w", err)
+	}
+
+	resp, err := c.put("/mocks/"+url.PathEscape(id), body)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "mock not found: " + id,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	// PUT returns an envelope: {id, action, message, mock: {...}}
+	var envelope struct {
+		Mock config.MockConfiguration `json:"mock"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &envelope.Mock, nil
+}
+
+// ToggleMock atomically toggles a mock's enabled state.
+// POST /mocks/{id}/toggle — flips enabled ↔ disabled server-side.
+func (c *adminClient) ToggleMock(id string) (*config.MockConfiguration, error) {
+	resp, err := c.post("/mocks/"+url.PathEscape(id)+"/toggle", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "mock not found: " + id,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var envelope struct {
+		Mock config.MockConfiguration `json:"mock"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &envelope.Mock, nil
+}
+
+// PatchMock partially updates a mock via PATCH /mocks/{id}.
+// Only the fields present in the patch map are modified.
+func (c *adminClient) PatchMock(id string, patch map[string]interface{}) (*config.MockConfiguration, error) {
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode patch: %w", err)
+	}
+
+	resp, err := c.doRequest(http.MethodPatch, "/mocks/"+url.PathEscape(id), body)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "mock not found: " + id,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var envelope struct {
+		Mock config.MockConfiguration `json:"mock"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &envelope.Mock, nil
+}
+
+// DeleteMock deletes a mock by ID.
+func (c *adminClient) DeleteMock(id string) error {
+	resp, err := c.delete("/mocks/" + url.PathEscape(id))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "mock not found: " + id,
+		}
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// ImportConfig imports a mock collection, optionally replacing existing mocks.
+func (c *adminClient) ImportConfig(collection *config.MockCollection, replace bool, workspaceID string) (*ImportResult, error) {
+	reqBody := struct {
+		Replace bool                   `json:"replace"`
+		Config  *config.MockCollection `json:"config"`
+	}{
+		Replace: replace,
+		Config:  collection,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode config: %w", err)
+	}
+
+	path := "/config"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+
+	resp, err := c.post(path, body)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result struct {
+		Message           string `json:"message"`
+		Imported          int    `json:"imported"`
+		Total             int    `json:"total"`
+		StatefulResources int    `json:"statefulResources"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &ImportResult{
+		Message:           result.Message,
+		Imported:          result.Imported,
+		Total:             result.Total,
+		StatefulResources: result.StatefulResources,
+	}, nil
+}
+
+// ExportConfig exports mocks as a collection, optionally filtered by workspace.
+func (c *adminClient) ExportConfig(name string, workspaceID string) (*config.MockCollection, error) {
+	params := url.Values{}
+	if name != "" {
+		params.Set("name", name)
+	}
+	if workspaceID != "" {
+		params.Set("workspaceId", workspaceID)
+	}
+
+	path := "/config"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	resp, err := c.get(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var collection config.MockCollection
+	if err := json.NewDecoder(resp.Body).Decode(&collection); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &collection, nil
+}
+
+// GetLogs returns request log entries with optional filtering.
+func (c *adminClient) GetLogs(filter *LogFilter) (*LogResult, error) {
+	path := "/requests"
+	params := url.Values{}
+
+	if filter != nil {
+		if filter.Protocol != "" {
+			params.Set("protocol", filter.Protocol)
+		}
+		if filter.Method != "" {
+			params.Set("method", filter.Method)
+		}
+		if filter.Path != "" {
+			params.Set("path", filter.Path)
+		}
+		if filter.MatchedID != "" {
+			params.Set("matched", filter.MatchedID)
+		}
+		if filter.Limit > 0 {
+			params.Set("limit", strconv.Itoa(filter.Limit))
+		}
+		if filter.Offset > 0 {
+			params.Set("offset", strconv.Itoa(filter.Offset))
+		}
+		if filter.UnmatchedOnly {
+			params.Set("unmatchedOnly", "true")
+		}
+	}
+
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	resp, err := c.get(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result struct {
+		Requests []*apitypes.RequestLogEntry `json:"requests"`
+		Count    int                         `json:"count"`
+		Total    int                         `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &LogResult{
+		Requests: result.Requests,
+		Count:    result.Count,
+		Total:    result.Total,
+	}, nil
+}
+
+// ClearLogs deletes all request log entries.
+func (c *adminClient) ClearLogs() (int, error) {
+	resp, err := c.delete("/requests")
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, c.parseError(resp)
+	}
+
+	var result struct {
+		Cleared int `json:"cleared"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Cleared, nil
+}
+
+// Health checks if the server is running.
+func (c *adminClient) Health() error {
+	resp, err := c.get("/health")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// GetChaosConfig returns the current chaos configuration.
+func (c *adminClient) GetChaosConfig() (map[string]interface{}, error) {
+	resp, err := c.get("/chaos")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// SetChaosConfig updates the chaos configuration.
+func (c *adminClient) SetChaosConfig(chaosConfig map[string]interface{}) error {
+	body, err := json.Marshal(chaosConfig)
+	if err != nil {
+		return fmt.Errorf("failed to encode config: %w", err)
+	}
+
+	resp, err := c.put("/chaos", body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// GetChaosStats returns chaos injection statistics.
+func (c *adminClient) GetChaosStats() (map[string]interface{}, error) {
+	resp, err := c.get("/chaos/stats")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// ResetChaosStats resets chaos injection statistics counters.
+func (c *adminClient) ResetChaosStats() error {
+	resp, err := c.post("/chaos/stats/reset", nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// GetStatefulFaultStats returns the status of all stateful fault instances.
+func (c *adminClient) GetStatefulFaultStats() (map[string]interface{}, error) {
+	resp, err := c.get("/chaos/faults")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// TripCircuitBreaker manually trips a circuit breaker by state key.
+func (c *adminClient) TripCircuitBreaker(key string) error {
+	resp, err := c.post("/chaos/circuit-breakers/"+url.PathEscape(key)+"/trip", nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "circuit breaker not found: " + key,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// ResetCircuitBreaker manually resets a circuit breaker by state key.
+func (c *adminClient) ResetCircuitBreaker(key string) error {
+	resp, err := c.post("/chaos/circuit-breakers/"+url.PathEscape(key)+"/reset", nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "circuit breaker not found: " + key,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// ListChaosProfiles returns all available built-in chaos profiles.
+func (c *adminClient) ListChaosProfiles() ([]ChaosProfileInfo, error) {
+	resp, err := c.get("/chaos/profiles")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result []ChaosProfileInfo
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// GetChaosProfile returns a specific chaos profile by name.
+func (c *adminClient) GetChaosProfile(name string) (*ChaosProfileInfo, error) {
+	resp, err := c.get("/chaos/profiles/" + url.PathEscape(name))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result ChaosProfileInfo
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ApplyChaosProfile applies a named chaos profile.
+func (c *adminClient) ApplyChaosProfile(name string) error {
+	resp, err := c.post("/chaos/profiles/"+url.PathEscape(name)+"/apply", nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// GetMockVerification returns verification status for a mock.
+func (c *adminClient) GetMockVerification(id string) (map[string]interface{}, error) {
+	resp, err := c.get("/mocks/" + url.PathEscape(id) + "/verify")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "mock not found: " + id,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// postJSONMap posts a JSON-encoded map to the given path and decodes the response as a map.
+// notFoundMsg is used when the server returns 404.
+func (c *adminClient) postJSONMap(path string, payload map[string]interface{}, notFoundMsg string) (map[string]interface{}, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	resp, err := c.post(path, body)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    notFoundMsg,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// VerifyMock posts expected verification criteria and returns pass/fail.
+func (c *adminClient) VerifyMock(id string, expected map[string]interface{}) (map[string]interface{}, error) {
+	return c.postJSONMap("/mocks/"+url.PathEscape(id)+"/verify", expected, "mock not found: "+id)
+}
+
+// ListMockInvocations returns recorded invocations for a mock.
+func (c *adminClient) ListMockInvocations(id string) (map[string]interface{}, error) {
+	resp, err := c.get("/mocks/" + url.PathEscape(id) + "/invocations")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "mock not found: " + id,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// ResetMockVerification clears verification data for a specific mock.
+func (c *adminClient) ResetMockVerification(id string) error {
+	resp, err := c.delete("/mocks/" + url.PathEscape(id) + "/invocations")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "mock not found: " + id,
+		}
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// ResetAllVerification clears verification data for all mocks.
+func (c *adminClient) ResetAllVerification() error {
+	resp, err := c.delete("/verify")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// GetMQTTStatus returns the current MQTT broker status.
+func (c *adminClient) GetMQTTStatus() (map[string]interface{}, error) {
+	resp, err := c.get("/mqtt/status")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// GetStats returns server statistics from GET /status.
+func (c *adminClient) GetStats() (*StatsResult, error) {
+	resp, err := c.get("/status")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result StatsResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetPorts returns all ports in use by mockd.
+func (c *adminClient) GetPorts() ([]PortInfo, error) {
+	return c.GetPortsVerbose(false)
+}
+
+// GetPortsVerbose returns all ports with optional extended info (engine ID, name, etc).
+func (c *adminClient) GetPortsVerbose(verbose bool) ([]PortInfo, error) {
+	path := "/ports"
+	if verbose {
+		path += "?verbose=true"
+	}
+
+	resp, err := c.get(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result struct {
+		Ports []PortInfo `json:"ports"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Ports, nil
+}
+
+// CreateStatefulResource registers a new stateful resource definition via POST /state/resources.
+// Accepts a full StatefulResourceConfig so callers can pass all table fields (seed data,
+// ID strategy, response transforms, relationships, etc.) in a single call.
+func (c *adminClient) CreateStatefulResource(workspaceID string, cfg *config.StatefulResourceConfig) error {
+	if cfg.IDField == "" {
+		cfg.IDField = "id"
+	}
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	path := "/state/resources"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+
+	resp, err := c.post(path, body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusConflict {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "conflict",
+			Message:    "resource already exists: " + cfg.Name,
+		}
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// DeleteStatefulResource fully unregisters a stateful resource via POST /state/resources/{name}/unregister.
+func (c *adminClient) DeleteStatefulResource(workspaceID string, name string) error {
+	path := "/state/resources/" + url.PathEscape(name) + "/unregister"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+
+	resp, err := c.post(path, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "stateful resource not found: " + name,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// GetStateOverview returns an overview of all stateful resources.
+func (c *adminClient) GetStateOverview(workspaceID string) (*StateOverviewResult, error) {
+	path := "/state"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+
+	resp, err := c.get(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result StateOverviewResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListStatefulItems returns paginated items for a stateful resource.
+func (c *adminClient) ListStatefulItems(workspaceID string, resourceName string, limit, offset int, sort, order string) (*StatefulItemsResult, error) {
+	params := url.Values{}
+	params.Set("limit", strconv.Itoa(limit))
+	params.Set("offset", strconv.Itoa(offset))
+	if sort != "" {
+		params.Set("sort", sort)
+	}
+	if order != "" {
+		params.Set("order", order)
+	}
+	if workspaceID != "" {
+		params.Set("workspaceId", workspaceID)
+	}
+
+	resp, err := c.get("/state/resources/" + url.PathEscape(resourceName) + "/items?" + params.Encode())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "stateful resource not found: " + resourceName,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result StatefulItemsResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetStatefulItem returns a specific item from a stateful resource.
+func (c *adminClient) GetStatefulItem(workspaceID string, resourceName, itemID string) (map[string]interface{}, error) {
+	path := "/state/resources/" + url.PathEscape(resourceName) + "/items/" + url.PathEscape(itemID)
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+
+	resp, err := c.get(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    fmt.Sprintf("item not found: %s in resource %s", itemID, resourceName),
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var item map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return item, nil
+}
+
+// CreateStatefulItem creates a new item in a stateful resource.
+func (c *adminClient) CreateStatefulItem(workspaceID string, resourceName string, data map[string]interface{}) (map[string]interface{}, error) {
+	body, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode item data: %w", err)
+	}
+
+	path := "/state/resources/" + url.PathEscape(resourceName) + "/items"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+
+	resp, err := c.post(path, body)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "stateful resource not found: " + resourceName,
+		}
+	}
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var item map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return item, nil
+}
+
+// ResetStatefulResource resets a stateful resource to seed data.
+func (c *adminClient) ResetStatefulResource(workspaceID string, resourceName string) error {
+	path := "/state/resources/" + url.PathEscape(resourceName) + "/reset"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+
+	resp, err := c.post(path, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "stateful resource not found: " + resourceName,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// ListCustomOperations returns all registered custom operations.
+func (c *adminClient) ListCustomOperations(workspaceID string) ([]CustomOperationInfo, error) {
+	path := "/state/operations"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+	resp, err := c.doRequest("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result struct {
+		Operations []CustomOperationInfo `json:"operations"`
+		Count      int                   `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Operations, nil
+}
+
+// GetCustomOperation returns a specific custom operation by name.
+func (c *adminClient) GetCustomOperation(workspaceID string, name string) (*CustomOperationDetail, error) {
+	path := "/state/operations/" + url.PathEscape(name)
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+	resp, err := c.doRequest("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "custom operation not found: " + name,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var op CustomOperationDetail
+	if err := json.NewDecoder(resp.Body).Decode(&op); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &op, nil
+}
+
+// RegisterCustomOperation registers a new custom operation.
+func (c *adminClient) RegisterCustomOperation(workspaceID string, definition map[string]interface{}) error {
+	body, err := json.Marshal(definition)
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	path := "/state/operations"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+
+	resp, err := c.post(path, body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusCreated {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// DeleteCustomOperation deletes a custom operation by name.
+func (c *adminClient) DeleteCustomOperation(workspaceID string, name string) error {
+	path := "/state/operations/" + url.PathEscape(name)
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+	resp, err := c.doRequest("DELETE", path, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  "not_found",
+			Message:    "custom operation not found: " + name,
+		}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// ExecuteCustomOperation executes a custom operation with the given input.
+func (c *adminClient) ExecuteCustomOperation(workspaceID string, name string, input map[string]interface{}) (map[string]interface{}, error) {
+	path := "/state/operations/" + url.PathEscape(name) + "/execute"
+	if workspaceID != "" {
+		path += "?workspaceId=" + url.QueryEscape(workspaceID)
+	}
+	return c.postJSONMap(path, input, "custom operation not found: "+name)
+}
+
+// ListWorkspaces lists all workspaces on the admin.
+func (c *adminClient) ListWorkspaces() ([]*WorkspaceDTO, error) {
+	resp, err := c.doRequest("GET", "/workspaces", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+
+	var result struct {
+		Workspaces []*WorkspaceDTO `json:"workspaces"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Workspaces, nil
+}
+
+func (c *adminClient) CreateWorkspace(name string) (*WorkspaceResult, error) {
+	body, err := json.Marshal(map[string]string{"name": name})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	resp, err := c.post("/workspaces", body)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusCreated {
+		return nil, c.parseError(resp)
+	}
+
+	var result WorkspaceResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// RegisterEngine registers an engine with the admin.
+func (c *adminClient) RegisterEngine(name, host string, port int) (*RegisterEngineResult, error) {
+	body, err := json.Marshal(map[string]interface{}{
+		"name": name,
+		"host": host,
+		"port": port,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	resp, err := c.post("/engines/register", body)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusCreated {
+		return nil, c.parseError(resp)
+	}
+
+	var result RegisterEngineResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// HeartbeatEngine sends an engine heartbeat to the admin.
+// If token is provided, it is sent as a Bearer token (used for remote admins).
+func (c *adminClient) HeartbeatEngine(engineID, token string) error {
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/engines/"+url.PathEscape(engineID)+"/heartbeat", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set(APIKeyHeader, c.apiKey)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return &APIError{
+			StatusCode: 0,
+			ErrorCode:  "connection_error",
+			Message:    fmt.Sprintf("cannot connect to admin API at %s: %v", c.baseURL, err),
+		}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// AddEngineWorkspace assigns a workspace to an engine.
+func (c *adminClient) AddEngineWorkspace(engineID, workspaceID, workspaceName string) error {
+	body, err := json.Marshal(map[string]string{
+		"workspaceId":   workspaceID,
+		"workspaceName": workspaceName,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	resp, err := c.post("/engines/"+url.PathEscape(engineID)+"/workspaces", body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusCreated {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// BulkCreateMocks creates multiple mocks in a single request.
+// Uses replace=true for idempotent behavior (re-running mockd up works).
+func (c *adminClient) BulkCreateMocks(mocks []*mock.Mock, workspaceID string) (*BulkCreateResult, error) {
+	body, err := json.Marshal(mocks)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode mocks: %w", err)
+	}
+
+	params := url.Values{}
+	params.Set("replace", "true")
+	if workspaceID != "" {
+		params.Set("workspaceId", workspaceID)
+	}
+	path := "/mocks/bulk?" + params.Encode()
+
+	resp, err := c.post(path, body)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusCreated {
+		return nil, c.parseError(resp)
+	}
+
+	var result BulkCreateResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ─── Connection management ──────────────────────────────────────────────────
+
+// ListWebSocketConnections returns active WebSocket connections.
+func (c *adminClient) ListWebSocketConnections() (*apitypes.WebSocketConnectionListResponse, error) {
+	resp, err := c.get("/websocket/connections")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.WebSocketConnectionListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetWebSocketConnection returns a specific WebSocket connection.
+func (c *adminClient) GetWebSocketConnection(id string) (*apitypes.WebSocketConnection, error) {
+	resp, err := c.get("/websocket/connections/" + url.PathEscape(id))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "WebSocket connection not found: " + id}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.WebSocketConnection
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// CloseWebSocketConnection closes a WebSocket connection.
+func (c *adminClient) CloseWebSocketConnection(id string) error {
+	resp, err := c.delete("/websocket/connections/" + url.PathEscape(id))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "WebSocket connection not found: " + id}
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// SendWebSocketMessage sends a message to a WebSocket connection.
+func (c *adminClient) SendWebSocketMessage(id string, message string, binary bool) error {
+	msgType := "text"
+	if binary {
+		msgType = "binary"
+	}
+	body, err := json.Marshal(map[string]interface{}{
+		"data": message,
+		"type":    msgType,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+	resp, err := c.post("/websocket/connections/"+url.PathEscape(id)+"/send", body)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "WebSocket connection not found: " + id}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// GetWebSocketStats returns WebSocket statistics.
+func (c *adminClient) GetWebSocketStats() (*apitypes.WebSocketStats, error) {
+	resp, err := c.get("/websocket/stats")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.WebSocketStats
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListSSEConnections returns active SSE connections.
+func (c *adminClient) ListSSEConnections() (*apitypes.SSEConnectionListResponse, error) {
+	resp, err := c.get("/sse/connections")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.SSEConnectionListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetSSEConnection returns a specific SSE connection.
+func (c *adminClient) GetSSEConnection(id string) (*apitypes.SSEConnection, error) {
+	resp, err := c.get("/sse/connections/" + url.PathEscape(id))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "SSE connection not found: " + id}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.SSEConnection
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// CloseSSEConnection closes an SSE connection.
+func (c *adminClient) CloseSSEConnection(id string) error {
+	resp, err := c.delete("/sse/connections/" + url.PathEscape(id))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "SSE connection not found: " + id}
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// GetSSEStats returns SSE statistics.
+func (c *adminClient) GetSSEStats() (*apitypes.SSEStats, error) {
+	resp, err := c.get("/sse/stats")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.SSEStats
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListMQTTConnections returns active MQTT client connections.
+func (c *adminClient) ListMQTTConnections() (*apitypes.MQTTConnectionListResponse, error) {
+	resp, err := c.get("/mqtt-connections")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.MQTTConnectionListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetMQTTConnection returns a specific MQTT client connection.
+func (c *adminClient) GetMQTTConnection(id string) (*apitypes.MQTTConnection, error) {
+	resp, err := c.get("/mqtt-connections/" + url.PathEscape(id))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "MQTT connection not found: " + id}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.MQTTConnection
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// CloseMQTTConnection disconnects an MQTT client.
+func (c *adminClient) CloseMQTTConnection(id string) error {
+	resp, err := c.delete("/mqtt-connections/" + url.PathEscape(id))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "MQTT connection not found: " + id}
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// GetMQTTStats returns MQTT broker statistics.
+func (c *adminClient) GetMQTTStats() (*apitypes.MQTTStats, error) {
+	resp, err := c.get("/mqtt-connections/stats")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.MQTTStats
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListGRPCStreams returns active gRPC streaming connections.
+func (c *adminClient) ListGRPCStreams() (*apitypes.GRPCStreamListResponse, error) {
+	resp, err := c.get("/grpc/connections")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.GRPCStreamListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetGRPCStream returns a specific gRPC stream.
+func (c *adminClient) GetGRPCStream(id string) (*apitypes.GRPCStream, error) {
+	resp, err := c.get("/grpc/connections/" + url.PathEscape(id))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "gRPC stream not found: " + id}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.GRPCStream
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// CloseGRPCStream cancels a gRPC stream.
+func (c *adminClient) CloseGRPCStream(id string) error {
+	resp, err := c.delete("/grpc/connections/" + url.PathEscape(id))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "gRPC stream not found: " + id}
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return c.parseError(resp)
+	}
+	return nil
+}
+
+// GetGRPCStats returns gRPC statistics.
+func (c *adminClient) GetGRPCStats() (*apitypes.GRPCStats, error) {
+	resp, err := c.get("/grpc/stats")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseError(resp)
+	}
+	var result apitypes.GRPCStats
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// get performs an HTTP GET request.
+func (c *adminClient) get(path string) (*http.Response, error) {
+	return c.doRequest(http.MethodGet, path, nil)
+}
+
+// post performs an HTTP POST request.
+func (c *adminClient) post(path string, body []byte) (*http.Response, error) {
+	return c.doRequest(http.MethodPost, path, body)
+}
+
+// put performs an HTTP PUT request.
+func (c *adminClient) put(path string, body []byte) (*http.Response, error) {
+	return c.doRequest(http.MethodPut, path, body)
+}
+
+// delete performs an HTTP DELETE request.
+func (c *adminClient) delete(path string) (*http.Response, error) {
+	return c.doRequest(http.MethodDelete, path, nil)
+}
+
+// doRequest performs an HTTP request.
+func (c *adminClient) doRequest(method, path string, body []byte) (*http.Response, error) {
+	fullURL := c.baseURL + path
+
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequest(method, fullURL, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Accept", "application/json")
+
+	// Add API key header if configured
+	if c.apiKey != "" {
+		req.Header.Set(APIKeyHeader, c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &APIError{
+			StatusCode: 0,
+			ErrorCode:  "connection_error",
+			Message:    fmt.Sprintf("cannot connect to admin API at %s: %v", c.baseURL, err),
+		}
+	}
+	return resp, nil
+}
+
+// parseError parses an error response from the API.
+func (c *adminClient) parseError(resp *http.Response) error {
+	body, _ := io.ReadAll(resp.Body)
+
+	var errResp struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Message != "" {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  errResp.Error,
+			Message:    errResp.Message,
+		}
+	}
+
+	return &APIError{
+		StatusCode: resp.StatusCode,
+		ErrorCode:  "unknown_error",
+		Message:    fmt.Sprintf("server returned status %d: %s", resp.StatusCode, string(body)),
+	}
+}
+
+// FormatConnectionError returns a user-friendly error message for connection failures.
+func FormatConnectionError(err error) string {
+	if apiErr, ok := err.(*APIError); ok && apiErr.ErrorCode == "connection_error" {
+		return fmt.Sprintf(`Error: %s
+
+Suggestions:
+  • Start the server: mockd start
+  • Check if the server is running on the expected port
+  • Verify the admin URL with: mockd config`, apiErr.Message)
+	}
+	return err.Error()
+}
+
+// FormatNotFoundError returns a user-friendly error message for not found errors.
+func FormatNotFoundError(resourceType, id string) string {
+	return fmt.Sprintf(`Error: %s not found: %s
+
+Suggestions:
+  • Check the ID with: mockd list
+  • Verify you're connected to the right server`, resourceType, id)
+}

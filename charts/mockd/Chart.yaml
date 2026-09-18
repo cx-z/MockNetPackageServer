@@ -1,0 +1,18 @@
+apiVersion: v2
+name: mockd
+description: A Helm chart for deploying mockd - a Multi-protocol mock server for HTTP, gRPC, WebSocket, MQTT, SSE, GraphQL, and SOAP
+type: application
+version: 0.2.9
+appVersion: "0.2.9"
+keywords:
+  - mock
+  - http
+  - api
+  - testing
+  - mocking
+home: https://github.com/getmockd/mockd
+sources:
+  - https://github.com/getmockd/mockd
+maintainers:
+  - name: mockd
+    url: https://github.com/getmockd

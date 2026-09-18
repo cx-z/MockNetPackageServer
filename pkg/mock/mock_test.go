@@ -1,0 +1,3570 @@
+package mock
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+)
+
+// =============================================================================
+// UnmarshalJSON Regression Tests (Bug 3.1)
+// =============================================================================
+
+func TestMock_UnmarshalJSON_LegacyFormat(t *testing.T) {
+	tests := []struct {
+		name        string
+		json        string
+		wantType    Type
+		wantPath    string
+		wantMethod  string
+		wantErr     bool
+		description string
+	}{
+		{
+			name: "legacy with matcher and response",
+			json: `{
+				"id": "test-1",
+				"enabled": true,
+				"matcher": {
+					"method": "GET",
+					"path": "/api/users"
+				},
+				"response": {
+					"statusCode": 200,
+					"body": "{\"users\":[]}"
+				}
+			}`,
+			wantType:    TypeHTTP,
+			wantPath:    "/api/users",
+			wantMethod:  "GET",
+			description: "Standard legacy format with matcher at top level",
+		},
+		{
+			name: "legacy with pathPattern (not path)",
+			json: `{
+				"id": "test-2",
+				"enabled": true,
+				"matcher": {
+					"method": "GET",
+					"pathPattern": "/api/users/[0-9]+"
+				},
+				"response": {
+					"statusCode": 200,
+					"body": "{}"
+				}
+			}`,
+			wantType:    TypeHTTP,
+			wantPath:    "/api/users/[0-9]+",
+			wantMethod:  "GET",
+			description: "Legacy with pathPattern instead of path",
+		},
+		{
+			name: "legacy with headers only (no path/method)",
+			json: `{
+				"id": "test-3",
+				"enabled": true,
+				"matcher": {
+					"headers": {"X-Custom": "value"}
+				},
+				"response": {
+					"statusCode": 200,
+					"body": "ok"
+				}
+			}`,
+			wantType:    TypeHTTP,
+			wantPath:    "",
+			wantMethod:  "",
+			description: "Legacy with only headers in matcher",
+		},
+		{
+			name: "legacy preserves priority",
+			json: `{
+				"id": "test-4",
+				"enabled": true,
+				"priority": 100,
+				"matcher": {
+					"method": "POST",
+					"path": "/api/data"
+				},
+				"response": {
+					"statusCode": 201,
+					"body": "{}"
+				}
+			}`,
+			wantType:    TypeHTTP,
+			wantPath:    "/api/data",
+			wantMethod:  "POST",
+			description: "Legacy format preserves priority field",
+		},
+		{
+			name: "legacy with all metadata",
+			json: `{
+				"id": "test-5",
+				"name": "Test Mock",
+				"description": "A test description",
+				"enabled": true,
+				"parentId": "folder-1",
+				"metaSortKey": 1.5,
+				"workspaceId": "ws-123",
+				"syncVersion": 42,
+				"createdAt": "2024-01-01T00:00:00Z",
+				"updatedAt": "2024-01-02T00:00:00Z",
+				"matcher": {
+					"method": "GET",
+					"path": "/test"
+				},
+				"response": {
+					"statusCode": 200,
+					"body": "ok"
+				}
+			}`,
+			wantType:    TypeHTTP,
+			wantPath:    "/test",
+			wantMethod:  "GET",
+			description: "Legacy with all metadata fields preserved",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m Mock
+			err := json.Unmarshal([]byte(tt.json), &m)
+
+			if tt.wantErr {
+				require.Error(t, err, tt.description)
+				return
+			}
+
+			require.NoError(t, err, tt.description)
+			assert.Equal(t, tt.wantType, m.Type, "Type should be set correctly")
+			assert.NotNil(t, m.HTTP, "HTTP spec should be populated")
+			assert.Equal(t, tt.wantPath, m.GetPath(), "Path should match")
+			assert.Equal(t, tt.wantMethod, m.GetMethod(), "Method should match")
+		})
+	}
+}
+
+func TestMock_UnmarshalJSON_NewFormat(t *testing.T) {
+	tests := []struct {
+		name        string
+		json        string
+		wantType    Type
+		wantPath    string
+		wantErr     bool
+		description string
+	}{
+		{
+			name: "new format with explicit type",
+			json: `{
+				"id": "test-1",
+				"type": "http",
+				"enabled": true,
+				"http": {
+					"matcher": {
+						"method": "GET",
+						"path": "/api/v2/users"
+					},
+					"response": {
+						"statusCode": 200,
+						"body": "{}"
+					}
+				}
+			}`,
+			wantType:    TypeHTTP,
+			wantPath:    "/api/v2/users",
+			description: "New format with type field",
+		},
+		{
+			name: "new format with http spec (no type field)",
+			json: `{
+				"id": "test-2",
+				"enabled": true,
+				"http": {
+					"matcher": {
+						"method": "POST",
+						"path": "/api/data"
+					},
+					"response": {
+						"statusCode": 201,
+						"body": "{}"
+					}
+				}
+			}`,
+			wantType:    "",
+			wantPath:    "", // GetPath() returns empty because type is not set
+			description: "New format with http spec but no type - type not auto-inferred, GetPath returns empty",
+		},
+		{
+			name: "websocket type",
+			json: `{
+				"id": "ws-1",
+				"type": "websocket",
+				"enabled": true,
+				"websocket": {
+					"path": "/ws/events"
+				}
+			}`,
+			wantType:    TypeWebSocket,
+			wantPath:    "/ws/events",
+			description: "WebSocket mock type",
+		},
+		{
+			name: "grpc type",
+			json: `{
+				"id": "grpc-1",
+				"type": "grpc",
+				"enabled": true,
+				"grpc": {
+					"port": 50051,
+					"protoFile": "service.proto"
+				}
+			}`,
+			wantType:    TypeGRPC,
+			wantPath:    ":50051",
+			description: "gRPC mock type",
+		},
+		{
+			name: "graphql type",
+			json: `{
+				"id": "gql-1",
+				"type": "graphql",
+				"enabled": true,
+				"graphql": {
+					"path": "/graphql",
+					"schema": "type Query { hello: String }"
+				}
+			}`,
+			wantType:    TypeGraphQL,
+			wantPath:    "/graphql",
+			description: "GraphQL mock type",
+		},
+		{
+			name: "soap type",
+			json: `{
+				"id": "soap-1",
+				"type": "soap",
+				"enabled": true,
+				"soap": {
+					"path": "/soap/service"
+				}
+			}`,
+			wantType:    TypeSOAP,
+			wantPath:    "/soap/service",
+			description: "SOAP mock type",
+		},
+		{
+			name: "mqtt type",
+			json: `{
+				"id": "mqtt-1",
+				"type": "mqtt",
+				"enabled": true,
+				"mqtt": {
+					"port": 1883
+				}
+			}`,
+			wantType:    TypeMQTT,
+			wantPath:    ":1883",
+			description: "MQTT mock type",
+		},
+		{
+			name: "oauth type",
+			json: `{
+				"id": "oauth-1",
+				"type": "oauth",
+				"enabled": true,
+				"oauth": {
+					"issuer": "http://localhost:9999/oauth",
+					"clients": [{"clientId": "test-app"}]
+				}
+			}`,
+			wantType:    TypeOAuth,
+			wantPath:    "http://localhost:9999/oauth",
+			description: "OAuth mock type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m Mock
+			err := json.Unmarshal([]byte(tt.json), &m)
+
+			if tt.wantErr {
+				require.Error(t, err, tt.description)
+				return
+			}
+
+			require.NoError(t, err, tt.description)
+			assert.Equal(t, tt.wantType, m.Type, "Type should match")
+			assert.Equal(t, tt.wantPath, m.GetPath(), "Path should match")
+		})
+	}
+}
+
+func TestMock_UnmarshalJSON_Ambiguous_NewFormatWins(t *testing.T) {
+	// When both "type" and "matcher" are present, new format should win
+	// (type field takes precedence)
+	jsonData := `{
+		"id": "ambiguous-1",
+		"type": "http",
+		"enabled": true,
+		"matcher": {
+			"method": "GET",
+			"path": "/legacy-path"
+		},
+		"http": {
+			"matcher": {
+				"method": "POST",
+				"path": "/new-path"
+			},
+			"response": {
+				"statusCode": 200,
+				"body": "{}"
+			}
+		}
+	}`
+
+	var m Mock
+	err := json.Unmarshal([]byte(jsonData), &m)
+	require.NoError(t, err)
+
+	// New format should win because type field is present
+	assert.Equal(t, TypeHTTP, m.Type)
+	assert.Equal(t, "/new-path", m.GetPath())
+	assert.Equal(t, "POST", m.GetMethod())
+}
+
+func TestMock_UnmarshalJSON_InvalidJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+	}{
+		{"empty string", ""},
+		{"not json", "not json at all"},
+		{"unclosed brace", `{"id": "test"`},
+		{"invalid field type", `{"id": 123}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m Mock
+			err := json.Unmarshal([]byte(tt.json), &m)
+			assert.Error(t, err)
+		})
+	}
+}
+
+// =============================================================================
+// SSEConfig Validation Tests (Bug 2.4)
+// =============================================================================
+
+func TestSSEConfig_Validate_MutualExclusivity(t *testing.T) {
+	event := SSEEventDef{Data: "test"}
+	generator := &SSEEventGenerator{Type: "sequence"}
+
+	tests := []struct {
+		name      string
+		config    SSEConfig
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name: "events and generator - error",
+			config: SSEConfig{
+				Events:    []SSEEventDef{event},
+				Generator: generator,
+			},
+			wantErr:   true,
+			errSubstr: "mutually exclusive",
+		},
+		{
+			name: "events and template - error",
+			config: SSEConfig{
+				Events:   []SSEEventDef{event},
+				Template: "some-template",
+			},
+			wantErr:   true,
+			errSubstr: "mutually exclusive",
+		},
+		{
+			name: "generator and template - error",
+			config: SSEConfig{
+				Generator: generator,
+				Template:  "some-template",
+			},
+			wantErr:   true,
+			errSubstr: "mutually exclusive",
+		},
+		{
+			name: "all three - error",
+			config: SSEConfig{
+				Events:    []SSEEventDef{event},
+				Generator: generator,
+				Template:  "some-template",
+			},
+			wantErr:   true,
+			errSubstr: "mutually exclusive",
+		},
+		{
+			name: "only events - ok",
+			config: SSEConfig{
+				Events: []SSEEventDef{event},
+			},
+			wantErr: false,
+		},
+		{
+			name: "only generator - ok",
+			config: SSEConfig{
+				Generator: generator,
+			},
+			wantErr: false,
+		},
+		{
+			name: "only template - ok",
+			config: SSEConfig{
+				Template: "some-template",
+			},
+			wantErr: false,
+		},
+		{
+			name:      "none specified - error",
+			config:    SSEConfig{},
+			wantErr:   true,
+			errSubstr: "one of events, generator, or template is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errSubstr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSSEConfig_Validate_EventData(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  SSEConfig
+		wantErr bool
+	}{
+		{
+			name: "event with nil data - error",
+			config: SSEConfig{
+				Events: []SSEEventDef{{Data: nil}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "event with string data - ok",
+			config: SSEConfig{
+				Events: []SSEEventDef{{Data: "test"}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "event with object data - ok",
+			config: SSEConfig{
+				Events: []SSEEventDef{{Data: map[string]string{"key": "value"}}},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSSEConfig_Validate_Timing(t *testing.T) {
+	event := SSEEventDef{Data: "test"}
+
+	tests := []struct {
+		name    string
+		config  SSEConfig
+		wantErr bool
+	}{
+		{
+			name: "valid random delay",
+			config: SSEConfig{
+				Events: []SSEEventDef{event},
+				Timing: SSETimingConfig{
+					RandomDelay: &SSERandomDelayConfig{Min: 100, Max: 500},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "random delay min negative - error",
+			config: SSEConfig{
+				Events: []SSEEventDef{event},
+				Timing: SSETimingConfig{
+					RandomDelay: &SSERandomDelayConfig{Min: -1, Max: 500},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "random delay max less than min - error",
+			config: SSEConfig{
+				Events: []SSEEventDef{event},
+				Timing: SSETimingConfig{
+					RandomDelay: &SSERandomDelayConfig{Min: 500, Max: 100},
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSSEConfig_Validate_Lifecycle(t *testing.T) {
+	event := SSEEventDef{Data: "test"}
+
+	tests := []struct {
+		name    string
+		config  SSEConfig
+		wantErr bool
+	}{
+		{
+			name: "keepalive disabled (0) - ok",
+			config: SSEConfig{
+				Events:    []SSEEventDef{event},
+				Lifecycle: SSELifecycleConfig{KeepaliveInterval: 0},
+			},
+			wantErr: false,
+		},
+		{
+			name: "keepalive 5 seconds - ok",
+			config: SSEConfig{
+				Events:    []SSEEventDef{event},
+				Lifecycle: SSELifecycleConfig{KeepaliveInterval: 5},
+			},
+			wantErr: false,
+		},
+		{
+			name: "keepalive too short (4 seconds) - error",
+			config: SSEConfig{
+				Events:    []SSEEventDef{event},
+				Lifecycle: SSELifecycleConfig{KeepaliveInterval: 4},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSSEConfig_Validate_RateLimit(t *testing.T) {
+	event := SSEEventDef{Data: "test"}
+
+	tests := []struct {
+		name    string
+		config  SSEConfig
+		wantErr bool
+	}{
+		{
+			name: "valid rate limit",
+			config: SSEConfig{
+				Events:    []SSEEventDef{event},
+				RateLimit: &SSERateLimitConfig{EventsPerSecond: 10},
+			},
+			wantErr: false,
+		},
+		{
+			name: "zero events per second - error",
+			config: SSEConfig{
+				Events:    []SSEEventDef{event},
+				RateLimit: &SSERateLimitConfig{EventsPerSecond: 0},
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative events per second - error",
+			config: SSEConfig{
+				Events:    []SSEEventDef{event},
+				RateLimit: &SSERateLimitConfig{EventsPerSecond: -1},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSSEConfig_Validate_Resume(t *testing.T) {
+	event := SSEEventDef{Data: "test"}
+
+	tests := []struct {
+		name    string
+		config  SSEConfig
+		wantErr bool
+	}{
+		{
+			name: "resume enabled with buffer - ok",
+			config: SSEConfig{
+				Events: []SSEEventDef{event},
+				Resume: SSEResumeConfig{Enabled: true, BufferSize: 100},
+			},
+			wantErr: false,
+		},
+		{
+			name: "resume enabled without buffer - error",
+			config: SSEConfig{
+				Events: []SSEEventDef{event},
+				Resume: SSEResumeConfig{Enabled: true, BufferSize: 0},
+			},
+			wantErr: true,
+		},
+		{
+			name: "resume disabled without buffer - ok",
+			config: SSEConfig{
+				Events: []SSEEventDef{event},
+				Resume: SSEResumeConfig{Enabled: false, BufferSize: 0},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// ChunkedConfig Validation Tests (Bug 2.5)
+// =============================================================================
+
+func TestChunkedConfig_Validate_MutualExclusivity(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    ChunkedConfig
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name: "data and dataFile - error",
+			config: ChunkedConfig{
+				Data:     "some data",
+				DataFile: "/path/to/file",
+			},
+			wantErr:   true,
+			errSubstr: "mutually exclusive",
+		},
+		{
+			name: "data and ndjsonItems - error",
+			config: ChunkedConfig{
+				Data:        "some data",
+				NDJSONItems: []any{"item1", "item2"},
+			},
+			wantErr:   true,
+			errSubstr: "mutually exclusive",
+		},
+		{
+			name: "dataFile and ndjsonItems - error",
+			config: ChunkedConfig{
+				DataFile:    "/path/to/file",
+				NDJSONItems: []any{"item1"},
+			},
+			wantErr:   true,
+			errSubstr: "mutually exclusive",
+		},
+		{
+			name: "all three - error",
+			config: ChunkedConfig{
+				Data:        "some data",
+				DataFile:    "/path/to/file",
+				NDJSONItems: []any{"item1"},
+			},
+			wantErr:   true,
+			errSubstr: "mutually exclusive",
+		},
+		{
+			name: "only data - ok",
+			config: ChunkedConfig{
+				Data: "some data",
+			},
+			wantErr: false,
+		},
+		{
+			name: "only dataFile - ok",
+			config: ChunkedConfig{
+				DataFile: "data/test.json",
+			},
+			wantErr: false,
+		},
+		{
+			name: "only ndjsonItems - ok",
+			config: ChunkedConfig{
+				NDJSONItems: []any{"item1", "item2"},
+			},
+			wantErr: false,
+		},
+		{
+			name:      "none specified - error",
+			config:    ChunkedConfig{},
+			wantErr:   true,
+			errSubstr: "one of data, dataFile, or ndjsonItems is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errSubstr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestChunkedConfig_Validate_ChunkSettings(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  ChunkedConfig
+		wantErr bool
+	}{
+		{
+			name: "valid chunk settings",
+			config: ChunkedConfig{
+				Data:       "some data",
+				ChunkSize:  1024,
+				ChunkDelay: 100,
+			},
+			wantErr: false,
+		},
+		{
+			name: "negative chunk size - error",
+			config: ChunkedConfig{
+				Data:      "some data",
+				ChunkSize: -1,
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative chunk delay - error",
+			config: ChunkedConfig{
+				Data:       "some data",
+				ChunkDelay: -1,
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero chunk size and delay - ok",
+			config: ChunkedConfig{
+				Data:       "some data",
+				ChunkSize:  0,
+				ChunkDelay: 0,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Mock Lifecycle Tests
+// =============================================================================
+
+func TestMock_Validate_RequiresID(t *testing.T) {
+	m := Mock{
+		Type: TypeHTTP,
+		HTTP: &HTTPSpec{
+			Matcher:  &HTTPMatcher{Path: "/test"},
+			Response: &HTTPResponse{StatusCode: 200},
+		},
+	}
+
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "id is required")
+}
+
+func TestMock_Validate_RequiresType(t *testing.T) {
+	m := Mock{
+		ID: "test-id",
+	}
+
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "type is required")
+}
+
+func TestMock_Validate_HTTPRequiresHTTPConfig(t *testing.T) {
+	m := Mock{
+		ID:   "test-id",
+		Type: TypeHTTP,
+	}
+
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "http spec is required")
+}
+
+func TestMock_Validate_HTTPRequiresMatcher(t *testing.T) {
+	m := Mock{
+		ID:   "test-id",
+		Type: TypeHTTP,
+		HTTP: &HTTPSpec{
+			Response: &HTTPResponse{StatusCode: 200},
+		},
+	}
+
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "matcher is required")
+}
+
+func TestMock_Validate_HTTPRequiresResponse(t *testing.T) {
+	m := Mock{
+		ID:   "test-id",
+		Type: TypeHTTP,
+		HTTP: &HTTPSpec{
+			Matcher: &HTTPMatcher{Path: "/test"},
+		},
+	}
+
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "one of response, sse, chunked, statefulOperation, or statefulBinding is required")
+}
+
+func TestMock_Validate_HTTPOnlyOneResponseType(t *testing.T) {
+	m := Mock{
+		ID:   "test-id",
+		Type: TypeHTTP,
+		HTTP: &HTTPSpec{
+			Matcher:  &HTTPMatcher{Path: "/test"},
+			Response: &HTTPResponse{StatusCode: 200},
+			SSE:      &SSEConfig{Events: []SSEEventDef{{Data: "test"}}},
+		},
+	}
+
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only one of response, sse, chunked, statefulOperation, or statefulBinding may be specified")
+}
+
+func TestMock_Validate_ValidHTTPMock(t *testing.T) {
+	enabled := true
+	m := Mock{
+		ID:      "test-id",
+		Type:    TypeHTTP,
+		Enabled: &enabled,
+		HTTP: &HTTPSpec{
+			Matcher:  &HTTPMatcher{Method: "GET", Path: "/api/test"},
+			Response: &HTTPResponse{StatusCode: 200, Body: "ok"},
+		},
+	}
+
+	err := m.Validate()
+	assert.NoError(t, err)
+}
+
+func TestMock_Validate_WebSocketRequiresPath(t *testing.T) {
+	m := Mock{
+		ID:        "ws-1",
+		Type:      TypeWebSocket,
+		WebSocket: &WebSocketSpec{},
+	}
+
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "path is required")
+}
+
+func TestMock_Validate_WebSocketPathMustStartWithSlash(t *testing.T) {
+	m := Mock{
+		ID:        "ws-1",
+		Type:      TypeWebSocket,
+		WebSocket: &WebSocketSpec{Path: "ws/events"},
+	}
+
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "path must start with /")
+}
+
+func TestMock_Validate_ValidWebSocketMock(t *testing.T) {
+	m := Mock{
+		ID:        "ws-1",
+		Type:      TypeWebSocket,
+		WebSocket: &WebSocketSpec{Path: "/ws/events"},
+	}
+
+	err := m.Validate()
+	assert.NoError(t, err)
+}
+
+func TestMock_Validate_UnknownType(t *testing.T) {
+	m := Mock{
+		ID:   "test-id",
+		Type: Type("unknown"),
+	}
+
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown mock type")
+}
+
+// =============================================================================
+// JSON Round-trip Tests
+// =============================================================================
+
+func TestMock_JSON_RoundTrip_HTTP(t *testing.T) {
+	httpEnabled := true
+	original := Mock{
+		ID:          "http-1",
+		Type:        TypeHTTP,
+		Name:        "Test HTTP Mock",
+		Description: "A test mock",
+		Enabled:     &httpEnabled,
+		ParentID:    "folder-1",
+		MetaSortKey: 1.5,
+		WorkspaceID: "ws-local",
+		SyncVersion: 42,
+		CreatedAt:   time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:   time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC),
+		HTTP: &HTTPSpec{
+			Priority: 10,
+			Matcher: &HTTPMatcher{
+				Method:      "POST",
+				Path:        "/api/users",
+				Headers:     map[string]string{"Content-Type": "application/json"},
+				QueryParams: map[string]string{"version": "2"},
+			},
+			Response: &HTTPResponse{
+				StatusCode: 201,
+				Headers:    map[string]string{"X-Custom": "header"},
+				Body:       `{"id": "new-user"}`,
+				DelayMs:    100,
+			},
+		},
+	}
+
+	// Marshal to JSON
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	// Unmarshal back
+	var restored Mock
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	// Compare
+	assert.Equal(t, original.ID, restored.ID)
+	assert.Equal(t, original.Type, restored.Type)
+	assert.Equal(t, original.Name, restored.Name)
+	assert.Equal(t, original.Description, restored.Description)
+	assert.Equal(t, original.Enabled, restored.Enabled)
+	assert.Equal(t, original.ParentID, restored.ParentID)
+	assert.Equal(t, original.MetaSortKey, restored.MetaSortKey)
+	assert.Equal(t, original.WorkspaceID, restored.WorkspaceID)
+	assert.Equal(t, original.SyncVersion, restored.SyncVersion)
+	assert.True(t, original.CreatedAt.Equal(restored.CreatedAt))
+	assert.True(t, original.UpdatedAt.Equal(restored.UpdatedAt))
+
+	require.NotNil(t, restored.HTTP)
+	assert.Equal(t, original.HTTP.Priority, restored.HTTP.Priority)
+
+	require.NotNil(t, restored.HTTP.Matcher)
+	assert.Equal(t, original.HTTP.Matcher.Method, restored.HTTP.Matcher.Method)
+	assert.Equal(t, original.HTTP.Matcher.Path, restored.HTTP.Matcher.Path)
+	assert.Equal(t, original.HTTP.Matcher.Headers, restored.HTTP.Matcher.Headers)
+	assert.Equal(t, original.HTTP.Matcher.QueryParams, restored.HTTP.Matcher.QueryParams)
+
+	require.NotNil(t, restored.HTTP.Response)
+	assert.Equal(t, original.HTTP.Response.StatusCode, restored.HTTP.Response.StatusCode)
+	assert.Equal(t, original.HTTP.Response.Headers, restored.HTTP.Response.Headers)
+	assert.Equal(t, original.HTTP.Response.Body, restored.HTTP.Response.Body)
+	assert.Equal(t, original.HTTP.Response.DelayMs, restored.HTTP.Response.DelayMs)
+}
+
+func TestMock_JSON_RoundTrip_WebSocket(t *testing.T) {
+	wsEnabled := true
+	original := Mock{
+		ID:      "ws-1",
+		Type:    TypeWebSocket,
+		Name:    "Test WebSocket Mock",
+		Enabled: &wsEnabled,
+		WebSocket: &WebSocketSpec{
+			Path:           "/ws/events",
+			Subprotocols:   []string{"graphql-ws", "subscriptions-transport-ws"},
+			MaxMessageSize: 65536,
+			IdleTimeout:    "30s",
+			MaxConnections: 100,
+			Heartbeat: &WSHeartbeatConfig{
+				Enabled:  true,
+				Interval: "15s",
+				Timeout:  "5s",
+			},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored Mock
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	assert.Equal(t, original.ID, restored.ID)
+	assert.Equal(t, original.Type, restored.Type)
+
+	require.NotNil(t, restored.WebSocket)
+	assert.Equal(t, original.WebSocket.Path, restored.WebSocket.Path)
+	assert.Equal(t, original.WebSocket.Subprotocols, restored.WebSocket.Subprotocols)
+	assert.Equal(t, original.WebSocket.MaxMessageSize, restored.WebSocket.MaxMessageSize)
+	assert.Equal(t, original.WebSocket.IdleTimeout, restored.WebSocket.IdleTimeout)
+	assert.Equal(t, original.WebSocket.MaxConnections, restored.WebSocket.MaxConnections)
+
+	require.NotNil(t, restored.WebSocket.Heartbeat)
+	assert.Equal(t, original.WebSocket.Heartbeat.Enabled, restored.WebSocket.Heartbeat.Enabled)
+	assert.Equal(t, original.WebSocket.Heartbeat.Interval, restored.WebSocket.Heartbeat.Interval)
+	assert.Equal(t, original.WebSocket.Heartbeat.Timeout, restored.WebSocket.Heartbeat.Timeout)
+}
+
+func TestMock_JSON_RoundTrip_SSE(t *testing.T) {
+	fixedDelay := 100
+	sseEnabled := true
+	original := Mock{
+		ID:      "sse-1",
+		Type:    TypeHTTP,
+		Name:    "Test SSE Mock",
+		Enabled: &sseEnabled,
+		HTTP: &HTTPSpec{
+			Matcher: &HTTPMatcher{
+				Method: "GET",
+				Path:   "/events",
+			},
+			SSE: &SSEConfig{
+				Events: []SSEEventDef{
+					{Type: "message", Data: "hello", ID: "1"},
+					{Type: "update", Data: map[string]string{"key": "value"}, ID: "2"},
+				},
+				Timing: SSETimingConfig{
+					FixedDelay:   &fixedDelay,
+					InitialDelay: 50,
+				},
+				Lifecycle: SSELifecycleConfig{
+					MaxEvents:         100,
+					KeepaliveInterval: 15,
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored Mock
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	assert.Equal(t, original.ID, restored.ID)
+	assert.Equal(t, original.Type, restored.Type)
+
+	require.NotNil(t, restored.HTTP)
+	require.NotNil(t, restored.HTTP.SSE)
+	assert.Len(t, restored.HTTP.SSE.Events, 2)
+	assert.Equal(t, "message", restored.HTTP.SSE.Events[0].Type)
+	assert.Equal(t, "update", restored.HTTP.SSE.Events[1].Type)
+
+	require.NotNil(t, restored.HTTP.SSE.Timing.FixedDelay)
+	assert.Equal(t, 100, *restored.HTTP.SSE.Timing.FixedDelay)
+	assert.Equal(t, 50, restored.HTTP.SSE.Timing.InitialDelay)
+	assert.Equal(t, 100, restored.HTTP.SSE.Lifecycle.MaxEvents)
+	assert.Equal(t, 15, restored.HTTP.SSE.Lifecycle.KeepaliveInterval)
+}
+
+// =============================================================================
+// HTTPMatcher Validation Tests
+// =============================================================================
+
+func TestHTTPMatcher_Validate_AtLeastOneCriteria(t *testing.T) {
+	m := &HTTPMatcher{}
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "at least one matching criterion must be specified")
+}
+
+func TestHTTPMatcher_Validate_InvalidMethod(t *testing.T) {
+	m := &HTTPMatcher{Method: "INVALID"}
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid HTTP method")
+}
+
+func TestHTTPMatcher_Validate_ValidMethods(t *testing.T) {
+	methods := []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			m := &HTTPMatcher{Method: method, Path: "/test"}
+			err := m.Validate()
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestHTTPMatcher_Validate_PathMustStartWithSlash(t *testing.T) {
+	m := &HTTPMatcher{Path: "api/users"}
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "path must start with /")
+}
+
+func TestHTTPMatcher_Validate_PathAndPathPatternMutuallyExclusive(t *testing.T) {
+	m := &HTTPMatcher{Path: "/api/users", PathPattern: "/api/users/[0-9]+"}
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot specify both path and pathPattern")
+}
+
+func TestHTTPMatcher_Validate_InvalidPathPatternRegex(t *testing.T) {
+	m := &HTTPMatcher{PathPattern: "[invalid"}
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid regex pattern")
+}
+
+func TestHTTPMatcher_Validate_InvalidBodyPatternRegex(t *testing.T) {
+	m := &HTTPMatcher{Path: "/test", BodyPattern: "[invalid"}
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid regex pattern")
+}
+
+func TestHTTPMatcher_Validate_BodyEqualsAndBodyContainsMutuallyExclusive(t *testing.T) {
+	m := &HTTPMatcher{Path: "/test", BodyEquals: "exact", BodyContains: "partial"}
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot specify both bodyEquals and bodyContains")
+}
+
+func TestHTTPMatcher_Validate_InvalidJSONPath(t *testing.T) {
+	m := &HTTPMatcher{
+		Path:         "/test",
+		BodyJSONPath: map[string]interface{}{"[invalid": "value"},
+	}
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid JSONPath expression")
+}
+
+func TestHTTPMatcher_Validate_InvalidHeaderName(t *testing.T) {
+	m := &HTTPMatcher{
+		Path:    "/test",
+		Headers: map[string]string{"Invalid Header": "value"},
+	}
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid header name")
+}
+
+// =============================================================================
+// HTTPResponse Validation Tests
+// =============================================================================
+
+func TestHTTPResponse_Validate_InvalidStatusCode(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantErr    bool
+	}{
+		{"too low", 99, true},
+		{"min valid", 100, false},
+		{"200 OK", 200, false},
+		{"404 Not Found", 404, false},
+		{"500 Server Error", 500, false},
+		{"max valid", 599, false},
+		{"too high", 600, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &HTTPResponse{StatusCode: tt.statusCode}
+			err := r.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestHTTPResponse_Validate_BodyAndBodyFileMutuallyExclusive(t *testing.T) {
+	r := &HTTPResponse{
+		StatusCode: 200,
+		Body:       "inline body",
+		BodyFile:   "/path/to/file",
+	}
+	err := r.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot specify both body and bodyFile")
+}
+
+func TestHTTPResponse_Validate_DelayMs(t *testing.T) {
+	tests := []struct {
+		name    string
+		delayMs int
+		wantErr bool
+	}{
+		{"negative", -1, true},
+		{"zero", 0, false},
+		{"positive", 100, false},
+		{"max", 30000, false},
+		{"over max", 30001, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &HTTPResponse{StatusCode: 200, DelayMs: tt.delayMs}
+			err := r.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// GetSpec and GetPath Tests
+// =============================================================================
+
+func TestMock_GetSpec(t *testing.T) {
+	tests := []struct {
+		name     string
+		mock     Mock
+		wantNil  bool
+		specType string
+	}{
+		{
+			name:     "HTTP",
+			mock:     Mock{Type: TypeHTTP, HTTP: &HTTPSpec{}},
+			specType: "*mock.HTTPSpec",
+		},
+		{
+			name:     "WebSocket",
+			mock:     Mock{Type: TypeWebSocket, WebSocket: &WebSocketSpec{}},
+			specType: "*mock.WebSocketSpec",
+		},
+		{
+			name:     "GraphQL",
+			mock:     Mock{Type: TypeGraphQL, GraphQL: &GraphQLSpec{}},
+			specType: "*mock.GraphQLSpec",
+		},
+		{
+			name:     "gRPC",
+			mock:     Mock{Type: TypeGRPC, GRPC: &GRPCSpec{}},
+			specType: "*mock.GRPCSpec",
+		},
+		{
+			name:     "SOAP",
+			mock:     Mock{Type: TypeSOAP, SOAP: &SOAPSpec{}},
+			specType: "*mock.SOAPSpec",
+		},
+		{
+			name:     "MQTT",
+			mock:     Mock{Type: TypeMQTT, MQTT: &MQTTSpec{}},
+			specType: "*mock.MQTTSpec",
+		},
+		{
+			name:     "OAuth",
+			mock:     Mock{Type: TypeOAuth, OAuth: &OAuthSpec{}},
+			specType: "*mock.OAuthSpec",
+		},
+		{
+			name:    "Unknown type",
+			mock:    Mock{Type: Type("unknown")},
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := tt.mock.GetSpec()
+			if tt.wantNil {
+				assert.Nil(t, spec)
+			} else {
+				assert.NotNil(t, spec)
+			}
+		})
+	}
+}
+
+func TestMock_GetPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		mock     Mock
+		wantPath string
+	}{
+		{
+			name: "HTTP with path",
+			mock: Mock{
+				Type: TypeHTTP,
+				HTTP: &HTTPSpec{Matcher: &HTTPMatcher{Path: "/api/users"}},
+			},
+			wantPath: "/api/users",
+		},
+		{
+			name: "HTTP with pathPattern",
+			mock: Mock{
+				Type: TypeHTTP,
+				HTTP: &HTTPSpec{Matcher: &HTTPMatcher{PathPattern: "/api/users/[0-9]+"}},
+			},
+			wantPath: "/api/users/[0-9]+",
+		},
+		{
+			name: "HTTP path takes precedence over pathPattern",
+			mock: Mock{
+				Type: TypeHTTP,
+				HTTP: &HTTPSpec{Matcher: &HTTPMatcher{Path: "/exact", PathPattern: "/pattern"}},
+			},
+			wantPath: "/exact",
+		},
+		{
+			name:     "WebSocket",
+			mock:     Mock{Type: TypeWebSocket, WebSocket: &WebSocketSpec{Path: "/ws/events"}},
+			wantPath: "/ws/events",
+		},
+		{
+			name:     "GraphQL",
+			mock:     Mock{Type: TypeGraphQL, GraphQL: &GraphQLSpec{Path: "/graphql"}},
+			wantPath: "/graphql",
+		},
+		{
+			name:     "gRPC",
+			mock:     Mock{Type: TypeGRPC, GRPC: &GRPCSpec{Port: 50051}},
+			wantPath: ":50051",
+		},
+		{
+			name:     "gRPC zero port",
+			mock:     Mock{Type: TypeGRPC, GRPC: &GRPCSpec{Port: 0}},
+			wantPath: "",
+		},
+		{
+			name:     "SOAP",
+			mock:     Mock{Type: TypeSOAP, SOAP: &SOAPSpec{Path: "/soap/service"}},
+			wantPath: "/soap/service",
+		},
+		{
+			name:     "MQTT",
+			mock:     Mock{Type: TypeMQTT, MQTT: &MQTTSpec{Port: 1883}},
+			wantPath: ":1883",
+		},
+		{
+			name:     "OAuth",
+			mock:     Mock{Type: TypeOAuth, OAuth: &OAuthSpec{Issuer: "http://localhost:9999/oauth"}},
+			wantPath: "http://localhost:9999/oauth",
+		},
+		{
+			name:     "nil spec",
+			mock:     Mock{Type: TypeHTTP, HTTP: nil},
+			wantPath: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantPath, tt.mock.GetPath())
+		})
+	}
+}
+
+func TestMock_GetMethod(t *testing.T) {
+	tests := []struct {
+		name       string
+		mock       Mock
+		wantMethod string
+	}{
+		{
+			name: "HTTP with method",
+			mock: Mock{
+				Type: TypeHTTP,
+				HTTP: &HTTPSpec{Matcher: &HTTPMatcher{Method: "POST"}},
+			},
+			wantMethod: "POST",
+		},
+		{
+			name: "HTTP without method",
+			mock: Mock{
+				Type: TypeHTTP,
+				HTTP: &HTTPSpec{Matcher: &HTTPMatcher{Path: "/test"}},
+			},
+			wantMethod: "",
+		},
+		{
+			name:       "non-HTTP type",
+			mock:       Mock{Type: TypeWebSocket},
+			wantMethod: "",
+		},
+		{
+			name:       "nil HTTP spec",
+			mock:       Mock{Type: TypeHTTP, HTTP: nil},
+			wantMethod: "",
+		},
+		{
+			name:       "nil matcher",
+			mock:       Mock{Type: TypeHTTP, HTTP: &HTTPSpec{Matcher: nil}},
+			wantMethod: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantMethod, tt.mock.GetMethod())
+		})
+	}
+}
+
+// =============================================================================
+// GraphQL Validator Tests
+// =============================================================================
+
+func TestMock_Validate_GraphQL(t *testing.T) {
+	tests := []struct {
+		name      string
+		mock      Mock
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name: "valid graphql with inline schema",
+			mock: Mock{
+				ID:   "gql-1",
+				Type: TypeGraphQL,
+				GraphQL: &GraphQLSpec{
+					Path:   "/graphql",
+					Schema: "type Query { hello: String }",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid graphql with schemaFile",
+			mock: Mock{
+				ID:   "gql-2",
+				Type: TypeGraphQL,
+				GraphQL: &GraphQLSpec{
+					Path:       "/graphql",
+					SchemaFile: "schemas/schema.graphql",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid graphql with absolute schemaFile",
+			mock: Mock{
+				ID:   "gql-abs",
+				Type: TypeGraphQL,
+				GraphQL: &GraphQLSpec{
+					Path:       "/graphql",
+					SchemaFile: "/etc/mockd/schemas/schema.graphql",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid graphql with resolvers and subscriptions",
+			mock: Mock{
+				ID:   "gql-full",
+				Type: TypeGraphQL,
+				GraphQL: &GraphQLSpec{
+					Path:          "/graphql",
+					Schema:        "type Query { user: User }\ntype User { name: String }",
+					Introspection: true,
+					Resolvers: map[string]ResolverConfig{
+						"Query.user": {Response: map[string]string{"name": "Alice"}},
+					},
+					Subscriptions: map[string]SubscriptionConfig{
+						"onUserCreated": {},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "nil graphql spec",
+			mock: Mock{
+				ID:   "gql-nil",
+				Type: TypeGraphQL,
+			},
+			wantErr:   true,
+			errSubstr: "graphql spec is required",
+		},
+		{
+			name: "empty graphql spec",
+			mock: Mock{
+				ID:      "gql-empty",
+				Type:    TypeGraphQL,
+				GraphQL: &GraphQLSpec{},
+			},
+			wantErr:   true,
+			errSubstr: "path is required",
+		},
+		{
+			name: "missing path",
+			mock: Mock{
+				ID:   "gql-nopath",
+				Type: TypeGraphQL,
+				GraphQL: &GraphQLSpec{
+					Schema: "type Query { hello: String }",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path is required",
+		},
+		{
+			name: "path without leading slash",
+			mock: Mock{
+				ID:   "gql-badpath",
+				Type: TypeGraphQL,
+				GraphQL: &GraphQLSpec{
+					Path:   "graphql",
+					Schema: "type Query { hello: String }",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path must start with /",
+		},
+		{
+			name: "missing both schema and schemaFile",
+			mock: Mock{
+				ID:   "gql-noschema",
+				Type: TypeGraphQL,
+				GraphQL: &GraphQLSpec{
+					Path: "/graphql",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "one of schema or schemaFile is required",
+		},
+		{
+			name: "both schema and schemaFile",
+			mock: Mock{
+				ID:   "gql-both",
+				Type: TypeGraphQL,
+				GraphQL: &GraphQLSpec{
+					Path:       "/graphql",
+					Schema:     "type Query { hello: String }",
+					SchemaFile: "schema.graphql",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "cannot specify both schema and schemaFile",
+		},
+		{
+			name: "schemaFile with path traversal",
+			mock: Mock{
+				ID:   "gql-traversal",
+				Type: TypeGraphQL,
+				GraphQL: &GraphQLSpec{
+					Path:       "/graphql",
+					SchemaFile: "../../../etc/passwd",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path cannot contain '..'",
+		},
+		{
+			name: "schemaFile with embedded path traversal",
+			mock: Mock{
+				ID:   "gql-traversal2",
+				Type: TypeGraphQL,
+				GraphQL: &GraphQLSpec{
+					Path:       "/graphql",
+					SchemaFile: "schemas/../../../etc/passwd",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path cannot contain '..'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.mock.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errSubstr != "" {
+					assert.Contains(t, err.Error(), tt.errSubstr)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// gRPC Validator Tests
+// =============================================================================
+
+func TestMock_Validate_GRPC(t *testing.T) {
+	tests := []struct {
+		name      string
+		mock      Mock
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name: "valid grpc with protoFile",
+			mock: Mock{
+				ID:   "grpc-1",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:      50051,
+					ProtoFile: "service.proto",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid grpc with protoFiles",
+			mock: Mock{
+				ID:   "grpc-2",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:       50051,
+					ProtoFiles: []string{"service.proto", "common.proto"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid grpc with absolute protoFile",
+			mock: Mock{
+				ID:   "grpc-abs",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:      50051,
+					ProtoFile: "/opt/protos/service.proto",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid grpc with importPaths",
+			mock: Mock{
+				ID:   "grpc-imports",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:        50051,
+					ProtoFile:   "service.proto",
+					ImportPaths: []string{"protos/", "third_party/"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid grpc fully loaded",
+			mock: Mock{
+				ID:   "grpc-full",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:       50051,
+					ProtoFile:  "service.proto",
+					Reflection: true,
+					Services: map[string]ServiceConfig{
+						"pkg.MyService": {
+							Methods: map[string]MethodConfig{
+								"GetUser": {
+									Response: map[string]string{"name": "Alice"},
+									Delay:    "100ms",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "nil grpc spec",
+			mock: Mock{
+				ID:   "grpc-nil",
+				Type: TypeGRPC,
+			},
+			wantErr:   true,
+			errSubstr: "grpc spec is required",
+		},
+		{
+			name: "empty grpc spec",
+			mock: Mock{
+				ID:   "grpc-empty",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{},
+			},
+			wantErr:   true,
+			errSubstr: "port must be between 1 and 65535",
+		},
+		{
+			name: "port zero",
+			mock: Mock{
+				ID:   "grpc-port0",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:      0,
+					ProtoFile: "service.proto",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "port must be between 1 and 65535",
+		},
+		{
+			name: "port negative",
+			mock: Mock{
+				ID:   "grpc-portneg",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:      -1,
+					ProtoFile: "service.proto",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "port must be between 1 and 65535",
+		},
+		{
+			name: "port too high",
+			mock: Mock{
+				ID:   "grpc-porthi",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:      65536,
+					ProtoFile: "service.proto",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "port must be between 1 and 65535",
+		},
+		{
+			name: "port min valid (1)",
+			mock: Mock{
+				ID:   "grpc-portmin",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:      1,
+					ProtoFile: "service.proto",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "port max valid (65535)",
+			mock: Mock{
+				ID:   "grpc-portmax",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:      65535,
+					ProtoFile: "service.proto",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing proto files",
+			mock: Mock{
+				ID:   "grpc-noproto",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port: 50051,
+				},
+			},
+			wantErr:   true,
+			errSubstr: "one of protoFile, protoFiles, or protoContent is required",
+		},
+		{
+			name: "both protoFile and protoFiles",
+			mock: Mock{
+				ID:   "grpc-bothproto",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:       50051,
+					ProtoFile:  "service.proto",
+					ProtoFiles: []string{"other.proto"},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "cannot specify both protoFile and protoFiles",
+		},
+		{
+			name: "protoFile with path traversal",
+			mock: Mock{
+				ID:   "grpc-traversal",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:      50051,
+					ProtoFile: "../../../etc/passwd",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path cannot contain '..'",
+		},
+		{
+			name: "protoFiles with path traversal",
+			mock: Mock{
+				ID:   "grpc-traversal2",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:       50051,
+					ProtoFiles: []string{"service.proto", "../../evil.proto"},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path cannot contain '..'",
+		},
+		{
+			name: "importPaths with path traversal",
+			mock: Mock{
+				ID:   "grpc-importtraversal",
+				Type: TypeGRPC,
+				GRPC: &GRPCSpec{
+					Port:        50051,
+					ProtoFile:   "service.proto",
+					ImportPaths: []string{"protos/", "../../../secrets"},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path cannot contain '..'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.mock.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errSubstr != "" {
+					assert.Contains(t, err.Error(), tt.errSubstr)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// SOAP Validator Tests
+// =============================================================================
+
+func TestMock_Validate_SOAP(t *testing.T) {
+	tests := []struct {
+		name      string
+		mock      Mock
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name: "valid soap minimal",
+			mock: Mock{
+				ID:   "soap-1",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "/soap/service",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid soap with inline wsdl",
+			mock: Mock{
+				ID:   "soap-wsdl",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "/soap/service",
+					WSDL: "<wsdl:definitions>...</wsdl:definitions>",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid soap with wsdlFile",
+			mock: Mock{
+				ID:   "soap-wsdlfile",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path:     "/soap/service",
+					WSDLFile: "wsdl/service.wsdl",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid soap with absolute wsdlFile",
+			mock: Mock{
+				ID:   "soap-abswsdl",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path:     "/soap/service",
+					WSDLFile: "/opt/mockd/wsdl/service.wsdl",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid soap with operations",
+			mock: Mock{
+				ID:   "soap-ops",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "/soap/service",
+					Operations: map[string]OperationConfig{
+						"GetWeather": {
+							SOAPAction: "http://example.com/GetWeather",
+							Response:   "<Temp>72</Temp>",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid soap operation with fault",
+			mock: Mock{
+				ID:   "soap-fault",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "/soap/service",
+					Operations: map[string]OperationConfig{
+						"Broken": {
+							Fault: &SOAPFault{
+								Code:    "soap:Server",
+								Message: "Internal error",
+								Detail:  "<detail>something broke</detail>",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "nil soap spec",
+			mock: Mock{
+				ID:   "soap-nil",
+				Type: TypeSOAP,
+			},
+			wantErr:   true,
+			errSubstr: "soap spec is required",
+		},
+		{
+			name: "empty soap spec",
+			mock: Mock{
+				ID:   "soap-empty",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{},
+			},
+			wantErr:   true,
+			errSubstr: "path is required",
+		},
+		{
+			name: "missing path",
+			mock: Mock{
+				ID:   "soap-nopath",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					WSDL: "<wsdl/>",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path is required",
+		},
+		{
+			name: "path without leading slash",
+			mock: Mock{
+				ID:   "soap-badpath",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "soap/service",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path must start with /",
+		},
+		{
+			name: "both wsdl and wsdlFile",
+			mock: Mock{
+				ID:   "soap-bothwsdl",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path:     "/soap/service",
+					WSDL:     "<wsdl/>",
+					WSDLFile: "service.wsdl",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "cannot specify both wsdl and wsdlFile",
+		},
+		{
+			name: "wsdlFile with path traversal",
+			mock: Mock{
+				ID:   "soap-traversal",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path:     "/soap/service",
+					WSDLFile: "../../../etc/passwd",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path cannot contain '..'",
+		},
+		{
+			name: "operation without response or fault",
+			mock: Mock{
+				ID:   "soap-opnoresp",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "/soap/service",
+					Operations: map[string]OperationConfig{
+						"Broken": {},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "operation must have either response, fault, or statefulBinding",
+		},
+		{
+			name: "multiple operations mixed valid and invalid",
+			mock: Mock{
+				ID:   "soap-mixops",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "/soap/service",
+					Operations: map[string]OperationConfig{
+						"Good": {Response: "<OK/>"},
+						"Bad":  {},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "operation must have either response, fault, or statefulBinding",
+		},
+		{
+			name: "stateful operation is valid without response",
+			mock: Mock{
+				ID:   "soap-stateful",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "/soap/service",
+					Operations: map[string]OperationConfig{
+						"GetUser": {
+							StatefulBinding: &StatefulBinding{Table: "users", Action: "get"},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "stateful operation missing action",
+			mock: Mock{
+				ID:   "soap-stateful-noaction",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "/soap/service",
+					Operations: map[string]OperationConfig{
+						"GetUser": {
+							StatefulBinding: &StatefulBinding{Table: "users"},
+						},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "action is required when statefulBinding is set",
+		},
+		{
+			name: "stateful operation invalid action",
+			mock: Mock{
+				ID:   "soap-stateful-badaction",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "/soap/service",
+					Operations: map[string]OperationConfig{
+						"GetUser": {
+							StatefulBinding: &StatefulBinding{Table: "users", Action: "bogus"},
+						},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "invalid stateful action",
+		},
+		{
+			name: "stateful binding missing table",
+			mock: Mock{
+				ID:   "soap-binding-notable",
+				Type: TypeSOAP,
+				SOAP: &SOAPSpec{
+					Path: "/soap/service",
+					Operations: map[string]OperationConfig{
+						"GetUser": {
+							StatefulBinding: &StatefulBinding{Action: "get"},
+						},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "table is required when statefulBinding is set",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.mock.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errSubstr != "" {
+					assert.Contains(t, err.Error(), tt.errSubstr)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// MQTT Validator Tests
+// =============================================================================
+
+func TestMock_Validate_MQTT(t *testing.T) {
+	tests := []struct {
+		name      string
+		mock      Mock
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name: "valid mqtt minimal",
+			mock: Mock{
+				ID:   "mqtt-1",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid mqtt with topics",
+			mock: Mock{
+				ID:   "mqtt-topics",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					Topics: []TopicConfig{
+						{
+							Topic: "sensors/temp",
+							QoS:   1,
+							Messages: []MessageConfig{
+								{Payload: `{"temp":72}`},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid mqtt with TLS",
+			mock: Mock{
+				ID:   "mqtt-tls",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 8883,
+					TLS: &MQTTTLSConfig{
+						Enabled:  true,
+						CertFile: "certs/server.pem",
+						KeyFile:  "certs/server.key",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid mqtt with auth",
+			mock: Mock{
+				ID:   "mqtt-auth",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					Auth: &MQTTAuthConfig{
+						Enabled: true,
+						Users: []MQTTUser{
+							{Username: "user1", Password: "pass1"},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid mqtt qos 0",
+			mock: Mock{
+				ID:   "mqtt-qos0",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					Topics: []TopicConfig{
+						{Topic: "test", QoS: 0},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid mqtt qos 2",
+			mock: Mock{
+				ID:   "mqtt-qos2",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					Topics: []TopicConfig{
+						{Topic: "test", QoS: 2},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "nil mqtt spec",
+			mock: Mock{
+				ID:   "mqtt-nil",
+				Type: TypeMQTT,
+			},
+			wantErr:   true,
+			errSubstr: "mqtt spec is required",
+		},
+		{
+			name: "empty mqtt spec",
+			mock: Mock{
+				ID:   "mqtt-empty",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{},
+			},
+			wantErr:   true,
+			errSubstr: "port must be between 1 and 65535",
+		},
+		{
+			name: "port zero",
+			mock: Mock{
+				ID:   "mqtt-port0",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{Port: 0},
+			},
+			wantErr:   true,
+			errSubstr: "port must be between 1 and 65535",
+		},
+		{
+			name: "port negative",
+			mock: Mock{
+				ID:   "mqtt-portneg",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{Port: -1},
+			},
+			wantErr:   true,
+			errSubstr: "port must be between 1 and 65535",
+		},
+		{
+			name: "port too high",
+			mock: Mock{
+				ID:   "mqtt-porthi",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{Port: 65536},
+			},
+			wantErr:   true,
+			errSubstr: "port must be between 1 and 65535",
+		},
+		{
+			name: "port min valid (1)",
+			mock: Mock{
+				ID:   "mqtt-portmin",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{Port: 1},
+			},
+			wantErr: false,
+		},
+		{
+			name: "port max valid (65535)",
+			mock: Mock{
+				ID:   "mqtt-portmax",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{Port: 65535},
+			},
+			wantErr: false,
+		},
+		{
+			name: "TLS enabled missing certFile",
+			mock: Mock{
+				ID:   "mqtt-tlsnocert",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 8883,
+					TLS: &MQTTTLSConfig{
+						Enabled: true,
+						KeyFile: "server.key",
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "certFile is required when TLS is enabled",
+		},
+		{
+			name: "TLS enabled missing keyFile",
+			mock: Mock{
+				ID:   "mqtt-tlsnokey",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 8883,
+					TLS: &MQTTTLSConfig{
+						Enabled:  true,
+						CertFile: "server.pem",
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "keyFile is required when TLS is enabled",
+		},
+		{
+			name: "TLS certFile path traversal",
+			mock: Mock{
+				ID:   "mqtt-tlscerttraversal",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 8883,
+					TLS: &MQTTTLSConfig{
+						Enabled:  true,
+						CertFile: "../../../etc/ssl/server.pem",
+						KeyFile:  "server.key",
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path cannot contain '..'",
+		},
+		{
+			name: "TLS keyFile path traversal",
+			mock: Mock{
+				ID:   "mqtt-tlskeytraversal",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 8883,
+					TLS: &MQTTTLSConfig{
+						Enabled:  true,
+						CertFile: "server.pem",
+						KeyFile:  "../../../etc/ssl/server.key",
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "path cannot contain '..'",
+		},
+		{
+			name: "TLS disabled skips cert validation",
+			mock: Mock{
+				ID:   "mqtt-tlsdisabled",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					TLS: &MQTTTLSConfig{
+						Enabled: false,
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "auth enabled no users",
+			mock: Mock{
+				ID:   "mqtt-authnousers",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					Auth: &MQTTAuthConfig{
+						Enabled: true,
+						Users:   []MQTTUser{},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "at least one user is required when auth is enabled",
+		},
+		{
+			name: "auth user missing username",
+			mock: Mock{
+				ID:   "mqtt-authnoname",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					Auth: &MQTTAuthConfig{
+						Enabled: true,
+						Users: []MQTTUser{
+							{Username: "", Password: "pass"},
+						},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "username is required",
+		},
+		{
+			name: "auth disabled skips user validation",
+			mock: Mock{
+				ID:   "mqtt-authdisabled",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					Auth: &MQTTAuthConfig{
+						Enabled: false,
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "topic with empty topic string",
+			mock: Mock{
+				ID:   "mqtt-emptytopic",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					Topics: []TopicConfig{
+						{Topic: ""},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "topic is required",
+		},
+		{
+			name: "topic with invalid qos -1",
+			mock: Mock{
+				ID:   "mqtt-badqos",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					Topics: []TopicConfig{
+						{Topic: "test", QoS: -1},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "qos must be 0, 1, or 2",
+		},
+		{
+			name: "topic with invalid qos 3",
+			mock: Mock{
+				ID:   "mqtt-qos3",
+				Type: TypeMQTT,
+				MQTT: &MQTTSpec{
+					Port: 1883,
+					Topics: []TopicConfig{
+						{Topic: "test", QoS: 3},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "qos must be 0, 1, or 2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.mock.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errSubstr != "" {
+					assert.Contains(t, err.Error(), tt.errSubstr)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// OAuth Validator Tests
+// =============================================================================
+
+func TestMock_Validate_OAuth(t *testing.T) {
+	tests := []struct {
+		name      string
+		mock      Mock
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name: "valid oauth minimal",
+			mock: Mock{
+				ID:   "oauth-1",
+				Type: TypeOAuth,
+				OAuth: &OAuthSpec{
+					Issuer: "http://localhost:9999/oauth",
+					Clients: []OAuthClient{
+						{ClientID: "test-app", ClientSecret: "secret"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid oauth fully loaded",
+			mock: Mock{
+				ID:   "oauth-full",
+				Type: TypeOAuth,
+				OAuth: &OAuthSpec{
+					Issuer:        "http://localhost:9999/oauth",
+					TokenExpiry:   "1h",
+					RefreshExpiry: "7d",
+					DefaultScopes: []string{"openid", "profile", "email"},
+					Clients: []OAuthClient{
+						{
+							ClientID:     "web-app",
+							ClientSecret: "secret123",
+							RedirectURIs: []string{"http://localhost:3000/callback"},
+							GrantTypes:   []string{"authorization_code", "refresh_token"},
+						},
+						{
+							ClientID:     "cli-tool",
+							ClientSecret: "cli-secret",
+							GrantTypes:   []string{"client_credentials"},
+						},
+					},
+					Users: []OAuthUser{
+						{
+							Username: "alice",
+							Password: "password",
+							Claims:   map[string]interface{}{"role": "admin"},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "nil oauth spec",
+			mock: Mock{
+				ID:   "oauth-nil",
+				Type: TypeOAuth,
+			},
+			wantErr:   true,
+			errSubstr: "oauth spec is required",
+		},
+		{
+			name: "empty oauth spec",
+			mock: Mock{
+				ID:    "oauth-empty",
+				Type:  TypeOAuth,
+				OAuth: &OAuthSpec{},
+			},
+			wantErr:   true,
+			errSubstr: "issuer is required",
+		},
+		{
+			name: "missing issuer",
+			mock: Mock{
+				ID:   "oauth-noissuer",
+				Type: TypeOAuth,
+				OAuth: &OAuthSpec{
+					Clients: []OAuthClient{
+						{ClientID: "app"},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "issuer is required",
+		},
+		{
+			name: "no clients",
+			mock: Mock{
+				ID:   "oauth-noclients",
+				Type: TypeOAuth,
+				OAuth: &OAuthSpec{
+					Issuer:  "http://localhost:9999/oauth",
+					Clients: []OAuthClient{},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "at least one client must be configured",
+		},
+		{
+			name: "nil clients slice",
+			mock: Mock{
+				ID:   "oauth-nilclients",
+				Type: TypeOAuth,
+				OAuth: &OAuthSpec{
+					Issuer: "http://localhost:9999/oauth",
+				},
+			},
+			wantErr:   true,
+			errSubstr: "at least one client must be configured",
+		},
+		{
+			name: "client missing clientId",
+			mock: Mock{
+				ID:   "oauth-noclientid",
+				Type: TypeOAuth,
+				OAuth: &OAuthSpec{
+					Issuer: "http://localhost:9999/oauth",
+					Clients: []OAuthClient{
+						{ClientID: "", ClientSecret: "secret"},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "clientId is required",
+		},
+		{
+			name: "second client missing clientId",
+			mock: Mock{
+				ID:   "oauth-2ndnoclientid",
+				Type: TypeOAuth,
+				OAuth: &OAuthSpec{
+					Issuer: "http://localhost:9999/oauth",
+					Clients: []OAuthClient{
+						{ClientID: "good-app", ClientSecret: "secret"},
+						{ClientID: "", ClientSecret: "secret2"},
+					},
+				},
+			},
+			wantErr:   true,
+			errSubstr: "clientId is required",
+		},
+		{
+			name: "client without secret is valid",
+			mock: Mock{
+				ID:   "oauth-nosecret",
+				Type: TypeOAuth,
+				OAuth: &OAuthSpec{
+					Issuer: "http://localhost:9999/oauth",
+					Clients: []OAuthClient{
+						{ClientID: "public-app"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.mock.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errSubstr != "" {
+					assert.Contains(t, err.Error(), tt.errSubstr)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// ValidationError Type Tests
+// =============================================================================
+
+func TestValidationError_Error(t *testing.T) {
+	err := &ValidationError{Field: "test.field", Message: "something went wrong"}
+	assert.Equal(t, "validation error on test.field: something went wrong", err.Error())
+	assert.Contains(t, err.Error(), "test.field")
+	assert.Contains(t, err.Error(), "something went wrong")
+}
+
+// =============================================================================
+// JSON Round-trip Tests — GraphQL
+// =============================================================================
+
+func TestMock_JSON_RoundTrip_GraphQL(t *testing.T) {
+	enabled := true
+	original := Mock{
+		ID:      "gql-rt",
+		Type:    TypeGraphQL,
+		Name:    "GraphQL Round Trip",
+		Enabled: &enabled,
+		GraphQL: &GraphQLSpec{
+			Path:          "/graphql",
+			Schema:        "type Query { user(id: ID!): User }\ntype User { id: ID!, name: String }",
+			Introspection: true,
+			Resolvers: map[string]ResolverConfig{
+				"Query.user": {
+					Response: map[string]interface{}{"id": "1", "name": "Alice"},
+					Delay:    "50ms",
+					Match: &ResolverMatch{
+						Args: map[string]any{"id": "1"},
+					},
+				},
+			},
+			Subscriptions: map[string]SubscriptionConfig{
+				"onUserCreated": {},
+			},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored Mock
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	assert.Equal(t, original.ID, restored.ID)
+	assert.Equal(t, original.Type, restored.Type)
+	assert.Equal(t, original.Name, restored.Name)
+	assert.Equal(t, *original.Enabled, *restored.Enabled)
+
+	require.NotNil(t, restored.GraphQL)
+	assert.Equal(t, original.GraphQL.Path, restored.GraphQL.Path)
+	assert.Equal(t, original.GraphQL.Schema, restored.GraphQL.Schema)
+	assert.Equal(t, original.GraphQL.Introspection, restored.GraphQL.Introspection)
+	assert.Equal(t, original.GraphQL.SchemaFile, restored.GraphQL.SchemaFile)
+
+	require.Contains(t, restored.GraphQL.Resolvers, "Query.user")
+	assert.Equal(t, "50ms", restored.GraphQL.Resolvers["Query.user"].Delay)
+	assert.NotNil(t, restored.GraphQL.Resolvers["Query.user"].Match)
+
+	require.Contains(t, restored.GraphQL.Subscriptions, "onUserCreated")
+
+	// Ensure other specs are nil
+	assert.Nil(t, restored.HTTP)
+	assert.Nil(t, restored.WebSocket)
+	assert.Nil(t, restored.GRPC)
+	assert.Nil(t, restored.SOAP)
+	assert.Nil(t, restored.MQTT)
+	assert.Nil(t, restored.OAuth)
+}
+
+func TestMock_JSON_RoundTrip_GraphQL_SchemaFile(t *testing.T) {
+	original := Mock{
+		ID:   "gql-sf",
+		Type: TypeGraphQL,
+		GraphQL: &GraphQLSpec{
+			Path:       "/graphql",
+			SchemaFile: "schemas/my-schema.graphql",
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored Mock
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	require.NotNil(t, restored.GraphQL)
+	assert.Equal(t, "", restored.GraphQL.Schema)
+	assert.Equal(t, "schemas/my-schema.graphql", restored.GraphQL.SchemaFile)
+}
+
+// =============================================================================
+// JSON Round-trip Tests — gRPC
+// =============================================================================
+
+func TestMock_JSON_RoundTrip_GRPC(t *testing.T) {
+	enabled := true
+	original := Mock{
+		ID:      "grpc-rt",
+		Type:    TypeGRPC,
+		Name:    "gRPC Round Trip",
+		Enabled: &enabled,
+		GRPC: &GRPCSpec{
+			Port:        50051,
+			ProtoFile:   "protos/service.proto",
+			ImportPaths: []string{"protos/", "third_party/"},
+			Reflection:  true,
+			Services: map[string]ServiceConfig{
+				"mypackage.UserService": {
+					Methods: map[string]MethodConfig{
+						"GetUser": {
+							Response: map[string]interface{}{"name": "Alice", "id": "1"},
+							Delay:    "200ms",
+						},
+						"ListUsers": {
+							Responses: []any{
+								map[string]string{"name": "Alice"},
+								map[string]string{"name": "Bob"},
+							},
+							StreamDelay: "50ms",
+						},
+						"CreateUser": {
+							Error: &GRPCErrorConfig{
+								Code:    "ALREADY_EXISTS",
+								Message: "user already exists",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored Mock
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	assert.Equal(t, original.ID, restored.ID)
+	assert.Equal(t, original.Type, restored.Type)
+	assert.Equal(t, original.Name, restored.Name)
+
+	require.NotNil(t, restored.GRPC)
+	assert.Equal(t, 50051, restored.GRPC.Port)
+	assert.Equal(t, "protos/service.proto", restored.GRPC.ProtoFile)
+	assert.Equal(t, []string{"protos/", "third_party/"}, restored.GRPC.ImportPaths)
+	assert.True(t, restored.GRPC.Reflection)
+
+	require.Contains(t, restored.GRPC.Services, "mypackage.UserService")
+	svc := restored.GRPC.Services["mypackage.UserService"]
+	require.Contains(t, svc.Methods, "GetUser")
+	assert.Equal(t, "200ms", svc.Methods["GetUser"].Delay)
+	require.Contains(t, svc.Methods, "ListUsers")
+	assert.Equal(t, "50ms", svc.Methods["ListUsers"].StreamDelay)
+	assert.Len(t, svc.Methods["ListUsers"].Responses, 2)
+	require.Contains(t, svc.Methods, "CreateUser")
+	require.NotNil(t, svc.Methods["CreateUser"].Error)
+	assert.Equal(t, "ALREADY_EXISTS", svc.Methods["CreateUser"].Error.Code)
+
+	// Ensure other specs are nil
+	assert.Nil(t, restored.HTTP)
+	assert.Nil(t, restored.WebSocket)
+	assert.Nil(t, restored.GraphQL)
+	assert.Nil(t, restored.SOAP)
+	assert.Nil(t, restored.MQTT)
+	assert.Nil(t, restored.OAuth)
+}
+
+func TestMock_JSON_RoundTrip_GRPC_ProtoFiles(t *testing.T) {
+	original := Mock{
+		ID:   "grpc-pf",
+		Type: TypeGRPC,
+		GRPC: &GRPCSpec{
+			Port:       50051,
+			ProtoFiles: []string{"service.proto", "common.proto", "types.proto"},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored Mock
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	require.NotNil(t, restored.GRPC)
+	assert.Equal(t, "", restored.GRPC.ProtoFile)
+	assert.Equal(t, []string{"service.proto", "common.proto", "types.proto"}, restored.GRPC.ProtoFiles)
+}
+
+// =============================================================================
+// JSON Round-trip Tests — SOAP
+// =============================================================================
+
+func TestMock_JSON_RoundTrip_SOAP(t *testing.T) {
+	enabled := true
+	original := Mock{
+		ID:      "soap-rt",
+		Type:    TypeSOAP,
+		Name:    "SOAP Round Trip",
+		Enabled: &enabled,
+		SOAP: &SOAPSpec{
+			Path:     "/soap/weather",
+			WSDLFile: "wsdl/weather.wsdl",
+			Operations: map[string]OperationConfig{
+				"GetWeather": {
+					SOAPAction: "http://example.com/GetWeather",
+					Response:   "<GetWeatherResponse><Temp>72</Temp></GetWeatherResponse>",
+					Delay:      "100ms",
+					Match: &SOAPMatch{
+						XPath: map[string]string{
+							"//City": "Portland",
+						},
+					},
+				},
+				"GetForecast": {
+					Response: "<Forecast>Sunny</Forecast>",
+				},
+				"InternalError": {
+					Fault: &SOAPFault{
+						Code:    "soap:Server",
+						Message: "Internal error",
+						Detail:  "<detail>db down</detail>",
+					},
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored Mock
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	assert.Equal(t, original.ID, restored.ID)
+	assert.Equal(t, original.Type, restored.Type)
+	assert.Equal(t, original.Name, restored.Name)
+
+	require.NotNil(t, restored.SOAP)
+	assert.Equal(t, "/soap/weather", restored.SOAP.Path)
+	assert.Equal(t, "wsdl/weather.wsdl", restored.SOAP.WSDLFile)
+	assert.Equal(t, "", restored.SOAP.WSDL)
+
+	require.Contains(t, restored.SOAP.Operations, "GetWeather")
+	gw := restored.SOAP.Operations["GetWeather"]
+	assert.Equal(t, "http://example.com/GetWeather", gw.SOAPAction)
+	assert.Contains(t, gw.Response, "Temp")
+	assert.Equal(t, "100ms", gw.Delay)
+	require.NotNil(t, gw.Match)
+	assert.Equal(t, "Portland", gw.Match.XPath["//City"])
+
+	require.Contains(t, restored.SOAP.Operations, "InternalError")
+	ie := restored.SOAP.Operations["InternalError"]
+	require.NotNil(t, ie.Fault)
+	assert.Equal(t, "soap:Server", ie.Fault.Code)
+	assert.Equal(t, "Internal error", ie.Fault.Message)
+
+	// Ensure other specs are nil
+	assert.Nil(t, restored.HTTP)
+	assert.Nil(t, restored.WebSocket)
+	assert.Nil(t, restored.GraphQL)
+	assert.Nil(t, restored.GRPC)
+	assert.Nil(t, restored.MQTT)
+	assert.Nil(t, restored.OAuth)
+}
+
+// =============================================================================
+// JSON Round-trip Tests — MQTT
+// =============================================================================
+
+func TestMock_JSON_RoundTrip_MQTT(t *testing.T) {
+	enabled := true
+	original := Mock{
+		ID:      "mqtt-rt",
+		Type:    TypeMQTT,
+		Name:    "MQTT Round Trip",
+		Enabled: &enabled,
+		MQTT: &MQTTSpec{
+			Port: 1883,
+			TLS: &MQTTTLSConfig{
+				Enabled:  true,
+				CertFile: "certs/server.pem",
+				KeyFile:  "certs/server.key",
+			},
+			Auth: &MQTTAuthConfig{
+				Enabled: true,
+				Users: []MQTTUser{
+					{
+						Username: "sensor-hub",
+						Password: "secret",
+						ACL: []ACLRule{
+							{Topic: "sensors/#", Access: "readwrite"},
+							{Topic: "admin/#", Access: "deny"},
+						},
+					},
+				},
+			},
+			Topics: []TopicConfig{
+				{
+					Topic:  "sensors/temp",
+					QoS:    1,
+					Retain: true,
+					Messages: []MessageConfig{
+						{
+							Payload:  `{"temp":72,"unit":"F"}`,
+							Delay:    "1s",
+							Repeat:   true,
+							Interval: "5s",
+						},
+					},
+					OnPublish: &PublishHandler{
+						Response: &MessageConfig{Payload: `{"ack":true}`},
+						Forward:  "sensors/temp/log",
+					},
+					DeviceSimulation: &DeviceSimulationSettings{
+						Enabled:         true,
+						DeviceCount:     10,
+						DeviceIDPattern: "sensor-{id}",
+					},
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored Mock
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	assert.Equal(t, original.ID, restored.ID)
+	assert.Equal(t, original.Type, restored.Type)
+	assert.Equal(t, original.Name, restored.Name)
+
+	require.NotNil(t, restored.MQTT)
+	assert.Equal(t, 1883, restored.MQTT.Port)
+
+	require.NotNil(t, restored.MQTT.TLS)
+	assert.True(t, restored.MQTT.TLS.Enabled)
+	assert.Equal(t, "certs/server.pem", restored.MQTT.TLS.CertFile)
+	assert.Equal(t, "certs/server.key", restored.MQTT.TLS.KeyFile)
+
+	require.NotNil(t, restored.MQTT.Auth)
+	assert.True(t, restored.MQTT.Auth.Enabled)
+	require.Len(t, restored.MQTT.Auth.Users, 1)
+	assert.Equal(t, "sensor-hub", restored.MQTT.Auth.Users[0].Username)
+	require.Len(t, restored.MQTT.Auth.Users[0].ACL, 2)
+	assert.Equal(t, "sensors/#", restored.MQTT.Auth.Users[0].ACL[0].Topic)
+	assert.Equal(t, "readwrite", restored.MQTT.Auth.Users[0].ACL[0].Access)
+
+	require.Len(t, restored.MQTT.Topics, 1)
+	topic := restored.MQTT.Topics[0]
+	assert.Equal(t, "sensors/temp", topic.Topic)
+	assert.Equal(t, 1, topic.QoS)
+	assert.True(t, topic.Retain)
+	require.Len(t, topic.Messages, 1)
+	assert.Equal(t, `{"temp":72,"unit":"F"}`, topic.Messages[0].Payload)
+	assert.True(t, topic.Messages[0].Repeat)
+	assert.Equal(t, "5s", topic.Messages[0].Interval)
+	require.NotNil(t, topic.OnPublish)
+	assert.Equal(t, "sensors/temp/log", topic.OnPublish.Forward)
+	require.NotNil(t, topic.DeviceSimulation)
+	assert.True(t, topic.DeviceSimulation.Enabled)
+	assert.Equal(t, 10, topic.DeviceSimulation.DeviceCount)
+
+	// Ensure other specs are nil
+	assert.Nil(t, restored.HTTP)
+	assert.Nil(t, restored.WebSocket)
+	assert.Nil(t, restored.GraphQL)
+	assert.Nil(t, restored.GRPC)
+	assert.Nil(t, restored.SOAP)
+	assert.Nil(t, restored.OAuth)
+}
+
+// =============================================================================
+// JSON Round-trip Tests — OAuth
+// =============================================================================
+
+func TestMock_JSON_RoundTrip_OAuth(t *testing.T) {
+	enabled := true
+	original := Mock{
+		ID:      "oauth-rt",
+		Type:    TypeOAuth,
+		Name:    "OAuth Round Trip",
+		Enabled: &enabled,
+		OAuth: &OAuthSpec{
+			Issuer:        "http://localhost:9999/oauth",
+			TokenExpiry:   "1h",
+			RefreshExpiry: "24h",
+			DefaultScopes: []string{"openid", "profile", "email"},
+			Clients: []OAuthClient{
+				{
+					ClientID:     "web-app",
+					ClientSecret: "super-secret",
+					RedirectURIs: []string{
+						"http://localhost:3000/callback",
+						"http://localhost:3000/silent-renew",
+					},
+					GrantTypes: []string{"authorization_code", "refresh_token"},
+				},
+				{
+					ClientID:     "service-account",
+					ClientSecret: "svc-secret",
+					GrantTypes:   []string{"client_credentials"},
+				},
+			},
+			Users: []OAuthUser{
+				{
+					Username: "alice",
+					Password: "password123",
+					Claims:   map[string]interface{}{"role": "admin", "dept": "engineering"},
+				},
+				{
+					Username: "bob",
+					Password: "hunter2",
+					Claims:   map[string]interface{}{"role": "viewer"},
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored Mock
+	err = json.Unmarshal(data, &restored)
+	require.NoError(t, err)
+
+	assert.Equal(t, original.ID, restored.ID)
+	assert.Equal(t, original.Type, restored.Type)
+	assert.Equal(t, original.Name, restored.Name)
+
+	require.NotNil(t, restored.OAuth)
+	assert.Equal(t, "http://localhost:9999/oauth", restored.OAuth.Issuer)
+	assert.Equal(t, "1h", restored.OAuth.TokenExpiry)
+	assert.Equal(t, "24h", restored.OAuth.RefreshExpiry)
+	assert.Equal(t, []string{"openid", "profile", "email"}, restored.OAuth.DefaultScopes)
+
+	require.Len(t, restored.OAuth.Clients, 2)
+	assert.Equal(t, "web-app", restored.OAuth.Clients[0].ClientID)
+	assert.Equal(t, "super-secret", restored.OAuth.Clients[0].ClientSecret)
+	assert.Equal(t, []string{
+		"http://localhost:3000/callback",
+		"http://localhost:3000/silent-renew",
+	}, restored.OAuth.Clients[0].RedirectURIs)
+	assert.Equal(t, []string{"authorization_code", "refresh_token"}, restored.OAuth.Clients[0].GrantTypes)
+	assert.Equal(t, "service-account", restored.OAuth.Clients[1].ClientID)
+
+	require.Len(t, restored.OAuth.Users, 2)
+	assert.Equal(t, "alice", restored.OAuth.Users[0].Username)
+	assert.Equal(t, "password123", restored.OAuth.Users[0].Password)
+	assert.Equal(t, "admin", restored.OAuth.Users[0].Claims["role"])
+	assert.Equal(t, "engineering", restored.OAuth.Users[0].Claims["dept"])
+
+	// Ensure other specs are nil
+	assert.Nil(t, restored.HTTP)
+	assert.Nil(t, restored.WebSocket)
+	assert.Nil(t, restored.GraphQL)
+	assert.Nil(t, restored.GRPC)
+	assert.Nil(t, restored.SOAP)
+	assert.Nil(t, restored.MQTT)
+}
+
+// =============================================================================
+// DX-5: HTTPResponse.Body accepts string, object, array, number, boolean
+// =============================================================================
+
+func TestHTTPResponse_UnmarshalJSON_StringBody(t *testing.T) {
+	data := []byte(`{"statusCode": 200, "body": "hello world"}`)
+	var resp HTTPResponse
+	err := json.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "hello world", resp.Body)
+	assert.Equal(t, 200, resp.StatusCode)
+}
+
+func TestHTTPResponse_UnmarshalJSON_ObjectBody(t *testing.T) {
+	data := []byte(`{"statusCode": 200, "body": {"id": 1, "name": "Alice"}}`)
+	var resp HTTPResponse
+	err := json.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	// Body stores the raw JSON (preserving whitespace from input)
+	var obj map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(resp.Body), &obj))
+	assert.Equal(t, float64(1), obj["id"])
+	assert.Equal(t, "Alice", obj["name"])
+}
+
+func TestHTTPResponse_UnmarshalJSON_ArrayBody(t *testing.T) {
+	data := []byte(`{"statusCode": 200, "body": [1, 2, 3]}`)
+	var resp HTTPResponse
+	err := json.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	var arr []float64
+	require.NoError(t, json.Unmarshal([]byte(resp.Body), &arr))
+	assert.Equal(t, []float64{1, 2, 3}, arr)
+}
+
+func TestHTTPResponse_UnmarshalJSON_NumberBody(t *testing.T) {
+	data := []byte(`{"statusCode": 200, "body": 42}`)
+	var resp HTTPResponse
+	err := json.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "42", resp.Body)
+}
+
+func TestHTTPResponse_UnmarshalJSON_BooleanBody(t *testing.T) {
+	data := []byte(`{"statusCode": 200, "body": true}`)
+	var resp HTTPResponse
+	err := json.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "true", resp.Body)
+}
+
+func TestHTTPResponse_UnmarshalJSON_NullBody(t *testing.T) {
+	data := []byte(`{"statusCode": 200, "body": null}`)
+	var resp HTTPResponse
+	err := json.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	// null body should be treated as empty (no body)
+	assert.Equal(t, "", resp.Body)
+}
+
+func TestHTTPResponse_UnmarshalJSON_EmptyBody(t *testing.T) {
+	data := []byte(`{"statusCode": 200}`)
+	var resp HTTPResponse
+	err := json.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "", resp.Body)
+}
+
+func TestHTTPResponse_UnmarshalJSON_NestedObjectBody(t *testing.T) {
+	data := []byte(`{"statusCode": 200, "body": {"users": [{"id": 1}, {"id": 2}]}}`)
+	var resp HTTPResponse
+	err := json.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	var obj map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(resp.Body), &obj))
+	users := obj["users"].([]interface{})
+	assert.Len(t, users, 2)
+}
+
+func TestHTTPResponse_UnmarshalJSON_PreservesOtherFields(t *testing.T) {
+	data := []byte(`{
+		"statusCode": 201,
+		"headers": {"Content-Type": "application/json"},
+		"body": {"created": true},
+		"bodyFile": "data.json",
+		"delayMs": 100
+	}`)
+	var resp HTTPResponse
+	err := json.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	assert.Equal(t, 201, resp.StatusCode)
+	assert.Equal(t, "application/json", resp.Headers["Content-Type"])
+	assert.Contains(t, resp.Body, `"created"`)
+	assert.Contains(t, resp.Body, `true`)
+	assert.Equal(t, "data.json", resp.BodyFile)
+	assert.Equal(t, 100, resp.DelayMs)
+}
+
+func TestHTTPResponse_UnmarshalYAML_StringBody(t *testing.T) {
+	data := []byte(`
+statusCode: 200
+body: hello world
+`)
+	var resp HTTPResponse
+	err := yaml.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "hello world", resp.Body)
+}
+
+func TestHTTPResponse_UnmarshalYAML_ObjectBody(t *testing.T) {
+	data := []byte(`
+statusCode: 200
+body:
+  id: 1
+  name: Alice
+`)
+	var resp HTTPResponse
+	err := yaml.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	// YAML maps may serialize in any order, so unmarshal and check
+	var obj map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(resp.Body), &obj))
+	assert.Equal(t, float64(1), obj["id"])
+	assert.Equal(t, "Alice", obj["name"])
+}
+
+func TestHTTPResponse_UnmarshalYAML_InlineObjectBody(t *testing.T) {
+	data := []byte(`
+statusCode: 200
+body: { id: 1, name: Alice }
+`)
+	var resp HTTPResponse
+	err := yaml.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	var obj map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(resp.Body), &obj))
+	assert.Equal(t, float64(1), obj["id"])
+	assert.Equal(t, "Alice", obj["name"])
+}
+
+func TestHTTPResponse_UnmarshalYAML_ArrayBody(t *testing.T) {
+	data := []byte(`
+statusCode: 200
+body:
+  - id: 1
+  - id: 2
+`)
+	var resp HTTPResponse
+	err := yaml.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	var arr []map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(resp.Body), &arr))
+	assert.Len(t, arr, 2)
+}
+
+func TestHTTPResponse_UnmarshalYAML_QuotedJSONStringBody(t *testing.T) {
+	// This is the legacy syntax that should still work
+	data := []byte(`
+statusCode: 200
+body: '{"id": 1, "name": "Alice"}'
+`)
+	var resp HTTPResponse
+	err := yaml.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	assert.Equal(t, `{"id": 1, "name": "Alice"}`, resp.Body)
+}
+
+func TestHTTPResponse_UnmarshalYAML_EmptyBody(t *testing.T) {
+	data := []byte(`
+statusCode: 200
+`)
+	var resp HTTPResponse
+	err := yaml.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "", resp.Body)
+}
+
+func TestHTTPResponse_UnmarshalYAML_PreservesOtherFields(t *testing.T) {
+	data := []byte(`
+statusCode: 201
+headers:
+  Content-Type: application/json
+body:
+  created: true
+bodyFile: data.json
+delayMs: 100
+`)
+	var resp HTTPResponse
+	err := yaml.Unmarshal(data, &resp)
+	require.NoError(t, err)
+	assert.Equal(t, 201, resp.StatusCode)
+	assert.Equal(t, "application/json", resp.Headers["Content-Type"])
+	assert.Contains(t, resp.Body, `"created":true`)
+	assert.Equal(t, "data.json", resp.BodyFile)
+	assert.Equal(t, 100, resp.DelayMs)
+}
+
+func TestHTTPResponse_JSON_RoundTrip_WithObjectBody(t *testing.T) {
+	// Unmarshal JSON with object body
+	data := []byte(`{"statusCode": 200, "body": {"id": 1}}`)
+	var resp HTTPResponse
+	require.NoError(t, json.Unmarshal(data, &resp))
+
+	// Marshal back to JSON
+	out, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	// Body should be serialized as a string (not object) since the Go field is string.
+	// The raw JSON from the input is preserved, so it may include whitespace.
+	assert.Contains(t, string(out), `"body":`)
+	// The body value in the output should be a JSON-encoded string containing the object
+	var roundTrip HTTPResponse
+	require.NoError(t, json.Unmarshal(out, &roundTrip))
+	assert.Contains(t, roundTrip.Body, `"id"`)
+}
+
+func TestHTTPResponse_FullMock_YAML_ObjectBody(t *testing.T) {
+	// Test that a full mock with object body in YAML works end-to-end
+	data := []byte(`{
+		"version": "1.0",
+		"mocks": [{
+			"id": "test-obj-body",
+			"type": "http",
+			"http": {
+				"matcher": {"method": "GET", "path": "/test"},
+				"response": {"statusCode": 200, "body": {"message": "hello"}}
+			}
+		}]
+	}`)
+	var collection struct {
+		Version string  `json:"version"`
+		Mocks   []*Mock `json:"mocks"`
+	}
+	require.NoError(t, json.Unmarshal(data, &collection))
+	require.Len(t, collection.Mocks, 1)
+	// Body stores the raw JSON from the input
+	assert.Contains(t, collection.Mocks[0].HTTP.Response.Body, `"message"`)
+	assert.Contains(t, collection.Mocks[0].HTTP.Response.Body, `"hello"`)
+}
+
+// =============================================================================
+// gRPC MethodConfig variant (de)serialization — issue #30
+// =============================================================================
+
+// TestGRPCMethodConfig_Variants_RoundTrip verifies that a MethodConfig carrying
+// multiple match variants round-trips through both JSON and YAML, preserving
+// variant ordering and contents.
+func TestGRPCMethodConfig_Variants_RoundTrip(t *testing.T) {
+	original := GRPCSpec{
+		Port:      50051,
+		ProtoFile: "user.proto",
+		Services: map[string]ServiceConfig{
+			"users.UserService": {
+				Methods: map[string]MethodConfig{
+					"GetUser": {
+						Match:    &MethodMatch{Request: map[string]any{"id": "123"}},
+						Response: map[string]any{"id": "123", "name": "John Doe"},
+						Variants: []MethodConfig{
+							{
+								Match:    &MethodMatch{Request: map[string]any{"id": "999"}},
+								Response: map[string]any{"id": "999", "name": "Jane Doe"},
+							},
+							{
+								// Unconditioned default, ordered last.
+								Response: map[string]any{"id": "0", "name": "Default"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	assertVariants := func(t *testing.T, got GRPCSpec) {
+		t.Helper()
+		method := got.Services["users.UserService"].Methods["GetUser"]
+		require.NotNil(t, method.Match)
+		require.Len(t, method.Variants, 2, "both variants must survive the round-trip")
+
+		// Primary keeps its specific match.
+		assert.Equal(t, "123", method.Match.Request["id"])
+		// Order is preserved: id=999 first, default (no match) last.
+		assert.Equal(t, "999", method.Variants[0].Match.Request["id"])
+		assert.Nil(t, method.Variants[1].Match, "default variant has no match")
+	}
+
+	t.Run("json", func(t *testing.T) {
+		data, err := json.Marshal(original)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"variants"`)
+
+		var got GRPCSpec
+		require.NoError(t, json.Unmarshal(data, &got))
+		assertVariants(t, got)
+	})
+
+	t.Run("yaml", func(t *testing.T) {
+		data, err := yaml.Marshal(original)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), "variants:")
+
+		var got GRPCSpec
+		require.NoError(t, yaml.Unmarshal(data, &got))
+		assertVariants(t, got)
+	})
+}
+
+// TestGRPCMethodConfig_SingleConfig_BackwardCompat verifies that the existing
+// single-config form (no variants) still loads unchanged from both JSON and
+// YAML, and that the variants field is absent when not used (omitempty).
+func TestGRPCMethodConfig_SingleConfig_BackwardCompat(t *testing.T) {
+	const jsonCfg = `{
+		"port": 50051,
+		"protoFile": "user.proto",
+		"services": {
+			"users.UserService": {
+				"methods": {
+					"GetUser": {
+						"match": {"request": {"id": "123"}},
+						"response": {"id": "123", "name": "John Doe"}
+					}
+				}
+			}
+		}
+	}`
+
+	const yamlCfg = `
+port: 50051
+protoFile: user.proto
+services:
+  users.UserService:
+    methods:
+      GetUser:
+        match:
+          request:
+            id: "123"
+        response:
+          id: "123"
+          name: John Doe
+`
+
+	check := func(t *testing.T, got GRPCSpec) {
+		t.Helper()
+		method := got.Services["users.UserService"].Methods["GetUser"]
+		require.NotNil(t, method.Match)
+		assert.Equal(t, "123", method.Match.Request["id"])
+		assert.Empty(t, method.Variants, "single-config form must not synthesize variants")
+
+		// And it must serialize back out WITHOUT a variants key.
+		data, err := json.Marshal(got)
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), "variants")
+	}
+
+	t.Run("json", func(t *testing.T) {
+		var got GRPCSpec
+		require.NoError(t, json.Unmarshal([]byte(jsonCfg), &got))
+		check(t, got)
+	})
+
+	t.Run("yaml", func(t *testing.T) {
+		var got GRPCSpec
+		require.NoError(t, yaml.Unmarshal([]byte(yamlCfg), &got))
+		check(t, got)
+	})
+}
