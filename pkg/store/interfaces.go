@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 
+	"github.com/getmockd/mockd/pkg/capture"
 	"github.com/getmockd/mockd/pkg/config"
 	"github.com/getmockd/mockd/pkg/mock"
 )
@@ -255,4 +256,63 @@ type Preferences struct {
 type PreferencesStore interface {
 	Get(ctx context.Context) (*Preferences, error)
 	Set(ctx context.Context, prefs *Preferences) error
+}
+
+// ============================================================================
+// MockNetPack capture entities (Device / CaptureSession)
+// ============================================================================
+
+// DeviceFilter provides filtering criteria for device list operations.
+type DeviceFilter struct {
+	// App filters by app dimension ("" = no filter).
+	App string
+}
+
+// DeviceStore handles persistence for devices. A device is uniquely
+// identified by (App, Did) — the same did may exist under different apps
+// (requirement 决策 #2), so every lookup carries both dimensions.
+type DeviceStore interface {
+	// List returns all devices matching the filter.
+	List(ctx context.Context, filter *DeviceFilter) ([]*capture.Device, error)
+	// Get returns a single device by (App, Did).
+	Get(ctx context.Context, app, did string) (*capture.Device, error)
+	// Create adds a new device. Returns store.ErrAlreadyExists if (App, Did)
+	// already exists.
+	Create(ctx context.Context, d *capture.Device) error
+	// Update replaces an existing device. Returns store.ErrNotFound if the
+	// (App, Did) does not exist.
+	Update(ctx context.Context, d *capture.Device) error
+	// Delete removes a device by (App, Did).
+	Delete(ctx context.Context, app, did string) error
+	// Count returns the total number of devices.
+	Count(ctx context.Context) (int, error)
+}
+
+// SessionFilter provides filtering criteria for capture session list operations.
+type SessionFilter struct {
+	// App filters by app dimension (nil = no filter).
+	App *string
+	// Did filters by did dimension (nil = no filter).
+	Did *string
+	// Status filters by session status (nil = no filter).
+	Status *capture.SessionStatus
+}
+
+// CaptureSessionStore handles persistence for capture sessions.
+// Session records persist across restarts (summary: times, status, counts);
+// the temporary traffic inside a session is NOT stored here (M2 defines its
+// own session-scoped store and clears it when the session ends).
+type CaptureSessionStore interface {
+	// List returns all sessions matching the filter, most recent first.
+	List(ctx context.Context, filter *SessionFilter) ([]*capture.CaptureSession, error)
+	// Get returns a single session by ID.
+	Get(ctx context.Context, id string) (*capture.CaptureSession, error)
+	// Create adds a new session. Returns store.ErrAlreadyExists if the ID
+	// already exists.
+	Create(ctx context.Context, s *capture.CaptureSession) error
+	// Update replaces an existing session. Returns store.ErrNotFound if the
+	// ID does not exist.
+	Update(ctx context.Context, s *capture.CaptureSession) error
+	// Delete removes a session by ID.
+	Delete(ctx context.Context, id string) error
 }

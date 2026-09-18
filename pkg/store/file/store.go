@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/getmockd/mockd/pkg/capture"
 	"github.com/getmockd/mockd/pkg/config"
 	"github.com/getmockd/mockd/pkg/mock"
 	"github.com/getmockd/mockd/pkg/store"
@@ -58,6 +59,13 @@ type storeData struct {
 	RequestLog  []*store.RequestLogEntry `json:"requestLog,omitempty"`
 	Preferences *store.Preferences       `json:"preferences,omitempty"`
 	LastSync    int64                    `json:"lastSync,omitempty"`
+
+	// MockNetPack capture entities (devices and capture sessions).
+	// Devices persist fully; capture sessions persist their summary
+	// (times/status/counts). Temporary per-session traffic is stored
+	// elsewhere (M2) and cleared when a session ends.
+	Devices          []*capture.Device          `json:"devices,omitempty"`
+	CaptureSessions  []*capture.CaptureSession  `json:"captureSessions,omitempty"`
 }
 
 // New creates a new FileStore with the given configuration.
@@ -303,6 +311,16 @@ func (s *FileStore) RequestLog() store.RequestLogStore {
 // Preferences returns the preferences store.
 func (s *FileStore) Preferences() store.PreferencesStore {
 	return &preferencesStore{fs: s}
+}
+
+// Devices returns the device store (MockNetPack capture entities).
+func (s *FileStore) Devices() store.DeviceStore {
+	return &deviceStore{fs: s}
+}
+
+// CaptureSessions returns the capture session store (MockNetPack capture entities).
+func (s *FileStore) CaptureSessions() store.CaptureSessionStore {
+	return &captureSessionStore{fs: s}
 }
 
 // Begin starts a transaction (snapshot-based for file store).

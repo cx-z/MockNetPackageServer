@@ -188,6 +188,10 @@ type Store interface {
 	StatefulResources() StatefulResourceStore
 	CustomOperations() CustomOperationStore
 
+	// MockNetPack capture stores (devices and capture sessions)
+	Devices() DeviceStore
+	CaptureSessions() CaptureSessionStore
+
 	// Transactions (for backends that support it)
 	Begin(ctx context.Context) (Transaction, error)
 
