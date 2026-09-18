@@ -1,0 +1,958 @@
+openapi: 3.0.3
+
+info:
+  title: MockNetPack API
+  version: 0.1.0
+  description: |
+    MockNetPack 中央 Mock 服务器 API 契约（v1 草案）。
+    - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
+    - 隔离强制：所有设备/流量/规则接口显式携带 (app, did) 维度（路径或 query），避免串设备。
+    - 时间：一律 RFC3339（如 2026-09-18T09:00:00+08:00）。
+    - Mock 匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口的所有请求均命中。
+    - 实现状态：每个 path 用 x-milestone 标注实现阶段（m1/m2/m3/m4/m6），当前阶段之外的仅契约定义、未实现。
+
+servers:
+  - url: http://localhost:4290/api/v1
+    description: 本地开发（mockd admin 端口）
+
+tags:
+  - name: devices
+    description: 设备注册、心跳、查询
+  - name: sessions
+    description: 抓包会话生命周期（激活/结束/查看者租约）
+  - name: traffic
+    description: 流量上传与查询
+  - name: mock-rules
+    description: Mock 回包规则（下发与 CRUD）
+
+paths:
+  # ==========================================================================
+  # 1. 设备注册 / 心跳（SDK 侧，M1）
+  # ==========================================================================
+  /devices/register:
+    post:
+      tags: [devices]
+      x-milestone: m1
+      summary: 设备注册（幂等 upsert）
+      description: |
+        SDK 启动时调用。did 由 SDK 生成：App 作用域内唯一、App 内持久化（重启不变）、不依赖设备硬件标识。
+        相同 (app, did) 重复注册视为同一设备，更新元信息并置为在线（幂等）。
+        响应下发服务端心跳配置（间隔/超时为服务端配置项）。
+      operationId: registerDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDeviceRequest'
+      responses:
+        '200':
+          description: 注册成功（或已存在设备信息更新）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterDeviceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{app}/{did}/heartbeat:
+    post:
+      tags: [devices]
+      x-milestone: m1
+      summary: 心跳 + 状态同步
+      description: |
+        SDK 周期调用（服务端配置，默认建议 15~20s）。兼作三类信号：
+        1) 保活：服务端连续超过心跳超时阈值（默认 60s，配置项）未收到即判定设备离线并结束抓包会话；
+        2) 会话状态下发：响应携带当前激活会话（若有），SDK 据此启停采集/Mock；
+        3) 规则版本下发（M3 启用）：规则版本变化后 SDK 拉取增量。
+        设备未注册时返回 404，SDK 应重新注册。
+      operationId: deviceHeartbeat
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HeartbeatRequest'
+      responses:
+        '200':
+          description: 心跳成功，返回会话状态与配置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartbeatResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ==========================================================================
+  # 2. 会话生命周期（Web 侧，M1）
+  # ==========================================================================
+  /sessions:
+    post:
+      tags: [sessions]
+      x-milestone: m1
+      summary: 激活抓包会话（Web「连接」）
+      description: |
+        同一设备同时仅存在一个抓包会话：若已有激活会话则返回现有会话（幂等）。
+        会话激活后，SDK 在下一次心跳（≤ 心跳间隔）感知并开始采集。
+      operationId: activateSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivateSessionRequest'
+      responses:
+        '201':
+          description: 新建会话
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureSession'
+        '200':
+          description: 已有激活会话，返回现有会话
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [sessions]
+      x-milestone: m1
+      summary: 会话列表（按设备查询）
+      description: 返回该 (app, did) 的历史会话概要，按开始时间倒序。app、did 均为必填 query 参数（隔离强制）。
+      operationId: listSessions
+      parameters:
+        - $ref: '#/components/parameters/AppQuery'
+        - $ref: '#/components/parameters/DidQuery'
+      responses:
+        '200':
+          description: 会话列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions, total]
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CaptureSession'
+                  total:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /sessions/{id}:
+    get:
+      tags: [sessions]
+      x-milestone: m1
+      summary: 会话概要（起止时间/请求数/状态）
+      operationId: getSession
+      parameters:
+        - $ref: '#/components/parameters/SessionIdPath'
+      responses:
+        '200':
+          description: 会话概要
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureSession'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [sessions]
+      x-milestone: m1
+      summary: 强制结束会话（Web「断开」）
+      description: |
+        结束会话：SDK 停止采集与 Mock；清空会话临时流量记录；设备回到待命。
+        与"最后一个查看者释放"、"心跳超时"同为会话结束路径。
+      operationId: endSession
+      parameters:
+        - $ref: '#/components/parameters/SessionIdPath'
+      responses:
+        '204':
+          description: 已结束
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{id}/viewers:
+    post:
+      tags: [sessions]
+      x-milestone: m1
+      summary: 登记/续租查看者（Web 页面）
+      description: |
+        每个打开该设备页面的浏览器调用一次以登记页面租约；幂等续租（同 viewerId 重复调用刷新 TTL）。
+        会话的查看者计数归 0 时（所有页面关闭），会话自动结束（最后一个相关页面关闭才结束）。
+        viewerId 由客户端生成（页面级 UUID），页面存活期间周期性续租，关闭时释放。
+      operationId: registerViewer
+      parameters:
+        - $ref: '#/components/parameters/SessionIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterViewerRequest'
+      responses:
+        '200':
+          description: 登记或续租成功，返回租约信息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViewerLease'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{id}/viewers/{viewerId}:
+    delete:
+      tags: [sessions]
+      x-milestone: m1
+      summary: 释放查看者（页面关闭）
+      description: 页面关闭/卸载时调用；释放后服务端重算计数，归 0 则结束会话。
+      operationId: releaseViewer
+      parameters:
+        - $ref: '#/components/parameters/SessionIdPath'
+        - $ref: '#/components/parameters/ViewerIdPath'
+      responses:
+        '204':
+          description: 已释放
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================================================
+  # 3. 流量上传 / 查询（M2 实现，本阶段仅契约）
+  # ==========================================================================
+  /traffic:
+    post:
+      tags: [traffic]
+      x-milestone: m2
+      summary: 批量上传流量（SDK）
+      description: |
+        SDK 在抓包会话有效期间批量上传一次/多次请求的完整信息（全量抓包，临时记录）。
+        会话结束后服务端清空本会话临时流量；被 Mock 的请求（原始值+Mock 值）持久化（M3 起）。
+        上传仅接受激活会话内的流量；sessionId 不活跃或已结束时拒绝（409）。
+      operationId: uploadTraffic
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrafficUploadRequest'
+      responses:
+        '202':
+          description: 已接收
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficUploadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: 会话不存在或已结束
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /traffic/{id}:
+    get:
+      tags: [traffic]
+      x-milestone: m2
+      summary: 请求详情
+      operationId: getTraffic
+      parameters:
+        - $ref: '#/components/parameters/TrafficIdPath'
+      responses:
+        '200':
+          description: 请求完整信息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrafficEntry'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{id}/traffic:
+    get:
+      tags: [traffic]
+      x-milestone: m2
+      summary: 会话内流量列表（实时 + 历史）
+      description: Web 请求流数据源；M2 配合推送通道实现秒级可见。
+      operationId: listSessionTraffic
+      parameters:
+        - $ref: '#/components/parameters/SessionIdPath'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+          description: 返回条数上限
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: 流量列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, total]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrafficEntry'
+                  total:
+                    type: integer
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================================================
+  # 4. Mock 规则（下发与 CRUD，M3/M4 实现，本阶段仅契约）
+  # ==========================================================================
+  /devices/{app}/{did}/mock-rules:
+    get:
+      tags: [mock-rules]
+      x-milestone: m3
+      summary: 规则下发（SDK 拉取） / 规则列表（Web）
+      description: |
+        SDK 侧：携带 sinceVersion 增量拉取本设备生效规则；version 为单调递增版本号，规则变更即 +1。
+        Web 侧：不带 sinceVersion，返回本设备全部规则（含停用）。
+        匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口同时仅一条生效（前端互斥 + 服务端兜底：多条生效时该接口不 Mock 并下发提示）。
+      operationId: listMockRules
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+        - name: sinceVersion
+          in: query
+          schema:
+            type: integer
+          description: SDK 增量拉取：仅返回 version > sinceVersion 的规则
+      responses:
+        '200':
+          description: 规则集合（含版本号）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockRuleList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      tags: [mock-rules]
+      x-milestone: m3
+      summary: 创建 Mock 回包规则（含"从真实回包一键创建"）
+      description: 创建时默认 enabled=false；同一接口（Method+Path）允许多条保存，但仅一条可生效。
+      operationId: createMockRule
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MockRuleInput'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockRule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{app}/{did}/mock-rules/{ruleId}:
+    put:
+      tags: [mock-rules]
+      x-milestone: m4
+      summary: 更新规则（编辑内容 / 启停）
+      description: 同一接口仅一条生效的服务端兜底在此执行：若置为启用时发现同接口已有其他生效规则，返回 409（前端应先做开关互斥）。
+      operationId: updateMockRule
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+        - $ref: '#/components/parameters/RuleIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MockRuleInput'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockRule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 同接口已存在生效规则（互斥冲突）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [mock-rules]
+      x-milestone: m4
+      summary: 删除规则
+      operationId: deleteMockRule
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+        - $ref: '#/components/parameters/RuleIdPath'
+      responses:
+        '204':
+          description: 已删除
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================================================
+  # 5. Web 查询：设备
+  # ==========================================================================
+  /devices:
+    get:
+      tags: [devices]
+      x-milestone: m1
+      summary: 设备列表（Web 首页）
+      description: |
+        返回全部设备，含连接状态（idle 待命 / capturing 抓包中 / offline 离线）与最后活跃时间。
+        状态推导：心跳超时 > 离线；有激活会话 > 抓包中；否则 > 待命。
+      operationId: listDevices
+      responses:
+        '200':
+          description: 设备列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices, total]
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Device'
+                  total:
+                    type: integer
+
+  /devices/{app}/{did}:
+    get:
+      tags: [devices]
+      x-milestone: m1
+      summary: 设备详情
+      operationId: getDevice
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+      responses:
+        '200':
+          description: 设备信息（含当前会话，如有）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [devices]
+      x-milestone: m6
+      summary: 设置设备自定义名称/备注
+      operationId: renameDevice
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 64
+                  description: 自定义名称（如"张三的 15 Pro"），空串表示清除
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    AppPath:
+      name: app
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: App 标识（如 bundle id），路径需 URL 编码
+    DidPath:
+      name: did
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: 设备标识（SDK 生成，App 作用域内唯一）
+    AppQuery:
+      name: app
+      in: query
+      required: true
+      schema:
+        type: string
+      description: App 标识（隔离强制）
+    DidQuery:
+      name: did
+      in: query
+      required: true
+      schema:
+        type: string
+      description: 设备标识（隔离强制）
+    SessionIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 抓包会话 ID（ULID）
+    ViewerIdPath:
+      name: viewerId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 查看者租约 ID（页面级 UUID，客户端生成）
+    RuleIdPath:
+      name: ruleId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Mock 规则 ID（ULID）
+    TrafficIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 流量记录 ID
+
+  responses:
+    BadRequest:
+      description: 请求参数不合法
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: 服务端错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    # ------------------------------------------------------------------ 设备
+    DeviceStatus:
+      type: string
+      enum: [idle, capturing, offline]
+      description: idle=待命（已注册未激活）；capturing=抓包中（有激活会话）；offline=离线（心跳超时）
+
+    Device:
+      type: object
+      required: [app, did, status, lastSeenAt, registeredAt]
+      properties:
+        app:
+          type: string
+          description: App 标识
+        did:
+          type: string
+          description: 设备标识（SDK 生成）
+        name:
+          type: string
+          nullable: true
+          description: 自定义名称（Web 设置）
+        platform:
+          type: string
+          enum: [ios]
+          description: 平台（为 Android 预留，M1 仅 ios）
+        osVersion:
+          type: string
+          description: 系统版本
+        sdkVersion:
+          type: string
+          description: MockNetPackKit SDK 版本
+        appVersion:
+          type: string
+          description: App 版本
+        status:
+          $ref: '#/components/schemas/DeviceStatus'
+        lastSeenAt:
+          type: string
+          format: date-time
+          description: 最后活跃时间（最近一次心跳）
+        registeredAt:
+          type: string
+          format: date-time
+          description: 首次注册时间
+        currentSession:
+          $ref: '#/components/schemas/CaptureSession'
+          description: 当前激活会话（仅 capturing 时有值）
+
+    RegisterDeviceRequest:
+      type: object
+      required: [app, did]
+      properties:
+        app:
+          type: string
+          maxLength: 128
+        did:
+          type: string
+          maxLength: 128
+          description: SDK 生成；App 作用域内唯一；App 内持久化（重启不变）；不依赖设备硬件标识
+        platform:
+          type: string
+          enum: [ios]
+          default: ios
+        osVersion:
+          type: string
+        sdkVersion:
+          type: string
+        appVersion:
+          type: string
+
+    RegisterDeviceResponse:
+      type: object
+      required: [device, serverConfig]
+      properties:
+        device:
+          $ref: '#/components/schemas/Device'
+        serverConfig:
+          $ref: '#/components/schemas/ServerConfig'
+
+    ServerConfig:
+      type: object
+      required: [heartbeatIntervalSeconds, heartbeatTimeoutSeconds]
+      properties:
+        heartbeatIntervalSeconds:
+          type: integer
+          minimum: 5
+          maximum: 300
+          default: 20
+          description: SDK 心跳间隔（需求默认建议 15~20s，服务端配置项）
+        heartbeatTimeoutSeconds:
+          type: integer
+          minimum: 10
+          maximum: 600
+          default: 60
+          description: 心跳超时阈值：连续超时未收到心跳判定离线并结束会话（服务端配置项）
+
+    HeartbeatRequest:
+      type: object
+      properties:
+        sdkVersion:
+          type: string
+          description: SDK 版本（可选上报）
+
+    HeartbeatResponse:
+      type: object
+      required: [ok, serverTime, serverConfig]
+      properties:
+        ok:
+          type: boolean
+        serverTime:
+          type: string
+          format: date-time
+          description: 服务端当前时间（SDK 可校正本地时钟）
+        serverConfig:
+          $ref: '#/components/schemas/ServerConfig'
+        session:
+          $ref: '#/components/schemas/CaptureSession'
+          nullable: true
+          description: 当前激活会话（无则 null；SDK 据此启停采集）
+        rulesVersion:
+          type: integer
+          default: 0
+          description: 当前规则版本号（M3 启用：SDK 比对后决定是否拉取增量）
+
+    # ---------------------------------------------------------------- 会话
+    SessionStatus:
+      type: string
+      enum: [capturing, ended]
+      description: capturing=抓包中；ended=已结束
+
+    CaptureSession:
+      type: object
+      required: [id, app, did, status, startedAt]
+      properties:
+        id:
+          type: string
+          description: 会话 ID（ULID）
+        app:
+          type: string
+        did:
+          type: string
+        status:
+          $ref: '#/components/schemas/SessionStatus'
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+          nullable: true
+        requestCount:
+          type: integer
+          default: 0
+          description: 会话内请求数（M2 起有真实值）
+        viewerCount:
+          type: integer
+          default: 0
+          description: 当前打开该设备页面的查看者数（最后一个释放则会话结束）
+
+    ActivateSessionRequest:
+      type: object
+      required: [app, did]
+      properties:
+        app:
+          type: string
+          maxLength: 128
+        did:
+          type: string
+          maxLength: 128
+
+    RegisterViewerRequest:
+      type: object
+      required: [viewerId]
+      properties:
+        viewerId:
+          type: string
+          description: 页面级 UUID（客户端生成；重复调用 = 续租）
+        label:
+          type: string
+          description: 页面标识（如浏览器标签标题，调试用）
+
+    ViewerLease:
+      type: object
+      required: [viewerId, ttlSeconds, expiresAt]
+      properties:
+        viewerId:
+          type: string
+        ttlSeconds:
+          type: integer
+          default: 120
+          description: 租约 TTL；页面应周期性续租（建议 TTL/2 间隔）
+        expiresAt:
+          type: string
+          format: date-time
+          description: 租约过期时间（服务端对过期租约兜底清理）
+
+    # ---------------------------------------------------------------- 流量
+    TrafficEntry:
+      type: object
+      required: [timestamp, method, url, durationMs]
+      properties:
+        id:
+          type: string
+          description: 流量记录 ID（服务端生成）
+        sessionId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+          description: 请求发起时间（RFC3339）
+        method:
+          type: string
+          example: POST
+        url:
+          type: string
+          description: 完整请求 URL
+        path:
+          type: string
+          description: URL 路径（用于 Mock 匹配）
+        query:
+          type: string
+          description: Query 字符串（不含 ?，原始顺序）
+        requestHeaders:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          description: 请求头（多值）
+        requestBody:
+          type: string
+          description: 请求体（超限截断，M2 定上限）
+        statusCode:
+          type: integer
+          description: 响应状态码（请求失败时为空）
+        responseHeaders:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        responseBody:
+          type: string
+          description: 响应体（超限截断）
+        error:
+          type: string
+          description: 错误信息（请求失败时）
+        durationMs:
+          type: integer
+          description: 请求耗时（毫秒）
+        mocked:
+          type: boolean
+          default: false
+          description: 是否命中 Mock（M3 起标记；Web 请求流标注"Mock 命中"）
+
+    TrafficUploadRequest:
+      type: object
+      required: [app, did, sessionId, entries]
+      properties:
+        app:
+          type: string
+        did:
+          type: string
+        sessionId:
+          type: string
+        entries:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/TrafficEntry'
+          description: 一次批量上传的流量条目（SDK 攒批策略 M2 定）
+
+    TrafficUploadResponse:
+      type: object
+      required: [accepted, count]
+      properties:
+        accepted:
+          type: boolean
+        count:
+          type: integer
+          description: 实际接受的条目数
+
+    # ------------------------------------------------------------ Mock 规则
+    MockResponse:
+      type: object
+      required: [statusCode]
+      properties:
+        statusCode:
+          type: integer
+          description: Mock 回包状态码
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          type: string
+          description: Mock 回包体
+
+    MockRule:
+      type: object
+      required: [id, app, did, method, path, response, enabled, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        app:
+          type: string
+        did:
+          type: string
+        method:
+          type: string
+          example: POST
+          description: HTTP 方法（参与匹配）
+        path:
+          type: string
+          example: /api/feed/list
+          description: URL 路径（参与匹配；Query/Body 不参与）
+        response:
+          $ref: '#/components/schemas/MockResponse'
+        enabled:
+          type: boolean
+          description: 是否生效（同一接口仅一条可生效）
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    MockRuleInput:
+      type: object
+      required: [method, path, response]
+      properties:
+        method:
+          type: string
+        path:
+          type: string
+        response:
+          $ref: '#/components/schemas/MockResponse'
+        enabled:
+          type: boolean
+          default: false
+
+    MockRuleList:
+      type: object
+      required: [version, rules]
+      properties:
+        version:
+          type: integer
+          description: 当前规则版本号（单调递增；SDK 用于增量比对）
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/MockRule'
+
+    # ----------------------------------------------------------------- 错误
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: 机器可读错误码（如 device_not_registered）
+        message:
+          type: string
+          description: 人类可读错误信息
