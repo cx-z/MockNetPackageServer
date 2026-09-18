@@ -7,6 +7,7 @@ import (
 
 	"github.com/getmockd/mockd/pkg/admin/engineclient"
 	"github.com/getmockd/mockd/pkg/ratelimit"
+	"github.com/getmockd/mockd/pkg/store"
 	"github.com/getmockd/mockd/pkg/tracing"
 	"github.com/getmockd/mockd/pkg/workspace"
 )
@@ -140,5 +141,14 @@ func WithAllowLocalhostBypass(allow bool) Option {
 func WithWorkspaceManager(m workspace.Manager) Option {
 	return func(a *API) {
 		a.workspaceManager = m
+	}
+}
+
+// WithCaptureConfig sets the MockNetPack capture runtime configuration
+// (device heartbeat interval/timeout and viewer lease TTL). Zero values keep
+// the defaults (heartbeat 20s advised / 60s timeout, viewer lease 120s).
+func WithCaptureConfig(cfg store.CaptureConfig) Option {
+	return func(a *API) {
+		a.captureConfig = cfg
 	}
 }

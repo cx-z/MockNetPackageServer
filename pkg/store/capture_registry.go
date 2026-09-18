@@ -1,0 +1,551 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/getmockd/mockd/internal/id"
+	"github.com/getmockd/mockd/pkg/capture"
+)
+
+// Capture errors mapped to API error codes in the admin handlers.
+var (
+	// ErrDeviceNotRegistered means no device with (App, Did) exists.
+	ErrDeviceNotRegistered = errors.New("device not registered")
+	// ErrDeviceOffline means the device's last heartbeat exceeded the timeout
+	// (activating a capture session for an offline device is rejected).
+	ErrDeviceOffline = errors.New("device offline")
+	// ErrSessionNotFound means no capture session with the given ID exists.
+	ErrSessionNotFound = errors.New("capture session not found")
+	// ErrSessionEnded means the capture session is already ended.
+	ErrSessionEnded = errors.New("capture session already ended")
+)
+
+// CaptureConfig carries the MockNetPack capture runtime configuration.
+// All values are server-side configuration items (requirement 决策 #14).
+type CaptureConfig struct {
+	// HeartbeatInterval is the interval the SDK is advised to heartbeat at.
+	HeartbeatInterval time.Duration
+	// HeartbeatTimeout is the threshold after which a device is considered
+	// offline and its capture session is ended.
+	HeartbeatTimeout time.Duration
+	// ViewerTTL is the lease TTL granted to Web page viewers; viewers renew
+	// periodically and expired leases are garbage-collected.
+	ViewerTTL time.Duration
+}
+
+// DefaultCaptureConfig returns the default capture configuration
+// (heartbeat 20s advised / 60s timeout, viewer lease 120s).
+func DefaultCaptureConfig() CaptureConfig {
+	return CaptureConfig{
+		HeartbeatInterval: 20 * time.Second,
+		HeartbeatTimeout:  60 * time.Second,
+		ViewerTTL:         120 * time.Second,
+	}
+}
+
+// CaptureManager implements the runtime semantics for devices, capture
+// sessions and viewer leases on top of the persistent stores. It follows the
+// EngineRegistry pattern (store package, no file implementation dependency):
+// persistence is delegated to the injected DeviceStore / CaptureSessionStore,
+// while viewer leases are runtime-only state (persisting them across restarts
+// is meaningless — every lease would be expired).
+type CaptureManager struct {
+	devices  DeviceStore
+	sessions CaptureSessionStore
+	cfg      CaptureConfig
+	log      *slog.Logger
+
+	// viewerMu guards the runtime viewer leases, keyed by session ID.
+	viewerMu sync.RWMutex
+	viewers  map[string]map[string]capture.ViewerLease
+
+	ctx      context.Context
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
+}
+
+// NewCaptureManager creates a capture manager backed by the given stores.
+func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, cfg CaptureConfig) *CaptureManager {
+	if cfg.HeartbeatTimeout <= 0 {
+		cfg.HeartbeatTimeout = DefaultCaptureConfig().HeartbeatTimeout
+	}
+	if cfg.HeartbeatInterval <= 0 {
+		cfg.HeartbeatInterval = DefaultCaptureConfig().HeartbeatInterval
+	}
+	if cfg.ViewerTTL <= 0 {
+		cfg.ViewerTTL = DefaultCaptureConfig().ViewerTTL
+	}
+	return &CaptureManager{
+		devices:  devices,
+		sessions: sessions,
+		cfg:      cfg,
+		log:      slog.Default(),
+		viewers:  make(map[string]map[string]capture.ViewerLease),
+		stopCh:   make(chan struct{}),
+	}
+}
+
+// SetLogger sets the logger used for background health-check warnings.
+func (m *CaptureManager) SetLogger(log *slog.Logger) {
+	if log != nil {
+		m.log = log
+	}
+}
+
+// Config returns the runtime capture configuration.
+func (m *CaptureManager) Config() CaptureConfig {
+	return m.cfg
+}
+
+// ServerConfig returns the SDK-facing server configuration (heartbeat
+// interval / timeout in seconds) pushed to devices at registration/heartbeat.
+func (m *CaptureManager) ServerConfig() capture.ServerConfig {
+	return capture.ServerConfig{
+		HeartbeatIntervalSeconds: int(m.cfg.HeartbeatInterval.Seconds()),
+		HeartbeatTimeoutSeconds:  int(m.cfg.HeartbeatTimeout.Seconds()),
+	}
+}
+
+// ============================================================================
+// Devices
+// ============================================================================
+
+// RegisterDevice registers or re-registers a device (idempotent upsert on
+// (App, Did)). A re-registration refreshes metadata and marks the device
+// active (LastSeenAt = now). Registration is only accepted for a device
+// that already exists OR is new; nothing is rejected here — offline devices
+// come back online on their next register/heartbeat.
+func (m *CaptureManager) RegisterDevice(ctx context.Context, d *capture.Device) (*capture.Device, error) {
+	now := time.Now()
+	d.LastSeenAt = now
+
+	existing, err := m.devices.Get(ctx, d.App, d.Did)
+	if errors.Is(err, ErrNotFound) {
+		d.RegisteredAt = now
+		if err := m.devices.Create(ctx, d); err != nil {
+			return nil, err
+		}
+		out := *d
+		return &out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Upsert: keep the original registration time, refresh metadata.
+	existing.OSVersion = d.OSVersion
+	existing.SDKVersion = d.SDKVersion
+	existing.AppVersion = d.AppVersion
+	existing.Platform = d.Platform
+	existing.LastSeenAt = now
+	if err := m.devices.Update(ctx, existing); err != nil {
+		return nil, err
+	}
+	out := *existing
+	return &out, nil
+}
+
+// Heartbeat refreshes the device's last-seen time and returns the device plus
+// its active capture session (nil if none). It is the SDK's keep-alive and
+// the session-state channel (the SDK starts/stops capture based on the
+// returned session).
+func (m *CaptureManager) Heartbeat(ctx context.Context, app, did string) (*capture.Device, *capture.CaptureSession, error) {
+	d, err := m.devices.Get(ctx, app, did)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil, ErrDeviceNotRegistered
+		}
+		return nil, nil, err
+	}
+
+	d.LastSeenAt = time.Now()
+	if err := m.devices.Update(ctx, d); err != nil {
+		return nil, nil, err
+	}
+
+	session, err := m.activeSessionFor(ctx, app, did)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := *d
+	return &out, session, nil
+}
+
+// ListDevices returns all devices with derived status and current session.
+func (m *CaptureManager) ListDevices(ctx context.Context, filter *DeviceFilter) ([]*capture.DeviceView, error) {
+	devices, err := m.devices.List(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	// One query for all active sessions, grouped by (app, did).
+	activeByDevice := make(map[string]*capture.CaptureSession)
+	active, err := m.sessions.List(ctx, &SessionFilter{Status: &activeStatus})
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range active {
+		key := s.App + "\x00" + s.Did
+		if _, exists := activeByDevice[key]; !exists {
+			activeByDevice[key] = s
+		}
+	}
+
+	now := time.Now()
+	views := make([]*capture.DeviceView, 0, len(devices))
+	for _, d := range devices {
+		session := activeByDevice[d.App+"\x00"+d.Did]
+		var sessionCopy *capture.CaptureSession
+		if session != nil {
+			sc := *session
+			sessionCopy = &sc
+		}
+		dc := *d
+		views = append(views, &capture.DeviceView{
+			Device:         &dc,
+			Status:         capture.DeriveDeviceStatus(d.LastSeenAt, now, m.cfg.HeartbeatTimeout, session != nil),
+			CurrentSession: sessionCopy,
+		})
+	}
+	return views, nil
+}
+
+// GetDevice returns a single device with derived status and current session.
+func (m *CaptureManager) GetDevice(ctx context.Context, app, did string) (*capture.DeviceView, error) {
+	d, err := m.devices.Get(ctx, app, did)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrDeviceNotRegistered
+		}
+		return nil, err
+	}
+
+	session, err := m.activeSessionFor(ctx, app, did)
+	if err != nil {
+		return nil, err
+	}
+
+	var sessionCopy *capture.CaptureSession
+	if session != nil {
+		sc := *session
+		sessionCopy = &sc
+	}
+	dc := *d
+	return &capture.DeviceView{
+		Device:         &dc,
+		Status:         capture.DeriveDeviceStatus(d.LastSeenAt, time.Now(), m.cfg.HeartbeatTimeout, session != nil),
+		CurrentSession: sessionCopy,
+	}, nil
+}
+
+// ============================================================================
+// Capture sessions
+// ============================================================================
+
+// ActivateSession activates a capture session for the device. A device has at
+// most one capturing session: if one exists it is returned (created=false).
+// Activating for an offline device is rejected with ErrDeviceOffline.
+func (m *CaptureManager) ActivateSession(ctx context.Context, app, did string) (*capture.CaptureSession, bool, error) {
+	if _, err := m.devices.Get(ctx, app, did); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, false, ErrDeviceNotRegistered
+		}
+		return nil, false, err
+	}
+
+	existing, err := m.activeSessionFor(ctx, app, did)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing != nil {
+		sc := *existing
+		return &sc, false, nil
+	}
+
+	// Reject activation for an offline device so the Web UI never shows a
+	// "connected" state that can never start uploading.
+	d, err := m.devices.Get(ctx, app, did)
+	if err != nil {
+		return nil, false, err
+	}
+	if time.Since(d.LastSeenAt) > m.cfg.HeartbeatTimeout {
+		return nil, false, ErrDeviceOffline
+	}
+
+	session := &capture.CaptureSession{
+		ID:        id.ULID(),
+		App:       app,
+		Did:       did,
+		Status:    capture.SessionStatusCapturing,
+		StartedAt: time.Now(),
+	}
+	if err := m.sessions.Create(ctx, session); err != nil {
+		return nil, false, err
+	}
+	return session, true, nil
+}
+
+// EndSession ends a capture session (forced disconnect, last viewer released,
+// or heartbeat timeout). Idempotent: ending an already-ended session is a
+// no-op. Viewer leases for the session are cleared.
+func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
+	s, err := m.sessions.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrSessionNotFound
+		}
+		return err
+	}
+	if s.Status == capture.SessionStatusEnded {
+		return nil
+	}
+
+	m.viewerMu.Lock()
+	delete(m.viewers, id)
+	m.viewerMu.Unlock()
+
+	sc := *s
+	sc.End(time.Now())
+	sc.ViewerCount = 0
+	return m.sessions.Update(ctx, &sc)
+}
+
+// ListSessions lists capture sessions (most recent first), delegated to the store.
+func (m *CaptureManager) ListSessions(ctx context.Context, filter *SessionFilter) ([]*capture.CaptureSession, error) {
+	return m.sessions.List(ctx, filter)
+}
+
+// GetSession returns a single capture session.
+func (m *CaptureManager) GetSession(ctx context.Context, id string) (*capture.CaptureSession, error) {
+	s, err := m.sessions.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrSessionNotFound
+		}
+		return nil, err
+	}
+	return s, nil
+}
+
+// ============================================================================
+// Viewer leases
+// ============================================================================
+
+// RegisterViewer registers or renews a page-level viewer lease on a session.
+// Registration is only allowed while the session is capturing; renewing an
+// existing viewer refreshes the TTL without touching the store. The session
+// ends when its viewer count drops to zero (last page closed).
+func (m *CaptureManager) RegisterViewer(ctx context.Context, sessionID, viewerID, label string) (*capture.ViewerLease, error) {
+	s, err := m.sessions.Get(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrSessionNotFound
+		}
+		return nil, err
+	}
+	if s.Status == capture.SessionStatusEnded {
+		return nil, ErrSessionEnded
+	}
+
+	now := time.Now()
+	lease := capture.ViewerLease{
+		ViewerID:   viewerID,
+		Label:      label,
+		TTLSeconds: int(m.cfg.ViewerTTL.Seconds()),
+		ExpiresAt:  now.Add(m.cfg.ViewerTTL),
+	}
+
+	m.viewerMu.Lock()
+	viewers, ok := m.viewers[sessionID]
+	if !ok {
+		viewers = make(map[string]capture.ViewerLease)
+		m.viewers[sessionID] = viewers
+	}
+	_, exists := viewers[viewerID]
+	viewers[viewerID] = lease
+	count := len(viewers)
+	m.viewerMu.Unlock()
+
+	if !exists {
+		// First registration of this viewer: persist the new viewer count.
+		sc := *s
+		sc.ViewerCount = count
+		if err := m.sessions.Update(ctx, &sc); err != nil {
+			return nil, err
+		}
+	}
+	return &lease, nil
+}
+
+// ReleaseViewer removes a viewer lease (page closed). If the last viewer is
+// released while the session is capturing, the session ends. Idempotent:
+// releasing an unknown viewer succeeds without error.
+func (m *CaptureManager) ReleaseViewer(ctx context.Context, sessionID, viewerID string) error {
+	m.viewerMu.Lock()
+	viewers, ok := m.viewers[sessionID]
+	var count int
+	if ok {
+		delete(viewers, viewerID)
+		count = len(viewers)
+		if count == 0 {
+			delete(m.viewers, sessionID)
+		}
+	}
+	m.viewerMu.Unlock()
+	if !ok {
+		// No leases for this session at all — nothing to do.
+		return nil
+	}
+
+	s, err := m.sessions.Get(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil // session already deleted; lease state is gone with it
+		}
+		return err
+	}
+
+	sc := *s
+	sc.ViewerCount = count
+	if count == 0 && sc.Status == capture.SessionStatusCapturing {
+		sc.End(time.Now())
+	}
+	return m.sessions.Update(ctx, &sc)
+}
+
+// ============================================================================
+// Background health check
+// ============================================================================
+
+// StartHealthCheck starts a background goroutine that:
+//  1. ends capture sessions whose device heartbeat has exceeded the timeout
+//     (device offline => session ended, 僵尸清理兜底), and
+//  2. garbage-collects expired viewer leases, ending a session when its last
+//     lease expires without a page-close event (beforeunload is unreliable).
+func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+
+		ticker := time.NewTicker(m.cfg.HeartbeatTimeout / 2)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-m.stopCh:
+				return
+			case <-ticker.C:
+				m.checkDeviceHealth(ctx)
+				m.checkViewerLeases(ctx)
+			}
+		}
+	}()
+}
+
+// Stop stops the background health-check goroutine. Safe to call multiple times.
+func (m *CaptureManager) Stop() {
+	m.stopOnce.Do(func() {
+		close(m.stopCh)
+	})
+	m.wg.Wait()
+}
+
+// checkDeviceHealth ends capture sessions of devices whose heartbeat timed out.
+func (m *CaptureManager) checkDeviceHealth(ctx context.Context) {
+	devices, err := m.devices.List(ctx, nil)
+	if err != nil {
+		m.log.Warn("capture health check: list devices failed", "error", err)
+		return
+	}
+
+	now := time.Now()
+	for _, d := range devices {
+		if now.Sub(d.LastSeenAt) <= m.cfg.HeartbeatTimeout {
+			continue
+		}
+		session, err := m.activeSessionFor(ctx, d.App, d.Did)
+		if err != nil {
+			m.log.Warn("capture health check: find session failed", "app", d.App, "did", d.Did, "error", err)
+			continue
+		}
+		if session != nil && session.Status == capture.SessionStatusCapturing {
+			m.log.Info("device heartbeat timeout, ending capture session",
+				"app", d.App, "did", d.Did, "session", session.ID)
+			if err := m.EndSession(ctx, session.ID); err != nil {
+				m.log.Warn("capture health check: end session failed", "session", session.ID, "error", err)
+			}
+		}
+	}
+}
+
+// checkViewerLeases garbage-collects expired viewer leases.
+func (m *CaptureManager) checkViewerLeases(ctx context.Context) {
+	now := time.Now()
+
+	m.viewerMu.Lock()
+	type expired struct {
+		sessionID string
+		viewerID  string
+	}
+	var toDelete []expired
+	for sessionID, viewers := range m.viewers {
+		for viewerID, lease := range viewers {
+			if now.After(lease.ExpiresAt) {
+				toDelete = append(toDelete, expired{sessionID: sessionID, viewerID: viewerID})
+			}
+		}
+	}
+	// Sessions whose last viewer expired while capturing.
+	var toEnd []string
+	for _, e := range toDelete {
+		viewers := m.viewers[e.sessionID]
+		delete(viewers, e.viewerID)
+		if len(viewers) == 0 {
+			delete(m.viewers, e.sessionID)
+			toEnd = append(toEnd, e.sessionID)
+		}
+	}
+	m.viewerMu.Unlock()
+
+	for _, sessionID := range toEnd {
+		s, err := m.sessions.Get(ctx, sessionID)
+		if err != nil {
+			continue
+		}
+		if s.Status != capture.SessionStatusCapturing {
+			continue
+		}
+		sc := *s
+		sc.ViewerCount = 0
+		sc.End(now)
+		if err := m.sessions.Update(ctx, &sc); err != nil {
+			m.log.Warn("capture health check: end session after viewer expiry failed", "session", sessionID, "error", err)
+		}
+	}
+}
+
+// activeSessionFor returns the capturing session of a device, or nil.
+func (m *CaptureManager) activeSessionFor(ctx context.Context, app, did string) (*capture.CaptureSession, error) {
+	active, err := m.sessions.List(ctx, &SessionFilter{
+		App:    &app,
+		Did:    &did,
+		Status: &activeStatus,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(active) == 0 {
+		return nil, nil
+	}
+	return active[0], nil
+}
+
+// activeStatus is a shared pointer to the capturing session status used in filters.
+var activeStatus = capture.SessionStatusCapturing

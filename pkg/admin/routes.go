@@ -288,6 +288,22 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /handlers/{id}", a.requireEngine(a.handleGetHandler))
 	mux.HandleFunc("GET /handlers/{id}/health", a.requireEngine(a.handleGetHandlerHealth))
 	mux.HandleFunc("GET /handlers/{id}/stats", a.requireEngine(a.handleGetHandlerStats))
+
+	// =========================================================================
+	// MockNetPack capture API (contract: server/openapi/mocknetpack.yaml).
+	// All endpoints live under /api/v1 (contract base path), keeping them
+	// separate from mockd's native /sessions proxy-recording routes.
+	// =========================================================================
+	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/register", a.handleRegisterDevice)
+	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/heartbeat", a.handleDeviceHeartbeat)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/devices", a.handleListDevices)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}", a.handleGetDevice)
+	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions", a.handleActivateSession)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions", a.handleListSessions)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions/{id}", a.handleGetSession)
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}", a.handleEndSession)
+	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions/{id}/viewers", a.handleRegisterViewer)
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}/viewers/{viewerId}", a.handleReleaseViewer)
 }
 
 // handleConvertRecordings wraps the convert handler to pass the dual-write mock creator.

@@ -46,6 +46,8 @@ type API struct {
 	soapRecordingManager   *SOAPRecordingManager
 	workspaceStore         *store.WorkspaceFileStore
 	engineRegistry         *store.EngineRegistry
+	captureManager         *store.CaptureManager
+	captureConfig          store.CaptureConfig
 	workspaceManager       workspace.Manager
 	dataStore              *file.FileStore // Persistent store for mocks and folders
 	httpServer             *http.Server
@@ -164,6 +166,14 @@ func NewAPI(port int, opts ...Option) *API {
 		api.logger().Warn("failed to initialize data store", "error", err)
 	}
 	api.dataStore = dataStore
+
+	// Initialize the MockNetPack capture manager (devices / capture sessions /
+	// viewer leases). Uses defaults unless overridden via WithCaptureConfig.
+	api.captureManager = store.NewCaptureManager(
+		dataStore.Devices(),
+		dataStore.CaptureSessions(),
+		api.captureConfig,
+	)
 
 	// Initialize rate limiter with defaults if not provided via options
 	if api.rateLimiter == nil {
@@ -452,6 +462,10 @@ func (a *API) Start() error {
 	// Start the engine health check background goroutine
 	a.engineRegistry.StartHealthCheck(a.ctx, EngineHeartbeatTimeout)
 
+	// Start the MockNetPack capture health check (device heartbeat timeout +
+	// viewer lease garbage collection)
+	a.captureManager.StartHealthCheck(a.ctx)
+
 	// Start the token cleanup background goroutine
 	go a.startTokenCleanup(a.ctx)
 
@@ -493,6 +507,7 @@ func (a *API) SetLogger(log *slog.Logger) {
 	a.streamRecordingManager.SetLogger(log.With("component", "stream-recording"))
 	a.mqttRecordingManager.SetLogger(log.With("component", "mqtt-recording"))
 	a.soapRecordingManager.SetLogger(log.With("component", "soap-recording"))
+	a.captureManager.SetLogger(log.With("component", "capture"))
 }
 
 // Stop gracefully shuts down the admin API server.
@@ -500,6 +515,7 @@ func (a *API) Stop() error {
 	// Stop background goroutines
 	a.cancel()
 	a.engineRegistry.Stop()
+	a.captureManager.Stop()
 
 	// Stop the rate limiter cleanup goroutine
 	if a.rateLimiter != nil {

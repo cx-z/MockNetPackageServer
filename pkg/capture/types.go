@@ -76,6 +76,18 @@ func DeriveDeviceStatus(lastSeenAt, now time.Time, timeout time.Duration, hasAct
 	return DeviceStatusIdle
 }
 
+// DeviceView is the API output shape for a device (contract Device schema):
+// the persisted Device fields plus the derived Status and the active capture
+// session (if any). It is computed by the capture manager on read; the status
+// is never a persisted field.
+type DeviceView struct {
+	*Device
+	// Status is the derived connection status (offline > capturing > idle).
+	Status DeviceStatus `json:"status"`
+	// CurrentSession is the active capture session, if any.
+	CurrentSession *CaptureSession `json:"currentSession,omitempty"`
+}
+
 // ============================================================================
 // Capture Session
 // ============================================================================

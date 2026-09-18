@@ -31,6 +31,10 @@ var (
 	startDetach      bool
 	startPidFile     string
 	startServerFlags ServerFlags
+
+	// MockNetPack capture configuration (seconds; 0 = server default).
+	startCaptureHeartbeatInterval int
+	startCaptureHeartbeatTimeout  int
 )
 
 // startCmd represents the start command
@@ -137,6 +141,10 @@ func init() {
 	startCmd.Flags().StringVar(&startLogFormat, "log-format", "text", "Log format (text, json)")
 	startCmd.Flags().BoolVarP(&startDetach, "detach", "d", false, "Run server in background (daemon mode)")
 	startCmd.Flags().StringVar(&startPidFile, "pid-file", DefaultPIDPath(), "Path to PID file")
+
+	// MockNetPack capture flags (seconds; 0 = server default 20s/60s)
+	startCmd.Flags().IntVar(&startCaptureHeartbeatInterval, "capture-heartbeat-interval", 0, "MockNetPack SDK heartbeat interval in seconds (default 20)")
+	startCmd.Flags().IntVar(&startCaptureHeartbeatTimeout, "capture-heartbeat-timeout", 0, "MockNetPack heartbeat timeout in seconds (default 60)")
 }
 
 //nolint:gocyclo
@@ -243,6 +251,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	if sf.DataDir != "" {
 		adminOpts = append(adminOpts, admin.WithDataDir(sf.DataDir))
+	}
+	if startCaptureHeartbeatInterval > 0 || startCaptureHeartbeatTimeout > 0 {
+		adminOpts = append(adminOpts, admin.WithCaptureConfig(store.CaptureConfig{
+			HeartbeatInterval: time.Duration(startCaptureHeartbeatInterval) * time.Second,
+			HeartbeatTimeout:  time.Duration(startCaptureHeartbeatTimeout) * time.Second,
+		}))
 	}
 	adminAPI := admin.NewAPI(sf.AdminPort, adminOpts...)
 	adminAPI.SetLogger(log.With("component", "admin"))
