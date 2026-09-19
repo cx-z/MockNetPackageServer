@@ -152,3 +152,13 @@ func WithCaptureConfig(cfg store.CaptureConfig) Option {
 		a.captureConfig = cfg
 	}
 }
+
+// WithWebDir sets the directory serving the MockNetPack web UI (default
+// "web/mocknetpack" relative to the server working directory).
+func WithWebDir(dir string) Option {
+	return func(a *API) {
+		if dir != "" {
+			a.mockNetPackWebDir = dir
+		}
+	}
+}

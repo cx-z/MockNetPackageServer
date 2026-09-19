@@ -48,6 +48,7 @@ type API struct {
 	engineRegistry         *store.EngineRegistry
 	captureManager         *store.CaptureManager
 	captureConfig          store.CaptureConfig
+	mockNetPackWebDir      string // MockNetPack web UI 静态目录（默认 web/mocknetpack）
 	workspaceManager       workspace.Manager
 	dataStore              *file.FileStore // Persistent store for mocks and folders
 	httpServer             *http.Server
@@ -211,6 +212,7 @@ func NewAPI(port int, opts ...Option) *API {
 	mux := http.NewServeMux()
 	api.registerRoutes(mux)
 	api.registerDashboard(mux) // no-op unless built with -tags dashboard
+	api.registerMockNetPackWeb(mux)
 
 	api.httpServer = &http.Server{
 		Addr:         fmt.Sprintf(":%d", port),

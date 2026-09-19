@@ -1,0 +1,37 @@
+:root {
+  --bg: #f5f6f8; --card: #fff; --border: #e3e6ea; --text: #1f2329;
+  --muted: #8a9099; --idle: #8a9099; --capturing: #2f9e44; --offline: #d9480f;
+  --primary: #3370ff; --primary-hover: #1f5eff; --danger: #d9480f;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font: 14px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+       background: var(--bg); color: var(--text); padding: 24px; }
+.wrap { max-width: 860px; margin: 0 auto; }
+header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+h1 { font-size: 20px; font-weight: 600; }
+.sub { color: var(--muted); font-size: 12px; }
+.stats { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+#errorBar { display: none; background: #fff1f0; color: var(--danger); border: 1px solid #ffccc7;
+            border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 13px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+        padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: center; gap: 14px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.dot.idle { background: var(--idle); }
+.dot.capturing { background: var(--capturing); box-shadow: 0 0 0 3px rgba(47,158,68,.15); }
+.dot.offline { background: var(--offline); }
+.meta { flex: 1; min-width: 0; }
+.app { font-weight: 600; font-size: 15px; }
+.did { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+.row2 { margin-top: 4px; font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+.badge.idle { background: #f0f1f3; color: var(--idle); }
+.badge.capturing { background: #e6f4ea; color: var(--capturing); }
+.badge.offline { background: #fdeee8; color: var(--offline); }
+.actions { flex: none; }
+button { border: 0; border-radius: 6px; padding: 7px 16px; font-size: 13px; cursor: pointer;
+         background: var(--primary); color: #fff; }
+button:hover { background: var(--primary-hover); }
+button.danger { background: var(--danger); }
+button:disabled { background: #c9cdd4; cursor: not-allowed; }
+.empty { color: var(--muted); text-align: center; padding: 40px 0; }
+.updated { color: var(--muted); font-size: 12px; margin-top: 8px; }

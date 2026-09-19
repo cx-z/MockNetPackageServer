@@ -35,6 +35,7 @@ var (
 	// MockNetPack capture configuration (seconds; 0 = server default).
 	startCaptureHeartbeatInterval int
 	startCaptureHeartbeatTimeout  int
+	startWebDir                   string
 )
 
 // startCmd represents the start command
@@ -145,6 +146,7 @@ func init() {
 	// MockNetPack capture flags (seconds; 0 = server default 20s/60s)
 	startCmd.Flags().IntVar(&startCaptureHeartbeatInterval, "capture-heartbeat-interval", 0, "MockNetPack SDK heartbeat interval in seconds (default 20)")
 	startCmd.Flags().IntVar(&startCaptureHeartbeatTimeout, "capture-heartbeat-timeout", 0, "MockNetPack heartbeat timeout in seconds (default 60)")
+	startCmd.Flags().StringVar(&startWebDir, "web-dir", "", "MockNetPack web UI directory (default web/mocknetpack)")
 }
 
 //nolint:gocyclo
@@ -257,6 +259,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 			HeartbeatInterval: time.Duration(startCaptureHeartbeatInterval) * time.Second,
 			HeartbeatTimeout:  time.Duration(startCaptureHeartbeatTimeout) * time.Second,
 		}))
+	}
+	if startWebDir != "" {
+		adminOpts = append(adminOpts, admin.WithWebDir(startWebDir))
 	}
 	adminAPI := admin.NewAPI(sf.AdminPort, adminOpts...)
 	adminAPI.SetLogger(log.With("component", "admin"))
