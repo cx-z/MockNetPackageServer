@@ -2,13 +2,15 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    MockNetPack 中央 Mock 服务器 API 契约（v1 草案）。
+    MockNetPack 中央 Mock 服务器 API 契约。
     - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
     - 隔离强制：所有设备/流量/规则接口显式携带 (app, did) 维度（路径或 query），避免串设备。
     - 时间：一律 RFC3339（如 2026-09-18T09:00:00+08:00）。
     - Mock 匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口的所有请求均命中。
+    - 流量语义：全量抓包、会话内临时可见、会话结束清空（被 Mock 的请求持久化，M3 起）。
+    - 推送通道：Web 请求流按 2s 轮询 GET /sessions/{id}/traffic 实现秒级可见（已定，不新增推送端点）。
     - 实现状态：每个 path 用 x-milestone 标注实现阶段（m1/m2/m3/m4/m6），当前阶段之外的仅契约定义、未实现。
 
 servers:
@@ -241,9 +243,14 @@ paths:
       x-milestone: m2
       summary: 批量上传流量（SDK）
       description: |
-        SDK 在抓包会话有效期间批量上传一次/多次请求的完整信息（全量抓包，临时记录）。
-        会话结束后服务端清空本会话临时流量；被 Mock 的请求（原始值+Mock 值）持久化（M3 起）。
-        上传仅接受激活会话内的流量；sessionId 不活跃或已结束时拒绝（409）。
+        SDK 在抓包会话有效期间批量上传一次/多次请求的完整信息（全量抓包，会话内临时记录）。
+        攒批：SDK 按条目数或累计字节阈值触发上传（M2.4 定具体策略），单批 ≤ 500 条；
+        服务端请求体上限 10MB（mockd Admin BodyLimit），SDK 应控制批次大小避免整批被拒。
+        部分接受：entries 中字段不合法的条目被丢弃、合法条目正常入库，响应 count = 实际接受数；
+        全部条目不合法返回 400。
+        临时语义：本会话流量仅会话存续期间可见，会话结束（页面关闭 / 心跳超时 / 强制断开）即清空；
+        被 Mock 的请求（原始值 + Mock 值）持久化（M3 起）。
+        仅接受激活会话内的流量：sessionId 不存在 → 404 session_not_found；会话已结束 → 409 session_ended。
       operationId: uploadTraffic
       requestBody:
         required: true
@@ -253,15 +260,17 @@ paths:
               $ref: '#/components/schemas/TrafficUploadRequest'
       responses:
         '202':
-          description: 已接收
+          description: 已接收（含部分接受；count 为实际接受条目数）
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TrafficUploadResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
-          description: 会话不存在或已结束
+          description: 会话已结束（session_ended）
           content:
             application/json:
               schema:
@@ -274,6 +283,8 @@ paths:
       tags: [traffic]
       x-milestone: m2
       summary: 请求详情
+      description: |
+        返回单条请求完整信息。会话结束后临时流量清空，本接口对已清空或不存在记录返回 404（not_found）。
       operationId: getTraffic
       parameters:
         - $ref: '#/components/parameters/TrafficIdPath'
@@ -292,7 +303,12 @@ paths:
       tags: [traffic]
       x-milestone: m2
       summary: 会话内流量列表（实时 + 历史）
-      description: Web 请求流数据源；M2 配合推送通道实现秒级可见。
+      description: |
+        Web 请求流数据源。推送通道已定为轮询：Web 每 2s 拉取本接口实现秒级可见（需求决策 #5，
+        秒级即可、不做毫秒级保证），客户端用 limit 拉取最新条目并按 id 本地去重，不新增推送端点。
+        排序：按 timestamp 升序返回（请求时间线）；Web 展示可自行倒序。
+        会话不存在 → 404 session_not_found；会话已结束 → 200 且 entries=[]、total=0
+        （临时流量已清空；会话对象本身仍在历史会话列表可见，requestCount 保留为结束时计数）。
       operationId: listSessionTraffic
       parameters:
         - $ref: '#/components/parameters/SessionIdPath'
@@ -797,10 +813,11 @@ components:
           description: 流量记录 ID（服务端生成）
         sessionId:
           type: string
+          description: 所属会话 ID（服务端写入）
         timestamp:
           type: string
           format: date-time
-          description: 请求发起时间（RFC3339）
+          description: 请求发起时间（RFC3339，SDK 打点）
         method:
           type: string
           example: POST
@@ -812,7 +829,7 @@ components:
           description: URL 路径（用于 Mock 匹配）
         query:
           type: string
-          description: Query 字符串（不含 ?，原始顺序）
+          description: Query 字符串（不含 ?，原始顺序；无则空串）
         requestHeaders:
           type: object
           additionalProperties:
@@ -822,9 +839,12 @@ components:
           description: 请求头（多值）
         requestBody:
           type: string
-          description: 请求体（超限截断，M2 定上限）
+          description: |
+            请求体：按 UTF-8 文本保存，超过 1MB 截断（M2 固定上限，不做配置项）；
+            无法 UTF-8 解码的二进制内容以 "[binary N bytes]" 占位保存。
         statusCode:
           type: integer
+          nullable: true
           description: 响应状态码（请求失败时为空）
         responseHeaders:
           type: object
@@ -832,19 +852,25 @@ components:
             type: array
             items:
               type: string
+          nullable: true
+          description: 响应头（请求失败时为空）
         responseBody:
           type: string
-          description: 响应体（超限截断）
+          nullable: true
+          description: |
+            响应体：按 UTF-8 文本保存，超过 1MB 截断（M2 固定上限，不做配置项）；
+            无法 UTF-8 解码的二进制内容以 "[binary N bytes]" 占位保存；请求失败时为空。
         error:
           type: string
-          description: 错误信息（请求失败时）
+          nullable: true
+          description: 错误信息（请求失败时；成功时为空）
         durationMs:
           type: integer
-          description: 请求耗时（毫秒）
+          description: 请求耗时（毫秒，请求发起至收到完成回调）
         mocked:
           type: boolean
           default: false
-          description: 是否命中 Mock（M3 起标记；Web 请求流标注"Mock 命中"）
+          description: 是否命中 Mock（M2 恒为 false；M3 起标记，Web 请求流标注"Mock 命中"）
 
     TrafficUploadRequest:
       type: object
@@ -852,16 +878,21 @@ components:
       properties:
         app:
           type: string
+          maxLength: 128
         did:
           type: string
+          maxLength: 128
         sessionId:
           type: string
+          description: 目标会话 ID（上传仅接受激活会话内流量）
         entries:
           type: array
           maxItems: 500
           items:
             $ref: '#/components/schemas/TrafficEntry'
-          description: 一次批量上传的流量条目（SDK 攒批策略 M2 定）
+          description: |
+            一次批量上传的流量条目。SDK 攒批：按条目数或累计字节阈值触发上传（M2.4 定具体策略），
+            单批 ≤ 500 条且控制总字节，避免超过服务端 10MB 请求体上限。
 
     TrafficUploadResponse:
       type: object
@@ -869,9 +900,10 @@ components:
       properties:
         accepted:
           type: boolean
+          description: 是否已接收（202 隐含接收，M2 恒为 true；false 仅作扩展预留）
         count:
           type: integer
-          description: 实际接受的条目数
+          description: 实际接受的条目数（部分接受：合法条目数；全部条目不合法时服务端返回 400 而非 202）
 
     # ------------------------------------------------------------ Mock 规则
     MockResponse:
