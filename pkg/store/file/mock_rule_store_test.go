@@ -333,3 +333,52 @@ func TestMockRule_HitTouchesLastUsedAt(t *testing.T) {
 		t.Errorf("mocked hit did not refresh LastUsedAt: old=%v now=%v", oldUsed, views[0].LastUsedAt)
 	}
 }
+
+// --- M4.3: session end disables all device rules ----------------------------
+
+func TestMockRule_SessionEndDisablesRules(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("Register = %v", err)
+	}
+	sess, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("Activate = %v", err)
+	}
+	r1, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true))
+	if err != nil {
+		t.Fatalf("Create r1 = %v", err)
+	}
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/b", true)); err != nil {
+		t.Fatalf("Create r2 = %v", err)
+	}
+	// A third rule that stays disabled should remain disabled, not deleted.
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("DELETE", "/api/c", false)); err != nil {
+		t.Fatalf("Create r3 = %v", err)
+	}
+
+	// End the capture session.
+	if err := m.EndSession(ctx, sess.ID); err != nil {
+		t.Fatalf("EndSession = %v", err)
+	}
+
+	views, _, ver, err := m.ListMockRules(ctx, "app", "d1")
+	if err != nil || len(views) != 3 {
+		t.Fatalf("want 3 rules still in history, got %d (err=%v)", len(views), err)
+	}
+	for _, v := range views {
+		if v.Enabled {
+			t.Errorf("rule %s still enabled after session end", v.ID)
+		}
+		if v.Effective {
+			t.Errorf("rule %s still effective after session end", v.ID)
+		}
+	}
+	// Version was bumped so the SDK drops them.
+	_ = r1
+	if ver <= 2 {
+		t.Errorf("expected rule version bumped on disable, got %d", ver)
+	}
+}

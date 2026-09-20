@@ -345,7 +345,13 @@ func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	sc := *s
 	sc.End(time.Now())
 	sc.ViewerCount = 0
-	return m.sessions.Update(ctx, &sc)
+	if err := m.sessions.Update(ctx, &sc); err != nil {
+		return err
+	}
+	// M4 (F4.5/决策13): any session end disables all of the device mock rules;
+	// they stay in Web history but must be re-enabled manually.
+	m.disableDeviceRules(ctx, s.App, s.Did)
+	return nil
 }
 
 // ListSessions lists capture sessions (most recent first), delegated to the store.
@@ -602,10 +608,17 @@ func (m *CaptureManager) ReleaseViewer(ctx context.Context, sessionID, viewerID 
 
 	sc := *s
 	sc.ViewerCount = count
-	if count == 0 && sc.Status == capture.SessionStatusCapturing {
+	wasCapturing := sc.Status == capture.SessionStatusCapturing
+	if count == 0 && wasCapturing {
 		sc.End(time.Now())
 	}
-	return m.sessions.Update(ctx, &sc)
+	if err := m.sessions.Update(ctx, &sc); err != nil {
+		return err
+	}
+	if count == 0 && wasCapturing {
+		m.disableDeviceRules(ctx, s.App, s.Did)
+	}
+	return nil
 }
 
 // ============================================================================
@@ -721,7 +734,9 @@ func (m *CaptureManager) checkViewerLeases(ctx context.Context) {
 		sc.End(now)
 		if err := m.sessions.Update(ctx, &sc); err != nil {
 			m.log.Warn("capture health check: end session after viewer expiry failed", "session", sessionID, "error", err)
+			continue
 		}
+		m.disableDeviceRules(ctx, s.App, s.Did)
 	}
 }
 
@@ -1019,5 +1034,35 @@ func (m *CaptureManager) PurgeExpiredRules(ctx context.Context) {
 		}
 		m.log.Info("rule janitor: purged expired mock rule",
 			"rule", r.ID, "method", r.Method, "path", r.Path, "lastUsedAt", ruleUsageTime(r))
+	}
+}
+
+// disableDeviceRules flips every enabled mock rule of a device off when its
+// capture session ends (M4, F4.5/决策13). Rules are NOT deleted — they remain
+// in the Web rule history — but they are no longer effective; on the next
+// capture session the user must re-enable each one manually. The rule-set
+// version is bumped so the SDK drops them from its local snapshot.
+func (m *CaptureManager) disableDeviceRules(ctx context.Context, app, did string) {
+	all, err := m.rules.List(ctx, &MockRuleFilter{App: app, Did: did})
+	if err != nil {
+		m.log.Warn("session end: list rules to disable failed", "error", err)
+		return
+	}
+	changed := false
+	for _, r := range all {
+		if !r.Enabled {
+			continue
+		}
+		r.Enabled = false
+		if err := m.rules.Update(ctx, r); err != nil {
+			m.log.Warn("session end: disable rule failed", "rule", r.ID, "error", err)
+			continue
+		}
+		changed = true
+	}
+	if changed {
+		if _, err := m.rules.BumpRuleVersion(ctx, app, did); err != nil {
+			m.log.Warn("session end: bump rule version failed", "app", app, "did", did, "error", err)
+		}
 	}
 }
