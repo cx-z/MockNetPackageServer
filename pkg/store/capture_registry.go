@@ -859,6 +859,25 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 	return nil, version, ErrRuleNotFound
 }
 
+// DeleteMockRule removes a rule by ID (scoped to app/did). Writes bump the
+// rule-set version so the SDK drops it from its local snapshot.
+func (m *CaptureManager) DeleteMockRule(ctx context.Context, app, did, ruleID string) (int, error) {
+	existing, err := m.rules.Get(ctx, ruleID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return 0, ErrRuleNotFound
+		}
+		return 0, err
+	}
+	if existing.App != app || existing.Did != did {
+		return 0, ErrRuleNotFound
+	}
+	if err := m.rules.Delete(ctx, ruleID); err != nil {
+		return 0, err
+	}
+	return m.rules.BumpRuleVersion(ctx, app, did)
+}
+
 // ListMockRules returns every rule of the device (Web view, including disabled)
 // with the runtime Effective flag, the abnormal conflicts, and the current
 // rule-set version.

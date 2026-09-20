@@ -312,6 +312,7 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.handleListMockRules)
 	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.handleCreateMockRule)
 	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.handleUpdateMockRule)
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.handleDeleteMockRule)
 }
 
 // handleConvertRecordings wraps the convert handler to pass the dual-write mock creator.

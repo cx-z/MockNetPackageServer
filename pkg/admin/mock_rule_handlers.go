@@ -111,6 +111,15 @@ func (a *API) handleUpdateMockRule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, view)
 }
 
+// handleDeleteMockRule handles DELETE /api/v1/devices/{app}/{did}/mock-rules/{ruleId}.
+func (a *API) handleDeleteMockRule(w http.ResponseWriter, r *http.Request) {
+	if _, err := a.captureManager.DeleteMockRule(r.Context(), r.PathValue("app"), r.PathValue("did"), r.PathValue("ruleId")); err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // validateMockRuleInput enforces the contract required fields (MockRuleInput:
 // method, path, response.statusCode). Returns false and writes a 400 when
 // invalid.

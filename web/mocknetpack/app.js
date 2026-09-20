@@ -10,6 +10,7 @@ const viewers = new Map();
 let pollTimer = null;        // 列表轮询
 let trafficTimer = null;     // 请求流轮询
 let detail = null;           // { app, did, sessionId }
+let ruleStore = [];          // 当前规则列表（供详情/删除使用）
 
 const $ = (id) => document.getElementById(id);
 const STATUS = {
@@ -454,6 +455,7 @@ function renderRules(data) {
     return;
   }
   box.innerHTML = "";
+  ruleStore = rules;
   for (const r of rules) {
     const el = document.createElement("div");
     el.className = "rule-row" + (r.enabled ? "" : " disabled");
@@ -466,8 +468,12 @@ function renderRules(data) {
         '<div class="r-line1">' + esc(r.path) + " " + effBadge + "</div>" +
         '<div class="r-line2">回包 ' + (r.response && r.response.statusCode) +
           (r.response && r.response.body ? " · " + esc(String(r.response.body).slice(0, 80)) : "") +
+          (r.response && r.response.bodyBase64 ? " · [二进制 " + atob(r.response.bodyBase64).length + " 字节]" : "") +
           (r.source ? " · 来自抓包" : "") + "</div>" +
       "</div>";
+
+    // 点击规则体 → 展示详情。
+    el.querySelector(".r-body").onclick = () => renderRuleDetail(r);
 
     const sw = document.createElement("label");
     sw.className = "switch";
@@ -480,7 +486,63 @@ function renderRules(data) {
     sw.appendChild(slider);
     input.addEventListener("change", () => toggleRule(r, input.checked));
     el.appendChild(sw);
+
+    const del = document.createElement("button");
+    del.className = "small danger";
+    del.textContent = "删除";
+    del.onclick = (ev) => { ev.stopPropagation(); deleteRule(r); };
+    el.appendChild(del);
+
     box.appendChild(el);
+  }
+}
+
+/** 渲染单条规则详情（状态码/响应头/回包体/来源快照）。 */
+function renderRuleDetail(r) {
+  const box = $("ruleDetail");
+  const headRows = (h) => Object.entries(h || {})
+    .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
+      '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("");
+  const resp = r.response || {};
+  let bodyDisp = resp.body || "";
+  if (resp.bodyBase64) {
+    bodyDisp = "[二进制 " + atob(resp.bodyBase64).length + " 字节，base64 已用于回放]";
+  }
+  const src = r.source;
+  box.innerHTML =
+    '<div class="detail-panel">' +
+      '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc(r.path) + "</span></div>" +
+      '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
+        (r.enabled ? (r.effective ? "生效中" : "冲突未生效") : "已停用") + "</span></div>" +
+      '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + "</span></div>" +
+      '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(resp.headers) || '<div class="d-v">—</div>') + "</div>" +
+      '<div class="d-block"><div class="d-title">回包体</div><pre>' + esc(bodyDisp) + "</pre></div>" +
+      (src
+        ? '<div class="d-block"><div class="d-title">来源快照（原始真实请求）</div>' +
+            '<div class="d-kv"><span class="d-k">方法/路径</span><span class="d-v">' + esc(src.method) + " " + esc(src.path) + "</span></div>" +
+            '<div class="d-kv"><span class="d-k">原始状态码</span><span class="d-v">' + (src.statusCode ?? "—") + "</span></div>" +
+            '<div class="d-block"><div class="d-title">原始请求体</div><pre>' +
+              esc(src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")) + "</pre></div>" +
+            '<div class="d-block"><div class="d-title">原始响应体</div><pre>' +
+              esc(src.responseBodyBase64 ? "[二进制 " + atob(src.responseBodyBase64).length + " 字节]" : (src.responseBody || "（空）")) + "</pre></div>" +
+          "</div>"
+        : "") +
+    "</div>";
+}
+
+async function deleteRule(rule) {
+  if (!detail) return;
+  if (!confirm("删除规则 " + rule.method + " " + rule.path + " ？")) return;
+  try {
+    const res = await fetch(API + "/devices/" + encodeURIComponent(detail.app) + "/" +
+      encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(rule.id), {
+      method: "DELETE",
+    });
+    if (!res.ok && res.status !== 204) { showError("删除失败（HTTP " + res.status + "）"); return; }
+    $("ruleDetail").innerHTML = '<div class="empty">已删除。</div>';
+    await loadRules();
+  } catch (e) {
+    showError("删除失败：" + e.message);
   }
 }
 
