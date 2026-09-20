@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/getmockd/mockd/pkg/capture"
@@ -75,6 +76,28 @@ type SessionListResponse struct {
 type RegisterViewerRequest struct {
 	ViewerID string `json:"viewerId"`
 	Label    string `json:"label,omitempty"`
+}
+
+// TrafficUploadRequest is the SDK traffic batch payload (contract schema:
+// app, did, sessionId, entries, max 500 items).
+type TrafficUploadRequest struct {
+	App       string                  `json:"app"`
+	Did       string                  `json:"did"`
+	SessionID string                  `json:"sessionId"`
+	Entries   []*capture.TrafficEntry `json:"entries"`
+}
+
+// TrafficUploadResponse is returned on successful ingestion (202; count is the
+// number of entries actually stored — partial acceptance is allowed).
+type TrafficUploadResponse struct {
+	Accepted bool `json:"accepted"`
+	Count    int  `json:"count"`
+}
+
+// TrafficListResponse is the Web request-stream payload.
+type TrafficListResponse struct {
+	Entries []*capture.TrafficEntry `json:"entries"`
+	Total   int                     `json:"total"`
 }
 
 // ============================================================================
@@ -259,6 +282,102 @@ func (a *API) handleGetDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, view)
+}
+
+// handleUploadTraffic handles POST /api/v1/traffic (SDK batch upload, 全量抓包).
+// Contract semantics: 202 on acceptance (partial acceptance allowed — count is
+// the number of entries stored); 400 when the batch is empty or every entry is
+// invalid; 404 session_not_found for an unknown session; 409 session_ended for
+// an ended session.
+func (a *API) handleUploadTraffic(w http.ResponseWriter, r *http.Request) {
+	var req TrafficUploadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+	if req.App == "" || req.Did == "" || req.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "missing_field", "app, did and sessionId are required")
+		return
+	}
+	if len(req.Entries) == 0 {
+		writeError(w, http.StatusBadRequest, "missing_field", "entries must not be empty")
+		return
+	}
+	if len(req.Entries) > 500 {
+		writeError(w, http.StatusBadRequest, "invalid_field", "entries must be at most 500 items")
+		return
+	}
+
+	count, err := a.captureManager.UploadTraffic(r.Context(), req.App, req.Did, req.SessionID, req.Entries)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	if count == 0 {
+		// Every entry was invalid (empty method/url or zero timestamp).
+		writeError(w, http.StatusBadRequest, "invalid_field", "all traffic entries are invalid")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, TrafficUploadResponse{Accepted: true, Count: count})
+}
+
+// handleGetTraffic handles GET /api/v1/traffic/{id} (single request detail).
+func (a *API) handleGetTraffic(w http.ResponseWriter, r *http.Request) {
+	entry, err := a.captureManager.GetTraffic(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entry)
+}
+
+// handleListSessionTraffic handles GET /api/v1/sessions/{id}/traffic (Web
+// request stream — the 2s-polling push channel; no extra push endpoint is
+// needed, decision D-M2-1). limit defaults to 100 and must be 1..500 (0 means
+// default); offset defaults to 0.
+func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
+	limit, err := queryInt(r, "limit", 100)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_field", "limit must be an integer")
+		return
+	}
+	if limit == 0 {
+		limit = 100
+	}
+	if limit < 0 || limit > 500 {
+		writeError(w, http.StatusBadRequest, "invalid_field", "limit must be between 1 and 500")
+		return
+	}
+	offset, err := queryInt(r, "offset", 0)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_field", "offset must be an integer")
+		return
+	}
+	if offset < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_field", "offset must be non-negative")
+		return
+	}
+
+	entries, total, err := a.captureManager.ListSessionTraffic(r.Context(), r.PathValue("id"), limit, offset)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, TrafficListResponse{Entries: entries, Total: total})
+}
+
+// queryInt parses an integer query parameter, returning def when the parameter
+// is absent or empty.
+func queryInt(r *http.Request, key string, def int) (int, error) {
+	raw := r.URL.Query().Get(key)
+	if raw == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // writeCaptureError maps capture/store errors to contract error responses.

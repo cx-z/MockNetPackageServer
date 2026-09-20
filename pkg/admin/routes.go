@@ -304,6 +304,9 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}", a.handleEndSession)
 	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions/{id}/viewers", a.handleRegisterViewer)
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}/viewers/{viewerId}", a.handleReleaseViewer)
+	mux.HandleFunc("POST "+captureAPIPrefix+"/traffic", a.handleUploadTraffic)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/traffic/{id}", a.handleGetTraffic)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions/{id}/traffic", a.handleListSessionTraffic)
 }
 
 // handleConvertRecordings wraps the convert handler to pass the dual-write mock creator.

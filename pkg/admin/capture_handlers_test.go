@@ -280,3 +280,157 @@ func TestCaptureAPI_ErrorPaths(t *testing.T) {
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/nonexistent", nil, nil)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
+
+func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+
+	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
+		RegisterDeviceRequest{App: "com.example.app", Did: "dev-1"}, nil)
+	var session capture.CaptureSession
+	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
+		ActivateSessionRequest{App: "com.example.app", Did: "dev-1"}, &session)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	sessionID := session.ID
+
+	// Upload: 2 valid + 1 invalid (empty method) -> 202, count=2.
+	now := time.Now()
+	entries := []*capture.TrafficEntry{
+		{
+			Timestamp: now, Method: "POST", URL: "http://example.com/api/feed/list?page=1",
+			Path: "/api/feed/list", Query: "page=1",
+			RequestHeaders:  map[string][]string{"Content-Type": {"application/json"}},
+			RequestBody:     `{"page":1}`,
+			StatusCode:      200,
+			ResponseHeaders: map[string][]string{"Server": {"mockd"}},
+			ResponseBody:    `{"items":[]}`,
+			DurationMs:      42,
+		},
+		{Timestamp: now.Add(time.Millisecond), Method: "GET", URL: "http://example.com/health", DurationMs: 3},
+		{Timestamp: now.Add(2 * time.Millisecond), Method: "", URL: "http://x/bad", DurationMs: 1}, // invalid
+	}
+	var up TrafficUploadResponse
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "com.example.app", Did: "dev-1", SessionID: sessionID, Entries: entries}, &up)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	assert.True(t, up.Accepted)
+	assert.Equal(t, 2, up.Count)
+
+	// Session RequestCount reflects accepted entries.
+	var gotSession capture.CaptureSession
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &gotSession)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 2, gotSession.RequestCount)
+
+	// Request stream with full detail fields.
+	var list TrafficListResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 2, list.Total)
+	require.Len(t, list.Entries, 2)
+	first := list.Entries[0]
+	assert.Equal(t, "POST", first.Method)
+	assert.Equal(t, "http://example.com/api/feed/list?page=1", first.URL)
+	assert.Equal(t, "/api/feed/list", first.Path)
+	assert.Equal(t, "page=1", first.Query)
+	assert.Equal(t, `{"page":1}`, first.RequestBody)
+	assert.Equal(t, 200, first.StatusCode)
+	assert.Equal(t, `{"items":[]}`, first.ResponseBody)
+	assert.Equal(t, 42, first.DurationMs)
+	assert.NotEmpty(t, first.ID)
+	assert.Equal(t, sessionID, first.SessionID)
+
+	// Single request detail by server-generated ID.
+	var detail capture.TrafficEntry
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/traffic/"+first.ID, nil, &detail)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, first.URL, detail.URL)
+
+	// Paging: limit=1&offset=1 -> second entry only.
+	var page TrafficListResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?limit=1&offset=1", nil, &page)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, page.Entries, 1)
+	assert.Equal(t, "GET", page.Entries[0].Method)
+
+	// End session -> traffic cleared: empty list + total 0, detail 404.
+	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	var cleared TrafficListResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &cleared)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 0, cleared.Total)
+	assert.Len(t, cleared.Entries, 0)
+	var errResp ErrorResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/traffic/"+first.ID, nil, &errResp)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "not_found", errResp.Error)
+}
+
+func TestCaptureAPI_TrafficErrors(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+
+	validEntry := func() *capture.TrafficEntry {
+		return &capture.TrafficEntry{Timestamp: time.Now(), Method: "GET", URL: "http://x", DurationMs: 1}
+	}
+
+	// Unknown session upload -> 404 session_not_found.
+	var errResp ErrorResponse
+	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "app", Did: "d1", SessionID: "nope", Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "session_not_found", errResp.Error)
+
+	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
+		RegisterDeviceRequest{App: "app", Did: "d1"}, nil)
+	var session capture.CaptureSession
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
+		ActivateSessionRequest{App: "app", Did: "d1"}, &session)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	sessionID := session.ID
+
+	// Empty entries -> 400.
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "app", Did: "d1", SessionID: sessionID, Entries: []*capture.TrafficEntry{}}, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	// All entries invalid -> 400 invalid_field.
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "app", Did: "d1", SessionID: sessionID,
+			Entries: []*capture.TrafficEntry{{Method: "", URL: "http://x", Timestamp: time.Now(), DurationMs: 1}}}, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, "invalid_field", errResp.Error)
+
+	// More than 500 entries -> 400.
+	big := make([]*capture.TrafficEntry, 501)
+	for i := range big {
+		big[i] = validEntry()
+	}
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "app", Did: "d1", SessionID: sessionID, Entries: big}, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	// Cross-device upload (isolation) -> 404 session_not_found.
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "app", Did: "other", SessionID: sessionID, Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "session_not_found", errResp.Error)
+
+	// Invalid limit -> 400; limit beyond 500 -> 400.
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?limit=abc", nil, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?limit=501", nil, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	// Unknown session list -> 404 session_not_found.
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/nope/traffic", nil, &errResp)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "session_not_found", errResp.Error)
+
+	// Ended session upload -> 409 session_ended.
+	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "app", Did: "d1", SessionID: sessionID, Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	assert.Equal(t, "session_ended", errResp.Error)
+}
