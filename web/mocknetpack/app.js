@@ -11,6 +11,8 @@ let pollTimer = null;        // 列表轮询
 let trafficTimer = null;     // 请求流轮询
 let detail = null;           // { app, did, sessionId }
 let ruleStore = [];          // 当前规则列表（供详情/删除使用）
+let trafficFilter = "";      // 展示规则：页面级字符串过滤（刷新即清空，F3.6/决策16）
+let lastTraffic = [];       // 最近一次拉到的请求流（供过滤后重渲染）
 
 const $ = (id) => document.getElementById(id);
 const STATUS = {
@@ -329,9 +331,17 @@ async function pollTraffic() {
 
 function renderTraffic(entries) {
   if (!detail || !detail.sessionId) return;
+  lastTraffic = entries;
   // 倒序：最新在上（服务端按 timestamp 升序）。
   entries = entries.slice().sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
-  $("trafficInfo").textContent = "实时 · 2s 轮询 · 共 " + entries.length + " 条（显示最近 " + TRAFFIC_PAGE + " 条）";
+  const q = trafficFilter.trim().toLowerCase();
+  const total = entries.length;
+  if (q) {
+    entries = entries.filter((e) =>
+      (e.path || e.url || "").toLowerCase().includes(q) ||
+      (e.method || "").toLowerCase().includes(q));
+  }
+  $("trafficInfo").textContent = "实时 · 2s 轮询 · 共 " + total + " 条" + (q ? "（过滤出 " + entries.length + " 条）" : "（显示最近 " + TRAFFIC_PAGE + " 条）");
 
   const box = $("trafficList");
   if (!entries.length) {
@@ -385,7 +395,7 @@ function renderTrafficDetail(e) {
       '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(e.requestBody) || "（空）") + "</pre></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' +
         (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(e.responseBody) || "（空）") + "</pre></div>" +
+      '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(e.responseBodyDecoded || e.responseBody) || "（空）") + "</pre></div>" +
     "</div>";
 
   const btn = box.querySelector("#mockThisBtn");
@@ -524,7 +534,7 @@ function renderRuleDetail(r) {
             '<div class="d-block"><div class="d-title">原始请求体</div><pre>' +
               esc(src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")) + "</pre></div>" +
             '<div class="d-block"><div class="d-title">原始响应体</div><pre>' +
-              esc(src.responseBodyBase64 ? "[二进制 " + atob(src.responseBodyBase64).length + " 字节]" : (src.responseBody || "（空）")) + "</pre></div>" +
+              esc(src.responseBodyDecoded || (src.responseBodyBase64 ? "[二进制 " + atob(src.responseBodyBase64).length + " 字节]" : (src.responseBody || "（空）"))) + "</pre></div>" +
           "</div>"
         : "") +
     "</div>";
@@ -604,6 +614,7 @@ async function mockThisRequest(e) {
       statusCode: e.statusCode,
       responseHeaders: e.responseHeaders,
       responseBody: e.responseBody,
+      ...(e.responseBodyDecoded ? { responseBodyDecoded: e.responseBodyDecoded } : {}),
       ...(e.responseBodyBase64 ? { responseBodyBase64: e.responseBodyBase64 } : {}),
       capturedAt: e.timestamp,
     },
@@ -685,3 +696,12 @@ function start() {
   }
 }
 start();
+
+// M4.6 展示规则：页面级字符串过滤，仅当前页面、刷新即清空（F3.6/决策16）。
+(function () {
+  const box = $("trafficFilter");
+  if (box) box.addEventListener("input", (ev) => {
+    trafficFilter = ev.target.value || "";
+    renderTraffic(lastTraffic);
+  });
+})();
