@@ -208,6 +208,9 @@ type TrafficEntry struct {
 	// ResponseBodyBase64 carries the raw response body bytes (base64) when it is
 	// not UTF-8 text, so a rule can replay the exact original bytes (M3 fix).
 	ResponseBodyBase64 string `json:"responseBodyBase64,omitempty"`
+	// ResponseBodyDecoded is the UTF-8 text decoded by the app-injected protocol
+	// decoder (M4), for Web display only; never used for replay.
+	ResponseBodyDecoded string `json:"responseBodyDecoded,omitempty"`
 	// Error is the error message when the request failed.
 	Error string `json:"error,omitempty"`
 	// DurationMs is the request duration in milliseconds.
@@ -267,6 +270,7 @@ type MockRuleSource struct {
 	ResponseHeaders map[string][]string `json:"responseHeaders,omitempty"`
 	ResponseBody    *string             `json:"responseBody,omitempty"`
 	ResponseBodyBase64 string           `json:"responseBodyBase64,omitempty"`
+	ResponseBodyDecoded string           `json:"responseBodyDecoded,omitempty"`
 	CapturedAt      time.Time           `json:"capturedAt"`
 }
 
