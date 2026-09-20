@@ -316,3 +316,33 @@ type CaptureSessionStore interface {
 	// Delete removes a session by ID.
 	Delete(ctx context.Context, id string) error
 }
+
+// MockRuleFilter filters mock rules by owning device.
+type MockRuleFilter struct {
+	// App filters by app dimension ("" = no filter).
+	App string
+	// Did filters by did dimension ("" = no filter).
+	Did string
+}
+
+// MockRuleStore handles persistence for MockNetPack mock rules and the
+// per-device monotonic rule-set version. Rules are persisted across restarts
+// (requirement F4.5); the runtime Effective flag is computed by the manager,
+// never stored here.
+type MockRuleStore interface {
+	// List returns all rules matching the filter (device-scoped).
+	List(ctx context.Context, filter *MockRuleFilter) ([]*capture.MockRule, error)
+	// Get returns a single rule by ID.
+	Get(ctx context.Context, id string) (*capture.MockRule, error)
+	// Create adds a new rule. Returns store.ErrAlreadyExists if the ID exists.
+	Create(ctx context.Context, r *capture.MockRule) error
+	// Update replaces an existing rule. Returns store.ErrNotFound if missing.
+	Update(ctx context.Context, r *capture.MockRule) error
+	// Delete removes a rule by ID.
+	Delete(ctx context.Context, id string) error
+	// GetRuleVersion returns the current rule-set version for (app, did)
+	// (0 when no rules have ever been written).
+	GetRuleVersion(ctx context.Context, app, did string) (int, error)
+	// BumpRuleVersion increments and returns the new version for (app, did).
+	BumpRuleVersion(ctx context.Context, app, did string) (int, error)
+}

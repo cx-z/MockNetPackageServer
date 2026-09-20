@@ -66,6 +66,12 @@ type storeData struct {
 	// elsewhere (M2) and cleared when a session ends.
 	Devices          []*capture.Device          `json:"devices,omitempty"`
 	CaptureSessions  []*capture.CaptureSession  `json:"captureSessions,omitempty"`
+
+	// MockNetPack mock rules (M3) and the per-device rule-set version counter
+	// (keyed by app + "\x00" + did). Rules persist; the runtime Effective flag
+	// is computed by the manager and never stored.
+	MockRules    []*capture.MockRule `json:"mockRules,omitempty"`
+	RuleVersions map[string]int      `json:"ruleVersions,omitempty"`
 }
 
 // New creates a new FileStore with the given configuration.
@@ -321,6 +327,11 @@ func (s *FileStore) Devices() store.DeviceStore {
 // CaptureSessions returns the capture session store (MockNetPack capture entities).
 func (s *FileStore) CaptureSessions() store.CaptureSessionStore {
 	return &captureSessionStore{fs: s}
+}
+
+// MockRules returns the mock rule store (MockNetPack M3).
+func (s *FileStore) MockRules() store.MockRuleStore {
+	return &mockRuleStore{fs: s}
 }
 
 // Begin starts a transaction (snapshot-based for file store).

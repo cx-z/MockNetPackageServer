@@ -22,7 +22,16 @@ var (
 	ErrSessionNotFound = errors.New("capture session not found")
 	// ErrSessionEnded means the capture session is already ended.
 	ErrSessionEnded = errors.New("capture session already ended")
+	// ErrRuleNotFound means no mock rule with the given ID exists for the device.
+	ErrRuleNotFound = errors.New("mock rule not found")
+	// ErrRuleConflict means enabling this rule would leave more than one enabled
+	// rule on the same interface (maps to HTTP 409).
+	ErrRuleConflict = errors.New("mock rule conflict: another enabled rule already exists for this interface")
 )
+
+// MockRuleConflictMessage is the fixed popup message Web shows when an interface
+// falls into the abnormal multi-enabled state (requirement 6.5 / F4.6).
+const MockRuleConflictMessage = "不允许同一个接口同时开启多个 Mock 规则"
 
 // CaptureConfig carries the MockNetPack capture runtime configuration.
 // All values are server-side configuration items (requirement 决策 #14).
@@ -56,6 +65,7 @@ func DefaultCaptureConfig() CaptureConfig {
 type CaptureManager struct {
 	devices  DeviceStore
 	sessions CaptureSessionStore
+	rules    MockRuleStore
 	cfg      CaptureConfig
 	log      *slog.Logger
 
@@ -77,7 +87,7 @@ type CaptureManager struct {
 }
 
 // NewCaptureManager creates a capture manager backed by the given stores.
-func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, cfg CaptureConfig) *CaptureManager {
+func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules MockRuleStore, cfg CaptureConfig) *CaptureManager {
 	if cfg.HeartbeatTimeout <= 0 {
 		cfg.HeartbeatTimeout = DefaultCaptureConfig().HeartbeatTimeout
 	}
@@ -90,6 +100,7 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, cfg Ca
 	return &CaptureManager{
 		devices:  devices,
 		sessions: sessions,
+		rules:    rules,
 		cfg:      cfg,
 		log:      slog.Default(),
 		viewers:  make(map[string]map[string]capture.ViewerLease),
@@ -678,3 +689,200 @@ func (m *CaptureManager) activeSessionFor(ctx context.Context, app, did string) 
 
 // activeStatus is a shared pointer to the capturing session status used in filters.
 var activeStatus = capture.SessionStatusCapturing
+
+// ============================================================================
+// Mock rules (M3)
+// ============================================================================
+
+// interfaceKey identifies a mockable endpoint by Method + URL path (Query/Body
+// do not participate in matching, requirement 决策 #19).
+type interfaceKey struct {
+	method string
+	path   string
+}
+
+// enabledOnInterface returns the rules of (app, did) that are enabled and match
+// (method, path), excluding excludeID (used when the rule being edited is the
+// existing row).
+func (m *CaptureManager) enabledOnInterface(ctx context.Context, app, did, method, path, excludeID string) ([]*capture.MockRule, error) {
+	all, err := m.rules.List(ctx, &MockRuleFilter{App: app, Did: did})
+	if err != nil {
+		return nil, err
+	}
+	var out []*capture.MockRule
+	for _, r := range all {
+		if r.ID == excludeID {
+			continue
+		}
+		if r.Enabled && r.Method == method && r.Path == path {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// evaluateRules recomputes the runtime Effective flag for every rule of a device
+// and collects the abnormal multi-enabled interfaces. A rule is Effective only
+// when it is the sole enabled rule on its interface; an interface with >1
+// enabled rule mocks nothing and is reported as a conflict.
+func (m *CaptureManager) evaluateRules(ctx context.Context, app, did string) ([]*capture.MockRuleView, []capture.MockRuleConflict, int, error) {
+	all, err := m.rules.List(ctx, &MockRuleFilter{App: app, Did: did})
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	version, err := m.rules.GetRuleVersion(ctx, app, did)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	enabledCount := make(map[interfaceKey]int)
+	for _, r := range all {
+		if r.Enabled {
+			enabledCount[interfaceKey{r.Method, r.Path}]++
+		}
+	}
+
+	views := make([]*capture.MockRuleView, 0, len(all))
+	for _, r := range all {
+		eff := r.Enabled && enabledCount[interfaceKey{r.Method, r.Path}] == 1
+		c := *r
+		views = append(views, &capture.MockRuleView{MockRule: &c, Effective: eff})
+	}
+
+	var conflicts []capture.MockRuleConflict
+	for k, n := range enabledCount {
+		if n > 1 {
+			conflicts = append(conflicts, capture.MockRuleConflict{
+				Method:  k.method,
+				Path:    k.path,
+				Message: MockRuleConflictMessage,
+			})
+		}
+	}
+	return views, conflicts, version, nil
+}
+
+// CreateMockRule persists a new rule. When enabled=true it enforces the
+// single-active rule per interface: if another enabled rule already matches the
+// same Method+Path it returns ErrRuleConflict (409). Every write bumps the
+// device rule-set version.
+func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in *capture.MockRuleInput) (*capture.MockRuleView, int, error) {
+	now := time.Now()
+	if in.Enabled {
+		others, err := m.enabledOnInterface(ctx, app, did, in.Method, in.Path, "")
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(others) > 0 {
+			return nil, 0, ErrRuleConflict
+		}
+	}
+	rule := &capture.MockRule{
+		ID:        id.ULID(),
+		App:       app,
+		Did:       did,
+		Method:    in.Method,
+		Path:      in.Path,
+		Response:  in.Response,
+		Enabled:   in.Enabled,
+		Source:    in.Source,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := m.rules.Create(ctx, rule); err != nil {
+		return nil, 0, err
+	}
+	version, err := m.rules.BumpRuleVersion(ctx, app, did)
+	if err != nil {
+		return nil, 0, err
+	}
+	views, _, _, err := m.evaluateRules(ctx, app, did)
+	if err != nil {
+		return nil, version, err
+	}
+	for _, v := range views {
+		if v.ID == rule.ID {
+			return v, version, nil
+		}
+	}
+	return &capture.MockRuleView{MockRule: rule, Effective: in.Enabled}, version, nil
+}
+
+// UpdateMockRule edits a rule's content and/or enabled switch. Turning the
+// switch on is rejected with ErrRuleConflict if another enabled rule already
+// matches the (possibly new) Method+Path. Writes bump the rule-set version.
+func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID string, in *capture.MockRuleInput) (*capture.MockRuleView, int, error) {
+	existing, err := m.rules.Get(ctx, ruleID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, 0, ErrRuleNotFound
+		}
+		return nil, 0, err
+	}
+	if existing.App != app || existing.Did != did {
+		return nil, 0, ErrRuleNotFound
+	}
+
+	// Enforce single-active on the (possibly new) interface when enabling.
+	if in.Enabled && !existing.Enabled {
+		others, err := m.enabledOnInterface(ctx, app, did, in.Method, in.Path, ruleID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(others) > 0 {
+			return nil, 0, ErrRuleConflict
+		}
+	}
+
+	existing.Method = in.Method
+	existing.Path = in.Path
+	existing.Response = in.Response
+	existing.Enabled = in.Enabled
+	existing.Source = in.Source
+	existing.UpdatedAt = time.Now()
+	if err := m.rules.Update(ctx, existing); err != nil {
+		return nil, 0, err
+	}
+	version, err := m.rules.BumpRuleVersion(ctx, app, did)
+	if err != nil {
+		return nil, 0, err
+	}
+	views, _, _, err := m.evaluateRules(ctx, app, did)
+	if err != nil {
+		return nil, version, err
+	}
+	for _, v := range views {
+		if v.ID == ruleID {
+			return v, version, nil
+		}
+	}
+	return nil, version, ErrRuleNotFound
+}
+
+// ListMockRules returns every rule of the device (Web view, including disabled)
+// with the runtime Effective flag, the abnormal conflicts, and the current
+// rule-set version.
+func (m *CaptureManager) ListMockRules(ctx context.Context, app, did string) ([]*capture.MockRuleView, []capture.MockRuleConflict, int, error) {
+	return m.evaluateRules(ctx, app, did)
+}
+
+// ListActiveMockRules is the SDK pull. When the device rule-set version equals
+// sinceVersion nothing changed: it returns no rules and changed=false. Otherwise
+// it returns only the Effective rules (abnormal interfaces are excluded
+// entirely) and the new version.
+func (m *CaptureManager) ListActiveMockRules(ctx context.Context, app, did string, sinceVersion int) ([]*capture.MockRuleView, int, bool, error) {
+	views, _, version, err := m.evaluateRules(ctx, app, did)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if version == sinceVersion {
+		return nil, version, false, nil
+	}
+	active := make([]*capture.MockRuleView, 0, len(views))
+	for _, v := range views {
+		if v.Effective {
+			active = append(active, v)
+		}
+	}
+	return active, version, true, nil
+}

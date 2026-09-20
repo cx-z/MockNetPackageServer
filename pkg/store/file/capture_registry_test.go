@@ -19,7 +19,7 @@ func newCaptureManager(t *testing.T, timeout time.Duration) (*store.CaptureManag
 	if timeout > 0 {
 		cfg.HeartbeatTimeout = timeout
 	}
-	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), cfg)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), cfg)
 	t.Cleanup(m.Stop)
 	return m, fs
 }
@@ -273,7 +273,7 @@ func TestCaptureManager_ViewerLeaseExpiry_EndsSession(t *testing.T) {
 	cfg.HeartbeatTimeout = 5 * time.Second
 	cfg.ViewerTTL = 200 * time.Millisecond
 	fs := newTestStore(t)
-	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), cfg)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), cfg)
 	t.Cleanup(m.Stop)
 	ctx := context.Background()
 

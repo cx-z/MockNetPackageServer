@@ -223,3 +223,80 @@ type ServerConfig struct {
 	// considers the device offline and ends its capture session.
 	HeartbeatTimeoutSeconds int `json:"heartbeatTimeoutSeconds"`
 }
+
+// ============================================================================
+// Mock rules (M3)
+// ============================================================================
+
+// MockResponse is the canned response a MockRule returns when it matches
+// (contract MockResponse). Headers are single-valued by design (the contract
+// does not carry multi-value mock headers).
+type MockResponse struct {
+	StatusCode int               `json:"statusCode"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	Body       string            `json:"body,omitempty"`
+}
+
+// MockRuleSource is the persistent snapshot of the real request a rule was
+// created from ("Mock 此请求"): the original request plus the real response
+// b1. Temporary traffic is cleared at session end, but this snapshot persists
+// with the rule so the original vs. mocked values can be reviewed later
+// (requirement 6.6 / F3.4). A hand-authored rule (F4.1) has no source.
+type MockRuleSource struct {
+	Method          string              `json:"method"`
+	Path            string              `json:"path"`
+	URL             string              `json:"url,omitempty"`
+	Query           string              `json:"query,omitempty"`
+	RequestHeaders  map[string][]string `json:"requestHeaders,omitempty"`
+	RequestBody     string              `json:"requestBody,omitempty"`
+	StatusCode      *int                `json:"statusCode,omitempty"`
+	ResponseHeaders map[string][]string `json:"responseHeaders,omitempty"`
+	ResponseBody    *string             `json:"responseBody,omitempty"`
+	CapturedAt      time.Time           `json:"capturedAt"`
+}
+
+// MockRule is a persisted, device-scoped canned-response rule. It matches by
+// Method + URL path (Query/Body ignored); while a capture session is active the
+// SDK returns Response for matching requests. Enabled is the persisted user
+// switch; the runtime Effective flag is computed at read time (MockRuleView)
+// so an abnormal multi-enabled interface does not mock at all.
+type MockRule struct {
+	ID        string          `json:"id"`
+	App       string          `json:"app"`
+	Did       string          `json:"did"`
+	Method    string          `json:"method"`
+	Path      string          `json:"path"`
+	Response  MockResponse    `json:"response"`
+	Enabled   bool            `json:"enabled"`
+	Source    *MockRuleSource `json:"source,omitempty"`
+	CreatedAt time.Time       `json:"createdAt"`
+	UpdatedAt time.Time       `json:"updatedAt"`
+}
+
+// MockRuleInput is the create/update payload (contract MockRuleInput).
+type MockRuleInput struct {
+	Method   string          `json:"method"`
+	Path     string          `json:"path"`
+	Response MockResponse    `json:"response"`
+	Enabled  bool            `json:"enabled"`
+	Source   *MockRuleSource `json:"source,omitempty"`
+}
+
+// MockRuleView is the API output for a MockRule: the persisted rule plus the
+// server-computed runtime Effective flag. The SDK applies only Effective rules.
+type MockRuleView struct {
+	*MockRule
+	// Effective is true only when this rule is the sole enabled rule for its
+	// interface. In the abnormal multi-enabled state every rule on that
+	// interface is Effective=false and reported in conflicts.
+	Effective bool `json:"effective"`
+}
+
+// MockRuleConflict reports an abnormal state where more than one enabled rule
+// exists for the same interface; the whole interface is not mocked and Web shows
+// a popup (requirement 6.5 / F4.6).
+type MockRuleConflict struct {
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Message string `json:"message"`
+}
