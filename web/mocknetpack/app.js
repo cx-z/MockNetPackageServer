@@ -226,6 +226,7 @@ async function loadDetail() {
     }
 
     renderSessions(ses.sessions || [], cur);
+    loadRules();
 
     // 默认选中：当前抓包会话优先；否则最近一个历史会话。
     const pick = cur && cur.status === "capturing"
@@ -368,6 +369,9 @@ function renderTrafficDetail(e) {
 
   box.innerHTML =
     '<div class="detail-panel">' +
+      '<div class="d-actions">' +
+        '<button id="mockThisBtn" class="small">Mock 此请求</button>' +
+      "</div>" +
       '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
       '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
         (e.statusCode != null ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "") : "请求失败： " + esc(e.error || "")) +
@@ -382,6 +386,12 @@ function renderTrafficDetail(e) {
         (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
       '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(e.responseBody) || "（空）") + "</pre></div>" +
     "</div>";
+
+  const btn = box.querySelector("#mockThisBtn");
+  if (btn) {
+    btn.disabled = e.statusCode == null;  // 失败请求无回包可固化
+    btn.onclick = () => mockThisRequest(e);
+  }
 }
 
 function backToList() {
@@ -403,6 +413,154 @@ window.addEventListener("hashchange", () => {
     backToList();
   }
 });
+
+// ============================================================================
+// Mock 规则（M3.5）
+// ============================================================================
+
+async function loadRules() {
+  if (!detail) return;
+  const { app, did } = detail;
+  try {
+    const res = await fetch(API + "/devices/" + encodeURIComponent(app) + "/" + encodeURIComponent(did) + "/mock-rules");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    renderRules(data);
+  } catch (e) {
+    $("rulesInfo").textContent = "规则拉取失败";
+    $("rulesList").innerHTML = '<div class="empty">规则拉取失败：' + esc(e.message) + "</div>";
+  }
+}
+
+function renderRules(data) {
+  const rules = data.rules || [];
+  $("rulesInfo").textContent = "· 共 " + rules.length + " 条 · 版本 " + (data.version ?? 0);
+
+  // 异常态冲突报告（服务端固定文案）。
+  const cb = $("rulesConflict");
+  const conflicts = data.conflicts || [];
+  if (conflicts.length) {
+    cb.innerHTML = '<div class="c-title">⚠ 检测到接口冲突，以下接口暂不 Mock：</div>' +
+      conflicts.map((c) => '<div class="c-item">' + esc(c.method) + " " + esc(c.path) +
+        " — " + esc(c.message) + "</div>").join("");
+    cb.classList.remove("hidden");
+  } else {
+    cb.classList.add("hidden");
+  }
+
+  const box = $("rulesList");
+  if (!rules.length) {
+    box.innerHTML = '<div class="empty">暂无规则。在下方请求流选中一条请求，点「Mock 此请求」一键创建。</div>';
+    return;
+  }
+  box.innerHTML = "";
+  for (const r of rules) {
+    const el = document.createElement("div");
+    el.className = "rule-row" + (r.enabled ? "" : " disabled");
+    const effBadge = r.enabled
+      ? (r.effective ? '<span class="badge eff">生效中</span>' : '<span class="badge stopped">冲突未生效</span>')
+      : '<span class="badge stopped">已停用</span>';
+    el.innerHTML =
+      '<span class="method ' + methodCls(r.method) + '">' + esc(r.method) + "</span>" +
+      '<div class="r-body">' +
+        '<div class="r-line1">' + esc(r.path) + " " + effBadge + "</div>" +
+        '<div class="r-line2">回包 ' + (r.response && r.response.statusCode) +
+          (r.response && r.response.body ? " · " + esc(String(r.response.body).slice(0, 80)) : "") +
+          (r.source ? " · 来自抓包" : "") + "</div>" +
+      "</div>";
+
+    const sw = document.createElement("label");
+    sw.className = "switch";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !!r.enabled;
+    const slider = document.createElement("span");
+    slider.className = "slider";
+    sw.appendChild(input);
+    sw.appendChild(slider);
+    input.addEventListener("change", () => toggleRule(r, input.checked));
+    el.appendChild(sw);
+    box.appendChild(el);
+  }
+}
+
+async function toggleRule(rule, enabled) {
+  if (!detail) return;
+  try {
+    const res = await fetch(API + "/devices/" + encodeURIComponent(detail.app) + "/" +
+      encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(rule.id), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        method: rule.method,
+        path: rule.path,
+        response: rule.response,
+        enabled: enabled,
+        source: rule.source || undefined,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      // 409：同接口已有生效规则，弹窗提示固定文案。
+      showError((err && err.message) || "切换失败（HTTP " + res.status + "）");
+      await loadRules();   // 回滚开关显示
+      return;
+    }
+    await loadRules();
+  } catch (e) {
+    showError("切换失败：" + e.message);
+    await loadRules();
+  }
+}
+
+/** 请求流详情里的「Mock 此请求」：把这条真实请求/回包固化为一条规则（默认停用）。 */
+async function mockThisRequest(e) {
+  if (!detail) return;
+  const flatHeaders = (h) => {
+    const out = {};
+    for (const [k, arr] of Object.entries(h || {})) out[k] = Array.isArray(arr) ? arr.join(", ") : String(arr);
+    return out;
+  };
+  const input = {
+    method: e.method,
+    path: e.path,
+    response: {
+      statusCode: e.statusCode || 200,
+      headers: flatHeaders(e.responseHeaders),
+      body: e.responseBody || "",
+    },
+    enabled: false,
+    source: {
+      method: e.method,
+      path: e.path,
+      url: e.url,
+      query: e.query,
+      requestHeaders: e.requestHeaders,
+      requestBody: e.requestBody,
+      statusCode: e.statusCode,
+      responseHeaders: e.responseHeaders,
+      responseBody: e.responseBody,
+      capturedAt: e.timestamp,
+    },
+  };
+  try {
+    const res = await fetch(API + "/devices/" + encodeURIComponent(detail.app) + "/" +
+      encodeURIComponent(detail.did) + "/mock-rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      showError((err && err.message) || "创建规则失败（HTTP " + res.status + "）");
+      return;
+    }
+    showError("已创建规则（默认停用，到上方打开开关即可 Mock）");
+    await loadRules();
+  } catch (err) {
+    showError("创建规则失败：" + err.message);
+  }
+}
 
 // ============================================================================
 // viewer 租约（M1.6）
