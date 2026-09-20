@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.3.0
+  version: 0.4.0
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
     - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
@@ -11,7 +11,10 @@ info:
     - Mock 匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口的所有请求均命中。
     - 流量语义：全量抓包、会话内临时可见、会话结束清空（被 Mock 的请求持久化，M3 起）。
     - 推送通道：Web 请求流按 2s 轮询 GET /sessions/{id}/traffic 实现秒级可见（已定，不新增推送端点）。
-    - Mock 规则语义（M3）：规则=接口回包，Method+URL 路径匹配；同一接口运行时仅一条 effective=true（异常态多条 enabled 则该接口全部 effective=false、不回包，并在 MockRuleList.conflicts 上报前端弹窗）；规则持久化但 SDK 仅在抓包会话 capturing 期间应用，会话结束即停；"Mock 此请求"固化的真实请求快照（原始值+Mock 值）随规则持久化。
+    - Mock 规则语义（M3）：规则=接口回包，Method+URL 路径匹配；同一接口运行时仅一条 effective=true（异常态多条 enabled 则该接口全部 effective=false、不回包，并在 MockRuleList.conflicts 上报前端弹窗）；规则持久化但 SDK 仅在抓包会话 capturing 期间应用；"Mock 此请求"固化的真实请求快照（原始值+Mock 值）随规则持久化。
+    - 会话结束规则失效（M4，需求 6.6/F4.5/决策13）：抓包会话一旦结束（页面关闭/最后一个查看者释放/心跳超时/手动断开），服务端把该设备所有 enabled=true 的 Mock 规则批量置为 enabled=false 并 Bump 规则版本；规则不删除、仍在 Web 历史列表中，下次建立会话后由用户从历史规则手动一键重新启用。SDK 拉到的新规则集全为 disabled，不再自动生效。
+    - 7 天滑动清理（M4，F8.3/决策15）：Mock 规则及其 source 快照持久化保留，默认 7 天（服务端配置项），滑动窗口起点为 lastUsedAt。命中回包、Web 编辑保存、Web toggle 启停三类操作刷新 lastUsedAt；心跳/规则版本轮询/Web 纯浏览不刷新。过期规则连同其 source 快照自动删除。
+    - 协议解码器增强（M4）：SDK 暴露 setBodyDecoder 注入点，由各 App 把二进制私有协议（如 xcp）解成可读 UTF-8 文本；解码结果以 TrafficEntry.responseBodyDecoded / MockRuleSource.responseBodyDecoded 独立通道上传展示，原始 base64 仍只用于回放。
     - 实现状态：每个 path 用 x-milestone 标注实现阶段（m1/m2/m3/m4/m6），当前阶段之外的仅契约定义、未实现。
 
 servers:
@@ -184,6 +187,9 @@ paths:
       description: |
         结束会话：SDK 停止采集与 Mock；清空会话临时流量记录；设备回到待命。
         与"最后一个查看者释放"、"心跳超时"同为会话结束路径。
+        会话结束（任意路径）统一副作用：该设备所有 enabled=true 的 Mock 规则批量置为
+        enabled=false 并 Bump 规则版本（需求 6.6/F4.5/决策13），规则不删除、仍在历史列表，
+        下次建立会话后由用户手动一键重新启用。
       operationId: endSession
       parameters:
         - $ref: '#/components/parameters/SessionIdPath'
@@ -873,6 +879,12 @@ components:
         responseBodyBase64:
           type: string
           description: 二进制响应体的 base64（无法 UTF-8 解码时填充），供"Mock 此请求"回放原始字节；请求失败时为空
+        responseBodyDecoded:
+          type: string
+          description: |
+            响应体经 App 注入的协议解码器解出的可读 UTF-8 文本（M4）。
+            仅作 Web 展示；存在时 Web 优先展示它，无则回退 responseBody 的 "[binary N bytes]" 占位。
+            不参与回放——回放永远走 responseBodyBase64 原始字节；解码失败/未注入解码器时缺省。
         error:
           type: string
           nullable: true
@@ -976,6 +988,13 @@ components:
         updatedAt:
           type: string
           format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+          description: |
+            上一次"被使用"时间（M4，滑动清理窗口起点）。
+            命中回包、Web 编辑保存、Web toggle 启停三类操作刷新；心跳/版本轮询/纯浏览不刷新。
+            早于 now - retention（默认 7 天，配置项）的规则连同 source 快照自动删除。
 
     MockRuleSource:
       type: object
@@ -1021,6 +1040,11 @@ components:
         responseBodyBase64:
           type: string
           description: 二进制原始响应体 base64
+        responseBodyDecoded:
+          type: string
+          description: |
+            原始真实回包经 App 协议解码器解出的可读 UTF-8 文本（M4），随"Mock 此请求"快照固化，
+            供规则详情页对照查看；纯展示字段，不参与回放。
         capturedAt:
           type: string
           format: date-time
