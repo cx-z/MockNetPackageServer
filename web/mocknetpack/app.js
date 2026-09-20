@@ -507,7 +507,7 @@ function renderRules(data) {
   }
 }
 
-/** 渲染单条规则详情（状态码/响应头/回包体/来源快照）。 */
+/** 渲染单条规则详情（状态码/响应头/回包体/备注/来源快照）。 */
 function renderRuleDetail(r) {
   const box = $("ruleDetail");
   const headRows = (h) => Object.entries(h || {})
@@ -521,9 +521,12 @@ function renderRuleDetail(r) {
   const src = r.source;
   box.innerHTML =
     '<div class="detail-panel">' +
+      '<div class="d-actions"><button id="ruleEditBtn" class="small">编辑</button></div>' +
       '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc(r.path) + "</span></div>" +
       '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
         (r.enabled ? (r.effective ? "生效中" : "冲突未生效") : "已停用") + "</span></div>" +
+      '<div class="d-kv"><span class="d-k">备注</span><span class="d-v">' +
+        (r.note ? esc(r.note) : '<span style="color:var(--muted)">（未填写）</span>') + "</span></div>" +
       '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + "</span></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(resp.headers) || '<div class="d-v">—</div>') + "</div>" +
       '<div class="d-block"><div class="d-title">回包体</div><pre>' + esc(bodyDisp) + "</pre></div>" +
@@ -538,6 +541,84 @@ function renderRuleDetail(r) {
           "</div>"
         : "") +
     "</div>";
+  const editBtn = box.querySelector("#ruleEditBtn");
+  if (editBtn) editBtn.onclick = () => openEditRuleForm(r);
+}
+
+/** 编辑规则表单（M5）：回包状态码/响应头/回包体/备注可改；method/path 只读不可改。 */
+function openEditRuleForm(r) {
+  const box = $("ruleDetail");
+  const resp = r.response || {};
+  const headersText = Object.entries(resp.headers || {})
+    .map(([k, v]) => k + ": " + v).join("\n");
+  box.innerHTML =
+    '<div class="detail-panel">' +
+      '<div class="d-title">编辑规则 · ' + esc(r.method) + " " + esc(r.path) +
+      ' <span class="sub">（接口与匹配键不可改）</span></div>' +
+      '<div class="edit-row"><label>回包状态码</label>' +
+        '<input id="editStatusCode" type="number" class="filter-input" value="' + esc(resp.statusCode ?? 200) + '" /></div>' +
+      '<div class="edit-row"><label>响应头（每行一个「Key: Value」）</label>' +
+        '<textarea id="editHeaders" class="filter-input" rows="4">' + esc(headersText) + '</textarea></div>' +
+      '<div class="edit-row"><label>回包体（UTF-8 文本）' +
+        (resp.bodyBase64 ? ' <span class="sub">（原回包含二进制 base64；保存后将以文本回包为准）</span>' : '') +
+        '</label>' +
+        '<textarea id="editBody" class="filter-input" rows="8">' + esc(resp.body || "") + '</textarea></div>' +
+      '<div class="edit-row"><label>备注（必填）</label>' +
+        '<input id="editNote" type="text" class="filter-input" placeholder="说明这条规则的用途/场景" value="' + esc(r.note || "") + '" /></div>' +
+      '<div class="edit-actions">' +
+        '<button id="editCancelBtn" class="ghost small">取消</button>' +
+        '<button id="editSaveBtn" class="small">保存</button>' +
+      '</div>' +
+    "</div>";
+  $("editCancelBtn").onclick = () => renderRuleDetail(r);
+  $("editSaveBtn").onclick = () => saveRuleEdit(r);
+  $("editNote").focus();
+}
+
+/** 收集编辑表单 → PUT /mock-rules/{id} → 刷新。前端先做 note 非空拦截。 */
+async function saveRuleEdit(rule) {
+  if (!detail) return;
+  const statusCode = parseInt($("editStatusCode").value, 10);
+  if (!Number.isFinite(statusCode) || statusCode <= 0) {
+    showError("回包状态码必须是正整数"); return;
+  }
+  const note = $("editNote").value.trim();
+  if (!note) { showError("备注必填，请填写后再保存"); return; }
+
+  // 解析响应头文本：每行 "Key: Value"。
+  const headers = {};
+  for (const line of $("editHeaders").value.split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx <= 0) continue;
+    const k = line.slice(0, idx).trim();
+    const v = line.slice(idx + 1).trim();
+    if (k) headers[k] = v;
+  }
+
+  try {
+    const res = await fetch(API + "/devices/" + encodeURIComponent(detail.app) + "/" +
+      encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(rule.id), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      // M5: 不传 method/path/source；不传 enabled（保持当前开关）。
+      body: JSON.stringify({
+        response: { statusCode: statusCode, headers: headers, body: $("editBody").value },
+        note: note,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      showError((err && err.message) || "保存失败（HTTP " + res.status + "）");
+      return;
+    }
+    showError("已保存");
+    await loadRules();
+    // 找到刷新后的同 id 规则，重新渲染详情。
+    const fresh = (ruleStore || []).find((x) => x.id === rule.id);
+    if (fresh) renderRuleDetail(fresh);
+  } catch (e) {
+    showError("保存失败：" + e.message);
+  }
 }
 
 async function deleteRule(rule) {
@@ -563,17 +644,18 @@ async function toggleRule(rule, enabled) {
       encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(rule.id), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
+      // M5: edit body carries only response + note + enabled; method/path/source
+      // are immutable. note is required server-side — toggle sends the current
+      // note (a blank legacy rule is rejected and the error prompt steers to edit).
       body: JSON.stringify({
-        method: rule.method,
-        path: rule.path,
         response: rule.response,
+        note: rule.note || "",
         enabled: enabled,
-        source: rule.source || undefined,
       }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => null);
-      // 409：同接口已有生效规则，弹窗提示固定文案。
+      // 409：同接口已有生效规则，弹窗提示固定文案。400 + note 相关：老规则没备注。
       showError((err && err.message) || "切换失败（HTTP " + res.status + "）");
       await loadRules();   // 回滚开关显示
       return;
