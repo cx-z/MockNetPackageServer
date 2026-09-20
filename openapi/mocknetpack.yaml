@@ -849,6 +849,9 @@ components:
           description: |
             请求体：按 UTF-8 文本保存，超过 1MB 截断（M2 固定上限，不做配置项）；
             无法 UTF-8 解码的二进制内容以 "[binary N bytes]" 占位保存。
+        requestBodyBase64:
+          type: string
+          description: 二进制请求体的 base64（无法 UTF-8 解码时填充），供"Mock 此请求"回放原始字节
         statusCode:
           type: integer
           nullable: true
@@ -867,6 +870,9 @@ components:
           description: |
             响应体：按 UTF-8 文本保存，超过 1MB 截断（M2 固定上限，不做配置项）；
             无法 UTF-8 解码的二进制内容以 "[binary N bytes]" 占位保存；请求失败时为空。
+        responseBodyBase64:
+          type: string
+          description: 二进制响应体的 base64（无法 UTF-8 解码时填充），供"Mock 此请求"回放原始字节；请求失败时为空
         error:
           type: string
           nullable: true
@@ -926,7 +932,10 @@ components:
             type: string
         body:
           type: string
-          description: Mock 回包体
+          description: Mock 回包体（UTF-8 文本；二进制时仅为占位展示）
+        bodyBase64:
+          type: string
+          description: 二进制回包体的 base64；存在时 SDK 按原始字节回包，body 仅作展示
 
     MockRule:
       type: object
@@ -992,6 +1001,9 @@ components:
               type: string
         requestBody:
           type: string
+        requestBodyBase64:
+          type: string
+          description: 二进制原始请求体 base64
         statusCode:
           type: integer
           nullable: true
@@ -1006,6 +1018,9 @@ components:
         responseBody:
           type: string
           nullable: true
+        responseBodyBase64:
+          type: string
+          description: 二进制原始响应体 base64
         capturedAt:
           type: string
           format: date-time

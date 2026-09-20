@@ -192,14 +192,22 @@ type TrafficEntry struct {
 	Query string `json:"query,omitempty"`
 	// RequestHeaders are the request headers (multi-value).
 	RequestHeaders map[string][]string `json:"requestHeaders,omitempty"`
-	// RequestBody is the request body (truncated at a limit to be defined in M2).
+	// RequestBody is the request body as UTF-8 text when decodable; otherwise
+	// a "[binary N bytes]" display placeholder (see RequestBodyBase64).
 	RequestBody string `json:"requestBody,omitempty"`
+	// RequestBodyBase64 carries the raw request body bytes (base64) when it is
+	// not UTF-8 text, so "Mock 此请求" can replay the exact original bytes.
+	RequestBodyBase64 string `json:"requestBodyBase64,omitempty"`
 	// StatusCode is the response status code (zero when the request failed).
 	StatusCode int `json:"statusCode,omitempty"`
 	// ResponseHeaders are the response headers (multi-value).
 	ResponseHeaders map[string][]string `json:"responseHeaders,omitempty"`
-	// ResponseBody is the response body (truncated at a limit to be defined in M2).
+	// ResponseBody is the response body as UTF-8 text when decodable; otherwise
+	// a "[binary N bytes]" display placeholder (see ResponseBodyBase64).
 	ResponseBody string `json:"responseBody,omitempty"`
+	// ResponseBodyBase64 carries the raw response body bytes (base64) when it is
+	// not UTF-8 text, so a rule can replay the exact original bytes (M3 fix).
+	ResponseBodyBase64 string `json:"responseBodyBase64,omitempty"`
 	// Error is the error message when the request failed.
 	Error string `json:"error,omitempty"`
 	// DurationMs is the request duration in milliseconds.
@@ -234,7 +242,12 @@ type ServerConfig struct {
 type MockResponse struct {
 	StatusCode int               `json:"statusCode"`
 	Headers    map[string]string `json:"headers,omitempty"`
-	Body       string            `json:"body,omitempty"`
+	// Body is the canned response body as UTF-8 text.
+	Body string `json:"body,omitempty"`
+	// BodyBase64 carries the raw response bytes (base64) when the original body
+	// was binary (e.g. application/xcp). When present the SDK replays these
+	// exact bytes; Body is then only a display placeholder.
+	BodyBase64 string `json:"bodyBase64,omitempty"`
 }
 
 // MockRuleSource is the persistent snapshot of the real request a rule was
@@ -249,9 +262,11 @@ type MockRuleSource struct {
 	Query           string              `json:"query,omitempty"`
 	RequestHeaders  map[string][]string `json:"requestHeaders,omitempty"`
 	RequestBody     string              `json:"requestBody,omitempty"`
+	RequestBodyBase64 string            `json:"requestBodyBase64,omitempty"`
 	StatusCode      *int                `json:"statusCode,omitempty"`
 	ResponseHeaders map[string][]string `json:"responseHeaders,omitempty"`
 	ResponseBody    *string             `json:"responseBody,omitempty"`
+	ResponseBodyBase64 string           `json:"responseBodyBase64,omitempty"`
 	CapturedAt      time.Time           `json:"capturedAt"`
 }
 

@@ -528,6 +528,7 @@ async function mockThisRequest(e) {
       statusCode: e.statusCode || 200,
       headers: flatHeaders(e.responseHeaders),
       body: e.responseBody || "",
+      ...(e.responseBodyBase64 ? { bodyBase64: e.responseBodyBase64 } : {}),
     },
     enabled: false,
     source: {
@@ -537,9 +538,11 @@ async function mockThisRequest(e) {
       query: e.query,
       requestHeaders: e.requestHeaders,
       requestBody: e.requestBody,
+      ...(e.requestBodyBase64 ? { requestBodyBase64: e.requestBodyBase64 } : {}),
       statusCode: e.statusCode,
       responseHeaders: e.responseHeaders,
       responseBody: e.responseBody,
+      ...(e.responseBodyBase64 ? { responseBodyBase64: e.responseBodyBase64 } : {}),
       capturedAt: e.timestamp,
     },
   };
