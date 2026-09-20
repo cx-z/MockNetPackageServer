@@ -297,15 +297,35 @@ type MockRule struct {
 	// with their source snapshot. A zero value (legacy rows pre-M4) is treated
 	// as UpdatedAt by the janitor.
 	LastUsedAt time.Time `json:"lastUsedAt"`
+	// Note is the human-readable rule memo (M5). A single string, overwritten
+	// on each edit (no edit history). Optional at creation; required (non-blank)
+	// when editing via PUT. Pure admin-side field: never used for matching or
+	// pushed to the SDK. Empty string means no note (legacy rows pre-M5).
+	Note string `json:"note,omitempty"`
 }
 
-// MockRuleInput is the create/update payload (contract MockRuleInput).
+// MockRuleInput is the create payload (contract MockRuleInput). It carries the
+// match key (Method+Path) because create defines which interface the rule
+// targets. Edit uses UpdateMockRuleInput instead, so the match key is frozen.
 type MockRuleInput struct {
 	Method   string          `json:"method"`
 	Path     string          `json:"path"`
 	Response MockResponse    `json:"response"`
 	Enabled  bool            `json:"enabled"`
+	Note     string          `json:"note,omitempty"`
 	Source   *MockRuleSource `json:"source,omitempty"`
+}
+
+// UpdateMockRuleInput is the edit payload (contract UpdateMockRuleInput, M5).
+// Deliberately omits Method/Path (match key is immutable) and Source (snapshot
+// is read-only). Only the canned response, the note, and optionally the enabled
+// switch may change. Enabled is a pointer so "absent" means "leave as-is"; a
+// non-nil value flips the switch and triggers the single-active-per-interface
+// conflict check.
+type UpdateMockRuleInput struct {
+	Response MockResponse `json:"response"`
+	Note     string       `json:"note"`
+	Enabled  *bool        `json:"enabled,omitempty"`
 }
 
 // MockRuleView is the API output for a MockRule: the persisted rule plus the

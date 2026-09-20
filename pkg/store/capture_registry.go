@@ -854,6 +854,7 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 		Path:       in.Path,
 		Response:   in.Response,
 		Enabled:    in.Enabled,
+		Note:       in.Note,
 		Source:     in.Source,
 		CreatedAt:  now,
 		UpdatedAt:  now,
@@ -878,10 +879,13 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 	return &capture.MockRuleView{MockRule: rule, Effective: in.Enabled}, version, nil
 }
 
-// UpdateMockRule edits a rule's content and/or enabled switch. Turning the
-// switch on is rejected with ErrRuleConflict if another enabled rule already
-// matches the (possibly new) Method+Path. Writes bump the rule-set version.
-func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID string, in *capture.MockRuleInput) (*capture.MockRuleView, int, error) {
+// UpdateMockRule edits a rule's canned response, note, and/or enabled switch
+// (M5). The match key (Method+Path) and the source snapshot are immutable —
+// the input type UpdateMockRuleInput deliberately omits them. Turning the switch
+// on is rejected with ErrRuleConflict if another enabled rule already matches
+// the rule's (frozen) interface. An absent Enabled pointer leaves the current
+// switch untouched. Writes bump the rule-set version and refresh LastUsedAt.
+func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID string, in *capture.UpdateMockRuleInput) (*capture.MockRuleView, int, error) {
 	existing, err := m.rules.Get(ctx, ruleID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -893,9 +897,10 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 		return nil, 0, ErrRuleNotFound
 	}
 
-	// Enforce single-active on the (possibly new) interface when enabling.
-	if in.Enabled && !existing.Enabled {
-		others, err := m.enabledOnInterface(ctx, app, did, in.Method, in.Path, ruleID)
+	// Enforce single-active on the frozen interface when the edit turns the
+	// rule on (Enabled pointer present and true, while currently off).
+	if in.Enabled != nil && *in.Enabled && !existing.Enabled {
+		others, err := m.enabledOnInterface(ctx, app, did, existing.Method, existing.Path, ruleID)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -904,11 +909,11 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 		}
 	}
 
-	existing.Method = in.Method
-	existing.Path = in.Path
 	existing.Response = in.Response
-	existing.Enabled = in.Enabled
-	existing.Source = in.Source
+	existing.Note = in.Note
+	if in.Enabled != nil {
+		existing.Enabled = *in.Enabled
+	}
 	existing.UpdatedAt = time.Now()
 	// Editing a rule or toggling it counts as "used" (M4 sliding window).
 	existing.LastUsedAt = existing.UpdatedAt

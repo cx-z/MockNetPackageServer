@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/getmockd/mockd/pkg/capture"
 )
@@ -91,15 +92,21 @@ func (a *API) handleCreateMockRule(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateMockRule handles PUT /api/v1/devices/{app}/{did}/mock-rules/{ruleId}.
-// Edits content and/or flips the enabled switch; turning it on against another
-// enabled rule on the same interface returns 409.
+// Edits the canned response and note (match key Method+Path is immutable, M5);
+// optionally flips the enabled switch. Enabling against another enabled rule on
+// the same interface returns 409. note must be non-blank.
 func (a *API) handleUpdateMockRule(w http.ResponseWriter, r *http.Request) {
-	var in capture.MockRuleInput
+	var in capture.UpdateMockRuleInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSONDecodeError(w, err, a.logger())
 		return
 	}
-	if !validateMockRuleInput(w, &in) {
+	if in.Response.StatusCode <= 0 {
+		writeError(w, http.StatusBadRequest, "missing_field", "response.statusCode is required and must be positive")
+		return
+	}
+	if strings.TrimSpace(in.Note) == "" {
+		writeError(w, http.StatusBadRequest, "missing_field", "note is required and must be non-empty")
 		return
 	}
 

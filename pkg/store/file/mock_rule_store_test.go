@@ -19,6 +19,17 @@ func ruleInput(method, path string, enabled bool) *capture.MockRuleInput {
 	}
 }
 
+// updateInput builds an edit payload (M5 UpdateMockRuleInput). The match key
+// (method/path) is intentionally absent: it is immutable on edit. enabled may
+// be nil to leave the switch untouched.
+func updateInput(body, note string, enabled *bool) *capture.UpdateMockRuleInput {
+	return &capture.UpdateMockRuleInput{
+		Response: capture.MockResponse{StatusCode: 200, Body: body},
+		Note:     note,
+		Enabled:  enabled,
+	}
+}
+
 func TestMockRule_CreateVersionAndEffective(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
@@ -175,16 +186,15 @@ func TestMockRule_UpdateToggleConflict(t *testing.T) {
 	}
 
 	// Trying to enable r2 while r1 is enabled -> conflict.
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r2.ID, ruleInput("POST", "/api/a", true)); !errors.Is(err, store.ErrRuleConflict) {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r2.ID, updateInput(`{"ok":true}`, "edit r2", boolPtr(true))); !errors.Is(err, store.ErrRuleConflict) {
 		t.Errorf("enable r2 = %v, want ErrRuleConflict", err)
 	}
 	// Disable r1 first.
-	r1off := ruleInput("POST", "/api/a", false)
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r1.ID, r1off); err != nil {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r1.ID, updateInput(`{"ok":true}`, "disable r1", boolPtr(false))); err != nil {
 		t.Fatalf("disable r1 = %v", err)
 	}
 	// Now enabling r2 succeeds.
-	if updated, _, err := m.UpdateMockRule(ctx, "app", "d1", r2.ID, ruleInput("POST", "/api/a", true)); err != nil || !updated.Effective {
+	if updated, _, err := m.UpdateMockRule(ctx, "app", "d1", r2.ID, updateInput(`{"ok":true}`, "enable r2", boolPtr(true))); err != nil || !updated.Effective {
 		t.Errorf("enable r2 after r1 off = %v effective=%v; want ok", err, updated.Effective)
 	}
 }
@@ -224,11 +234,11 @@ func TestMockRule_UpdateNotFoundAndCrossDevice(t *testing.T) {
 		t.Fatalf("Create = %v", err)
 	}
 	// Unknown rule id.
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", "no-such", ruleInput("POST", "/api/a", true)); !errors.Is(err, store.ErrRuleNotFound) {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", "no-such", updateInput("x", "note", boolPtr(true))); !errors.Is(err, store.ErrRuleNotFound) {
 		t.Errorf("Update(unknown) = %v, want ErrRuleNotFound", err)
 	}
 	// Same id but a different device -> not found (isolation).
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d2", r.ID, ruleInput("POST", "/api/a", true)); !errors.Is(err, store.ErrRuleNotFound) {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d2", r.ID, updateInput("x", "note", boolPtr(true))); !errors.Is(err, store.ErrRuleNotFound) {
 		t.Errorf("Update(cross-device) = %v, want ErrRuleNotFound", err)
 	}
 }
@@ -252,7 +262,7 @@ func TestMockRule_LastUsedAt_CreateAndEdit(t *testing.T) {
 
 	editedAt := view.LastUsedAt
 	time.Sleep(5 * time.Millisecond)
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", view.ID, ruleInput("POST", "/api/a", false)); err != nil {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", view.ID, updateInput(`{"ok":true}`, "edited note", boolPtr(false))); err != nil {
 		t.Fatalf("Update = %v", err)
 	}
 	views, _, _, err := m.ListMockRules(ctx, "app", "d1")
@@ -380,5 +390,51 @@ func TestMockRule_SessionEndDisablesRules(t *testing.T) {
 	_ = r1
 	if ver <= 2 {
 		t.Errorf("expected rule version bumped on disable, got %d", ver)
+	}
+}
+
+// --- M5: note persistence & immutable match key ------------------------------
+
+func TestMockRule_UpdateNoteAndKeepEnabled(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	// Create a disabled rule with no note (M4-era legacy row).
+	r, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false))
+	if err != nil {
+		t.Fatalf("Create = %v", err)
+	}
+	if r.Note != "" {
+		t.Fatalf("expected empty note on create, got %q", r.Note)
+	}
+
+	// Edit: change the body and set a note; OMIT enabled so the switch stays
+	// off (the contract: absent Enabled pointer = leave as-is).
+	edited, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID,
+		updateInput(`{"edited":true}`, "debugging feed list", nil))
+	if err != nil {
+		t.Fatalf("Update = %v", err)
+	}
+	if edited.Note != "debugging feed list" {
+		t.Errorf("note not persisted: got %q", edited.Note)
+	}
+	if edited.Response.Body != `{"edited":true}` {
+		t.Errorf("response body not updated: got %q", edited.Response.Body)
+	}
+	if edited.Enabled {
+		t.Errorf("enabled must stay false when Enabled pointer is absent")
+	}
+	// Match key must be untouched.
+	if edited.Method != "POST" || edited.Path != "/api/a" {
+		t.Errorf("match key mutated: %s %s", edited.Method, edited.Path)
+	}
+
+	// List round-trips the note.
+	views, _, _, err := m.ListMockRules(ctx, "app", "d1")
+	if err != nil || len(views) != 1 {
+		t.Fatalf("List = %v %v", views, err)
+	}
+	if views[0].Note != "debugging feed list" {
+		t.Errorf("listed note = %q", views[0].Note)
 	}
 }
