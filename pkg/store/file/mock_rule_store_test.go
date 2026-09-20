@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/getmockd/mockd/pkg/capture"
 	"github.com/getmockd/mockd/pkg/store"
@@ -233,3 +234,102 @@ func TestMockRule_UpdateNotFoundAndCrossDevice(t *testing.T) {
 }
 
 func intPtr(i int) *int { return &i }
+
+// --- M4.2: sliding-window retention & lastUsedAt -----------------------------
+
+func TestMockRule_LastUsedAt_CreateAndEdit(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	before := time.Now()
+	view, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true))
+	if err != nil {
+		t.Fatalf("Create = %v", err)
+	}
+	if view.LastUsedAt.Before(before) {
+		t.Fatalf("created LastUsedAt not set: %v", view.LastUsedAt)
+	}
+
+	editedAt := view.LastUsedAt
+	time.Sleep(5 * time.Millisecond)
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", view.ID, ruleInput("POST", "/api/a", false)); err != nil {
+		t.Fatalf("Update = %v", err)
+	}
+	views, _, _, err := m.ListMockRules(ctx, "app", "d1")
+	if err != nil || len(views) != 1 {
+		t.Fatalf("List = %v %v", views, err)
+	}
+	if !views[0].LastUsedAt.After(editedAt) {
+		t.Errorf("edit did not refresh LastUsedAt: was=%v now=%v", editedAt, views[0].LastUsedAt)
+	}
+}
+
+func TestMockRule_Janitor_PurgesExpired(t *testing.T) {
+	fs := newTestStore(t)
+	cfg := store.DefaultCaptureConfig()
+	cfg.MockRuleRetention = 50 * time.Millisecond
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), cfg)
+	t.Cleanup(m.Stop)
+	ctx := context.Background()
+
+	fresh, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/fresh", true))
+	if err != nil {
+		t.Fatalf("Create fresh = %v", err)
+	}
+	stale, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/stale", true))
+	if err != nil {
+		t.Fatalf("Create stale = %v", err)
+	}
+	// Backdate the stale rule so it falls outside the retention window.
+	backdated := *stale.MockRule
+	backdated.LastUsedAt = time.Now().Add(-1 * time.Hour)
+	if err := fs.MockRules().Update(ctx, &backdated); err != nil {
+		t.Fatalf("backdate = %v", err)
+	}
+
+	m.PurgeExpiredRules(ctx)
+
+	views, _, _, err := m.ListMockRules(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("List = %v", err)
+	}
+	if len(views) != 1 || views[0].ID != fresh.ID {
+		t.Fatalf("want only fresh rule kept, got %d rules", len(views))
+	}
+}
+
+func TestMockRule_HitTouchesLastUsedAt(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("Register = %v", err)
+	}
+	sess, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("Activate = %v", err)
+	}
+	rule, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/hit", true))
+	if err != nil {
+		t.Fatalf("Create = %v", err)
+	}
+	oldUsed := rule.LastUsedAt
+	time.Sleep(5 * time.Millisecond)
+
+	now := time.Now()
+	hit := &capture.TrafficEntry{
+		Method: "POST", URL: "http://x/api/hit", Path: "/api/hit",
+		Timestamp: now, Mocked: true, StatusCode: 200,
+	}
+	if _, err := m.UploadTraffic(ctx, "app", "d1", sess.ID, []*capture.TrafficEntry{hit}); err != nil {
+		t.Fatalf("Upload = %v", err)
+	}
+
+	views, _, _, err := m.ListMockRules(ctx, "app", "d1")
+	if err != nil || len(views) != 1 {
+		t.Fatalf("List = %v %v", views, err)
+	}
+	if !views[0].LastUsedAt.After(oldUsed) {
+		t.Errorf("mocked hit did not refresh LastUsedAt: old=%v now=%v", oldUsed, views[0].LastUsedAt)
+	}
+}

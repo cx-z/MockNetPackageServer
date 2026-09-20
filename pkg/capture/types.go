@@ -286,6 +286,13 @@ type MockRule struct {
 	Source    *MockRuleSource `json:"source,omitempty"`
 	CreatedAt time.Time       `json:"createdAt"`
 	UpdatedAt time.Time       `json:"updatedAt"`
+	// LastUsedAt is the sliding-window cleanup baseline (M4, F8.3/决策15).
+	// Refreshed when the rule is hit, edited via Web, or toggled on/off;
+	// heartbeats, version polling and passive browsing do not refresh it.
+	// Rules older than the retention (default 7 days, config item) are purged
+	// with their source snapshot. A zero value (legacy rows pre-M4) is treated
+	// as UpdatedAt by the janitor.
+	LastUsedAt time.Time `json:"lastUsedAt"`
 }
 
 // MockRuleInput is the create/update payload (contract MockRuleInput).

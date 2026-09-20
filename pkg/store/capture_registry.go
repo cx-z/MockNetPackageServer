@@ -44,15 +44,20 @@ type CaptureConfig struct {
 	// ViewerTTL is the lease TTL granted to Web page viewers; viewers renew
 	// periodically and expired leases are garbage-collected.
 	ViewerTTL time.Duration
+	// MockRuleRetention is how long persisted mock rules (and their source
+	// snapshots) are kept since their last use before being purged (M4,
+	// F8.3/决策15, sliding window).
+	MockRuleRetention time.Duration
 }
 
 // DefaultCaptureConfig returns the default capture configuration
-// (heartbeat 20s advised / 60s timeout, viewer lease 120s).
+// (heartbeat 20s advised / 60s timeout, viewer lease 120s, rule retention 7d).
 func DefaultCaptureConfig() CaptureConfig {
 	return CaptureConfig{
 		HeartbeatInterval: 20 * time.Second,
 		HeartbeatTimeout:  60 * time.Second,
 		ViewerTTL:         120 * time.Second,
+		MockRuleRetention: 7 * 24 * time.Hour,
 	}
 }
 
@@ -96,6 +101,9 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules 
 	}
 	if cfg.ViewerTTL <= 0 {
 		cfg.ViewerTTL = DefaultCaptureConfig().ViewerTTL
+	}
+	if cfg.MockRuleRetention <= 0 {
+		cfg.MockRuleRetention = DefaultCaptureConfig().MockRuleRetention
 	}
 	return &CaptureManager{
 		devices:  devices,
@@ -412,7 +420,49 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 	if err := m.sessions.Update(ctx, &sc); err != nil {
 		return 0, err
 	}
+
+	// M4: a mocked upload is proof the rule was hit; refresh its LastUsedAt so
+	// the sliding cleanup window starts over. Heartbeats/polling don't reach here.
+	if hits := collectHits(stored); len(hits) > 0 {
+		m.touchHitRules(ctx, app, did, hits)
+	}
 	return len(stored), nil
+}
+
+// collectHits returns the set of (method, path) interfaces that were actually
+// mocked in this batch (deduplicated).
+func collectHits(entries []*capture.TrafficEntry) map[interfaceKey]bool {
+	hits := make(map[interfaceKey]bool)
+	for _, e := range entries {
+		if e.Mocked {
+			hits[interfaceKey{method: e.Method, path: e.Path}] = true
+		}
+	}
+	return hits
+}
+
+// touchHitRules refreshes LastUsedAt of every enabled rule matching a hit
+// interface. It is best-effort: store errors are logged, never propagated to
+// the traffic upload path.
+func (m *CaptureManager) touchHitRules(ctx context.Context, app, did string, hits map[interfaceKey]bool) {
+	all, err := m.rules.List(ctx, &MockRuleFilter{App: app, Did: did})
+	if err != nil {
+		m.log.Warn("rule janitor: list rules for hit-touch failed", "error", err)
+		return
+	}
+	now := time.Now()
+	for _, r := range all {
+		if !r.Enabled {
+			continue
+		}
+		if !hits[interfaceKey{method: r.Method, path: r.Path}] {
+			continue
+		}
+		r.LastUsedAt = now
+		if err := m.rules.Update(ctx, r); err != nil {
+			m.log.Warn("rule janitor: touch hit rule failed", "rule", r.ID, "error", err)
+		}
+	}
 }
 
 // ListSessionTraffic returns a session's traffic entries in arrival order
@@ -574,6 +624,8 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 
 		ticker := time.NewTicker(m.cfg.HeartbeatTimeout / 2)
 		defer ticker.Stop()
+		ruleTicker := time.NewTicker(time.Hour)
+		defer ruleTicker.Stop()
 
 		for {
 			select {
@@ -584,6 +636,8 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 			case <-ticker.C:
 				m.checkDeviceHealth(ctx)
 				m.checkViewerLeases(ctx)
+			case <-ruleTicker.C:
+				m.PurgeExpiredRules(ctx)
 			}
 		}
 	}()
@@ -778,16 +832,17 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 		}
 	}
 	rule := &capture.MockRule{
-		ID:        id.ULID(),
-		App:       app,
-		Did:       did,
-		Method:    in.Method,
-		Path:      in.Path,
-		Response:  in.Response,
-		Enabled:   in.Enabled,
-		Source:    in.Source,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         id.ULID(),
+		App:        app,
+		Did:        did,
+		Method:     in.Method,
+		Path:       in.Path,
+		Response:   in.Response,
+		Enabled:    in.Enabled,
+		Source:     in.Source,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		LastUsedAt: now,
 	}
 	if err := m.rules.Create(ctx, rule); err != nil {
 		return nil, 0, err
@@ -840,6 +895,8 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 	existing.Enabled = in.Enabled
 	existing.Source = in.Source
 	existing.UpdatedAt = time.Now()
+	// Editing a rule or toggling it counts as "used" (M4 sliding window).
+	existing.LastUsedAt = existing.UpdatedAt
 	if err := m.rules.Update(ctx, existing); err != nil {
 		return nil, 0, err
 	}
@@ -911,4 +968,56 @@ func (m *CaptureManager) ListActiveMockRules(ctx context.Context, app, did strin
 // updated rule snapshot.
 func (m *CaptureManager) RuleVersion(ctx context.Context, app, did string) (int, error) {
 	return m.rules.GetRuleVersion(ctx, app, did)
+}
+
+// ============================================================================
+// Rule retention janitor (M4)
+// ============================================================================
+
+// ruleUsageTime picks the sliding-window baseline for a rule: LastUsedAt,
+// falling back to UpdatedAt (and then CreatedAt) for legacy rows that predate
+// M4 and have no LastUsedAt persisted yet.
+func ruleUsageTime(r *capture.MockRule) time.Time {
+	if !r.LastUsedAt.IsZero() {
+		return r.LastUsedAt
+	}
+	if !r.UpdatedAt.IsZero() {
+		return r.UpdatedAt
+	}
+	return r.CreatedAt
+}
+
+// PurgeExpiredRules deletes every mock rule whose last use is older than the
+// configured retention (default 7d, sliding window). A deleted rule bumps its
+// device rule-set version so the SDK drops it from its local snapshot on the
+// next heartbeat. Best-effort: per-rule errors are logged, not fatal.
+func (m *CaptureManager) PurgeExpiredRules(ctx context.Context) {
+	if m.cfg.MockRuleRetention <= 0 {
+		return
+	}
+	all, err := m.rules.List(ctx, nil)
+	if err != nil {
+		m.log.Warn("rule janitor: list rules failed", "error", err)
+		return
+	}
+	now := time.Now()
+	bumped := make(map[string]bool) // (app\0did) already bumped
+	for _, r := range all {
+		if now.Sub(ruleUsageTime(r)) <= m.cfg.MockRuleRetention {
+			continue
+		}
+		if err := m.rules.Delete(ctx, r.ID); err != nil {
+			m.log.Warn("rule janitor: delete expired rule failed", "rule", r.ID, "error", err)
+			continue
+		}
+		key := r.App + "\x00" + r.Did
+		if !bumped[key] {
+			if _, err := m.rules.BumpRuleVersion(ctx, r.App, r.Did); err != nil {
+				m.log.Warn("rule janitor: bump version failed", "app", r.App, "did", r.Did, "error", err)
+			}
+			bumped[key] = true
+		}
+		m.log.Info("rule janitor: purged expired mock rule",
+			"rule", r.ID, "method", r.Method, "path", r.Path, "lastUsedAt", ruleUsageTime(r))
+	}
 }

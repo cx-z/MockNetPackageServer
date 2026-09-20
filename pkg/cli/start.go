@@ -35,6 +35,7 @@ var (
 	// MockNetPack capture configuration (seconds; 0 = server default).
 	startCaptureHeartbeatInterval int
 	startCaptureHeartbeatTimeout  int
+	startCaptureRuleRetentionDays int
 	startWebDir                   string
 )
 
@@ -145,6 +146,7 @@ func init() {
 
 	// MockNetPack capture flags (seconds; 0 = server default 20s/60s)
 	startCmd.Flags().IntVar(&startCaptureHeartbeatInterval, "capture-heartbeat-interval", 0, "MockNetPack SDK heartbeat interval in seconds (default 20)")
+	startCmd.Flags().IntVar(&startCaptureRuleRetentionDays, "capture-rule-retention-days", 0, "MockNetPack mock rule retention in days (default 7; sliding window since last use)")
 	startCmd.Flags().IntVar(&startCaptureHeartbeatTimeout, "capture-heartbeat-timeout", 0, "MockNetPack heartbeat timeout in seconds (default 60)")
 	startCmd.Flags().StringVar(&startWebDir, "web-dir", "", "MockNetPack web UI directory (default web/mocknetpack)")
 }
@@ -254,10 +256,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if sf.DataDir != "" {
 		adminOpts = append(adminOpts, admin.WithDataDir(sf.DataDir))
 	}
-	if startCaptureHeartbeatInterval > 0 || startCaptureHeartbeatTimeout > 0 {
+	if startCaptureHeartbeatInterval > 0 || startCaptureHeartbeatTimeout > 0 || startCaptureRuleRetentionDays > 0 {
+		var retention time.Duration
+		if startCaptureRuleRetentionDays > 0 {
+			retention = time.Duration(startCaptureRuleRetentionDays) * 24 * time.Hour
+		}
 		adminOpts = append(adminOpts, admin.WithCaptureConfig(store.CaptureConfig{
 			HeartbeatInterval: time.Duration(startCaptureHeartbeatInterval) * time.Second,
 			HeartbeatTimeout:  time.Duration(startCaptureHeartbeatTimeout) * time.Second,
+			MockRuleRetention: retention,
 		}))
 	}
 	if startWebDir != "" {
