@@ -551,6 +551,12 @@ function openEditRuleForm(r) {
   const resp = r.response || {};
   const headersText = Object.entries(resp.headers || {})
     .map(([k, v]) => k + ": " + v).join("\n");
+  // 回包体缺省值：文本规则直接用 response.body；二进制规则的 response.body 是
+  // "[binary N bytes]" 占位符，改用抓包快照里解码器解出的可读文本（M4）作为缺省值。
+  let bodyDefault = resp.body || "";
+  if ((!bodyDefault || bodyDefault.startsWith("[binary")) && r.source && r.source.responseBodyDecoded) {
+    bodyDefault = r.source.responseBodyDecoded;
+  }
   box.innerHTML =
     '<div class="detail-panel">' +
       '<div class="d-title">编辑规则 · ' + esc(r.method) + " " + esc(r.path) +
@@ -560,9 +566,9 @@ function openEditRuleForm(r) {
       '<div class="edit-row"><label>响应头（每行一个「Key: Value」）</label>' +
         '<textarea id="editHeaders" class="filter-input" rows="4">' + esc(headersText) + '</textarea></div>' +
       '<div class="edit-row"><label>回包体（UTF-8 文本）' +
-        (resp.bodyBase64 ? ' <span class="sub">（原回包含二进制 base64；保存后将以文本回包为准）</span>' : '') +
+        (resp.bodyBase64 ? ' <span class="sub">（原回包为二进制；已载入抓包解码文本作为缺省值，保存后将以文本回包为准）</span>' : '') +
         '</label>' +
-        '<textarea id="editBody" class="filter-input" rows="8">' + esc(resp.body || "") + '</textarea></div>' +
+        '<textarea id="editBody" class="filter-input" rows="8">' + esc(bodyDefault) + '</textarea></div>' +
       '<div class="edit-row"><label>备注（必填）</label>' +
         '<input id="editNote" type="text" class="filter-input" placeholder="说明这条规则的用途/场景" value="' + esc(r.note || "") + '" /></div>' +
       '<div class="edit-actions">' +
