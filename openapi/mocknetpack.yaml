@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.2.0
+  version: 0.3.0
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
     - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
@@ -11,6 +11,7 @@ info:
     - Mock 匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口的所有请求均命中。
     - 流量语义：全量抓包、会话内临时可见、会话结束清空（被 Mock 的请求持久化，M3 起）。
     - 推送通道：Web 请求流按 2s 轮询 GET /sessions/{id}/traffic 实现秒级可见（已定，不新增推送端点）。
+    - Mock 规则语义（M3）：规则=接口回包，Method+URL 路径匹配；同一接口运行时仅一条 effective=true（异常态多条 enabled 则该接口全部 effective=false、不回包，并在 MockRuleList.conflicts 上报前端弹窗）；规则持久化但 SDK 仅在抓包会话 capturing 期间应用，会话结束即停；"Mock 此请求"固化的真实请求快照（原始值+Mock 值）随规则持久化。
     - 实现状态：每个 path 用 x-milestone 标注实现阶段（m1/m2/m3/m4/m6），当前阶段之外的仅契约定义、未实现。
 
 servers:
@@ -68,7 +69,9 @@ paths:
         SDK 周期调用（服务端配置，默认建议 15~20s）。兼作三类信号：
         1) 保活：服务端连续超过心跳超时阈值（默认 60s，配置项）未收到即判定设备离线并结束抓包会话；
         2) 会话状态下发：响应携带当前激活会话（若有），SDK 据此启停采集/Mock；
-        3) 规则版本下发（M3 启用）：规则版本变化后 SDK 拉取增量。
+        3) 规则版本下发（M3 启用）：响应 rulesVersion 为本设备规则集单调递增版本号；SDK 比对本地版本，不一致时带 sinceVersion 拉取增量。
+        规则应用边界（M3）：SDK 仅在本心跳 session 非空（capturing）时应用拉到的规则；session 变 null（会话结束）即清空当前生效集、全部直连。
+        fail-open（M3 定案 A）：从未成功拉到规则 → 不 Mock 全直连；已有成功快照后某次拉取失败 → 沿用上一份成功快照继续 Mock，下次心跳再试；任何情况下业务请求不被阻断。
         设备未注册时返回 404，SDK 应重新注册。
       operationId: deviceHeartbeat
       parameters:
@@ -249,7 +252,8 @@ paths:
         部分接受：entries 中字段不合法的条目被丢弃、合法条目正常入库，响应 count = 实际接受数；
         全部条目不合法返回 400。
         临时语义：本会话流量仅会话存续期间可见，会话结束（页面关闭 / 心跳超时 / 强制断开）即清空；
-        被 Mock 的请求（原始值 + Mock 值）持久化（M3 起）。
+        命中 Mock 的请求仍按临时流量上传（mocked=true，其响应即 Mock 回包），随会话结束一并清空；
+        持久化保留的是规则及其 source 快照（原始值+Mock 值），不是每条命中流量。
         仅接受激活会话内的流量：sessionId 不存在 → 404 session_not_found；会话已结束 → 409 session_ended。
       operationId: uploadTraffic
       requestBody:
@@ -351,9 +355,10 @@ paths:
       x-milestone: m3
       summary: 规则下发（SDK 拉取） / 规则列表（Web）
       description: |
-        SDK 侧：携带 sinceVersion 增量拉取本设备生效规则；version 为单调递增版本号，规则变更即 +1。
-        Web 侧：不带 sinceVersion，返回本设备全部规则（含停用）。
-        匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口同时仅一条生效（前端互斥 + 服务端兜底：多条生效时该接口不 Mock 并下发提示）。
+        SDK 侧：携带 sinceVersion 增量拉取本设备运行时生效规则；version 为单调递增版本号，规则变更（创建/编辑/启停/删除）即 +1。
+        仅返回 effective=true 的规则供 SDK 回包（异常态同接口多条 enabled 时该接口规则全部 effective=false、不出现在 SDK 集）。
+        Web 侧：不带 sinceVersion，返回本设备全部规则（含停用、含 source 快照），并附带 conflicts 异常态报告。
+        匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口同时仅一条生效（前端互斥 + 服务端兜底：多条生效时该接口不 Mock 并在 conflicts 下发前端弹窗）。
       operationId: listMockRules
       parameters:
         - $ref: '#/components/parameters/AppPath'
@@ -376,7 +381,9 @@ paths:
       tags: [mock-rules]
       x-milestone: m3
       summary: 创建 Mock 回包规则（含"从真实回包一键创建"）
-      description: 创建时默认 enabled=false；同一接口（Method+Path）允许多条保存，但仅一条可生效。
+      description: |
+        创建时默认 enabled=false；同一接口（Method+Path）允许多条保存，但运行时仅一条 effective。
+        "从真实回包一键创建"：Web 把整条已抓包 TrafficEntry 作为 source 快照传入（原始请求 + 真实回包 b1），服务端随规则持久化（临时流量会话结束即清空，快照保留）；手动创建（F4.1）可省略 source。
       operationId: createMockRule
       parameters:
         - $ref: '#/components/parameters/AppPath'
@@ -402,7 +409,7 @@ paths:
   /devices/{app}/{did}/mock-rules/{ruleId}:
     put:
       tags: [mock-rules]
-      x-milestone: m4
+      x-milestone: m3
       summary: 更新规则（编辑内容 / 启停）
       description: 同一接口仅一条生效的服务端兜底在此执行：若置为启用时发现同接口已有其他生效规则，返回 409（前端应先做开关互斥）。
       operationId: updateMockRule
@@ -923,7 +930,7 @@ components:
 
     MockRule:
       type: object
-      required: [id, app, did, method, path, response, enabled, createdAt, updatedAt]
+      required: [id, app, did, method, path, response, enabled, effective, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -943,13 +950,66 @@ components:
           $ref: '#/components/schemas/MockResponse'
         enabled:
           type: boolean
-          description: 是否生效（同一接口仅一条可生效）
+          description: 用户开关（持久化；前端互斥：同接口同时仅一个开）
+        effective:
+          type: boolean
+          default: true
+          description: |
+            服务端计算的运行时生效态。SDK 仅对 effective=true 的规则回包。
+            正常态 enabled==effective；当同接口存在多条 enabled（异常态）时，该接口全部规则 effective=false（不回包、走真实通道），并在 MockRuleList.conflicts 报告。
+        source:
+          $ref: '#/components/schemas/MockRuleSource'
+          nullable: true
+          description: 规则所依据的真实请求快照（只读；"Mock 此请求"创建时固化，手动创建为 null）
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
+
+    MockRuleSource:
+      type: object
+      description: |
+        该规则所依据的真实请求快照（"Mock 此请求"时从一条已抓包 TrafficEntry 固化）。
+        临时流量随会话结束清空，此快照随规则持久化保留（需求 6.6/F3.4），供后续查看原始值与 Mock 值对照；手动创建的规则为 null。
+      required: [method, path, capturedAt]
+      properties:
+        method:
+          type: string
+        path:
+          type: string
+        url:
+          type: string
+          description: 完整原始请求 URL
+        query:
+          type: string
+        requestHeaders:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        requestBody:
+          type: string
+        statusCode:
+          type: integer
+          nullable: true
+          description: 原始真实回包状态码（请求失败时为空）
+        responseHeaders:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          nullable: true
+        responseBody:
+          type: string
+          nullable: true
+        capturedAt:
+          type: string
+          format: date-time
+          description: 该真实请求被抓包的时间
 
     MockRuleInput:
       type: object
@@ -964,6 +1024,12 @@ components:
         enabled:
           type: boolean
           default: false
+        source:
+          $ref: '#/components/schemas/MockRuleSource'
+          nullable: true
+          description: |
+            "Mock 此请求"时由 Web 传入的原始真实请求/回包快照（以真实回包 b1 为模板）。
+            手动创建规则可省略；服务端原样持久化，不参与匹配。
 
     MockRuleList:
       type: object
@@ -976,6 +1042,22 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MockRule'
+        conflicts:
+          type: array
+          description: |
+            异常态报告（仅 Web 全量列表返回）：当前存在"同一接口多条规则同时 enabled"的接口列表。
+            Web 拉到非空即按 message 弹窗提示；这些接口的规则 effective=false，SDK 不回包。
+          items:
+            type: object
+            required: [method, path, message]
+            properties:
+              method:
+                type: string
+              path:
+                type: string
+              message:
+                type: string
+                example: "不允许同一个接口同时开启多个 Mock 规则"
 
     # ----------------------------------------------------------------- 错误
     ErrorResponse:
