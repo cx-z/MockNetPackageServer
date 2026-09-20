@@ -164,12 +164,17 @@ func (a *API) handleDeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeCaptureError(w, err)
 		return
 	}
+	rulesVersion, err := a.captureManager.RuleVersion(r.Context(), app, did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, HeartbeatResponse{
 		OK:           true,
 		ServerTime:   time.Now(),
 		ServerConfig: a.captureManager.ServerConfig(),
 		Session:      session,
-		RulesVersion: 0, // mock rules land in M3
+		RulesVersion: rulesVersion,
 	})
 }
 
@@ -393,6 +398,10 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "session_ended", "Capture session has ended")
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "Resource not found")
+	case errors.Is(err, store.ErrRuleNotFound):
+		writeError(w, http.StatusNotFound, "rule_not_found", "Mock rule not found")
+	case errors.Is(err, store.ErrRuleConflict):
+		writeError(w, http.StatusConflict, "rule_conflict", store.MockRuleConflictMessage)
 	case errors.Is(err, store.ErrAlreadyExists):
 		writeError(w, http.StatusConflict, "already_exists", "Resource already exists")
 	case errors.Is(err, store.ErrReadOnly):

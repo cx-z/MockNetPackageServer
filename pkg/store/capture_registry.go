@@ -886,3 +886,10 @@ func (m *CaptureManager) ListActiveMockRules(ctx context.Context, app, did strin
 	}
 	return active, version, true, nil
 }
+
+// RuleVersion returns the current monotonic rule-set version for (app, did).
+// Used by the device heartbeat to tell the SDK whether it should pull an
+// updated rule snapshot.
+func (m *CaptureManager) RuleVersion(ctx context.Context, app, did string) (int, error) {
+	return m.rules.GetRuleVersion(ctx, app, did)
+}
