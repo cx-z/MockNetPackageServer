@@ -63,6 +63,13 @@ type CaptureManager struct {
 	viewerMu sync.RWMutex
 	viewers  map[string]map[string]capture.ViewerLease
 
+	// trafficMu guards the runtime traffic entries, keyed by session ID.
+	// Traffic is session-scoped temporary data (全量抓包、会话内可见): it lives
+	// in memory only, is cleared when the session ends, and is never persisted
+	// in M2 (mocked-request persistence lands in M3).
+	trafficMu sync.RWMutex
+	traffic   map[string][]*capture.TrafficEntry
+
 	ctx      context.Context
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -86,6 +93,7 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, cfg Ca
 		cfg:      cfg,
 		log:      slog.Default(),
 		viewers:  make(map[string]map[string]capture.ViewerLease),
+		traffic:  make(map[string][]*capture.TrafficEntry),
 		stopCh:   make(chan struct{}),
 	}
 }
@@ -309,6 +317,12 @@ func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	delete(m.viewers, id)
 	m.viewerMu.Unlock()
 
+	// Clear the session's temporary traffic: a session that has ended no
+	// longer exposes its traffic (contract: ended session => empty list).
+	m.trafficMu.Lock()
+	delete(m.traffic, id)
+	m.trafficMu.Unlock()
+
 	sc := *s
 	sc.End(time.Now())
 	sc.ViewerCount = 0
@@ -330,6 +344,121 @@ func (m *CaptureManager) GetSession(ctx context.Context, id string) (*capture.Ca
 		return nil, err
 	}
 	return s, nil
+}
+
+// ============================================================================
+// Traffic (session-scoped, runtime-only)
+// ============================================================================
+
+// UploadTraffic appends a batch of traffic entries to a capturing session
+// (全量抓包, contract POST /traffic). Only traffic for an active session is
+// accepted: an unknown session returns ErrSessionNotFound, an ended session
+// returns ErrSessionEnded. Isolation (requirement 决策 #6) is enforced — the
+// (app, did) carried by the upload must match the session's owning device.
+//
+// Partially-accepted semantics: entries with an empty method, empty url, or
+// zero timestamp are dropped (contract required fields); the returned count is
+// the number of entries actually stored. Record IDs and SessionID are
+// server-generated here. The session's RequestCount is incremented and
+// persisted, so it keeps its final value after the session ends.
+func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID string, entries []*capture.TrafficEntry) (int, error) {
+	s, err := m.sessions.Get(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return 0, ErrSessionNotFound
+		}
+		return 0, err
+	}
+	if s.Status == capture.SessionStatusEnded {
+		return 0, ErrSessionEnded
+	}
+	if s.App != app || s.Did != did {
+		// The upload does not belong to this device; report the session as
+		// unknown to avoid leaking its existence (isolation).
+		return 0, ErrSessionNotFound
+	}
+
+	stored := make([]*capture.TrafficEntry, 0, len(entries))
+	for _, e := range entries {
+		if e == nil || e.Method == "" || e.URL == "" || e.Timestamp.IsZero() {
+			continue
+		}
+		c := *e
+		c.ID = id.ULID()
+		c.SessionID = sessionID
+		stored = append(stored, &c)
+	}
+	if len(stored) == 0 {
+		return 0, nil
+	}
+
+	m.trafficMu.Lock()
+	m.traffic[sessionID] = append(m.traffic[sessionID], stored...)
+	m.trafficMu.Unlock()
+
+	sc := *s
+	sc.RequestCount += len(stored)
+	if err := m.sessions.Update(ctx, &sc); err != nil {
+		return 0, err
+	}
+	return len(stored), nil
+}
+
+// ListSessionTraffic returns a session's traffic entries in arrival order
+// (request timeline, ascending), with limit/offset paging and the total count.
+// For an ended session the temporary traffic has been cleared, so an empty
+// list with total 0 is returned (contract: ended session => 200 + entries=[]
+// + total=0); an unknown session returns ErrSessionNotFound.
+func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID string, limit, offset int) ([]*capture.TrafficEntry, int, error) {
+	s, err := m.sessions.Get(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, 0, ErrSessionNotFound
+		}
+		return nil, 0, err
+	}
+	if s.Status == capture.SessionStatusEnded {
+		return []*capture.TrafficEntry{}, 0, nil
+	}
+
+	m.trafficMu.RLock()
+	entries := m.traffic[sessionID]
+	m.trafficMu.RUnlock()
+
+	total := len(entries)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	end := total
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	out := make([]*capture.TrafficEntry, 0, end-offset)
+	for _, e := range entries[offset:end] {
+		c := *e
+		out = append(out, &c)
+	}
+	return out, total, nil
+}
+
+// GetTraffic returns a single traffic entry by its server-generated ID. The
+// traffic of an ended session has been cleared, so such entries are reported
+// as not found (contract: 404 not_found).
+func (m *CaptureManager) GetTraffic(ctx context.Context, id string) (*capture.TrafficEntry, error) {
+	m.trafficMu.RLock()
+	defer m.trafficMu.RUnlock()
+	for _, entries := range m.traffic {
+		for _, e := range entries {
+			if e.ID == id {
+				c := *e
+				return &c, nil
+			}
+		}
+	}
+	return nil, ErrNotFound
 }
 
 // ============================================================================

@@ -352,3 +352,257 @@ func TestCaptureManager_MultiDeviceIsolation(t *testing.T) {
 		t.Errorf("Heartbeat(app-a/dev-1) session = %v, %v; want session", session, err)
 	}
 }
+
+// ---- Traffic (M2.2) ----
+
+// trafficEntry returns a valid TrafficEntry for tests.
+func trafficEntry(method, url string, ts time.Time) *capture.TrafficEntry {
+	return &capture.TrafficEntry{Method: method, URL: url, Timestamp: ts, DurationMs: 12}
+}
+
+func TestCaptureManager_UploadTraffic_Validation(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+
+	// Unknown session -> ErrSessionNotFound.
+	if _, err := m.UploadTraffic(ctx, "app", "d1", "no-such-session",
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("UploadTraffic(unknown session) = %v, want ErrSessionNotFound", err)
+	}
+
+	// Cross-device upload (isolation): a session owned by (app, d1) must not
+	// accept traffic tagged with another device.
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d2"}); err != nil {
+		t.Fatalf("RegisterDevice(d2) = %v", err)
+	}
+	s2, _, err := m.ActivateSession(ctx, "app", "d2")
+	if err != nil {
+		t.Fatalf("ActivateSession(d2) = %v", err)
+	}
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s2.ID,
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("UploadTraffic(cross-device) = %v, want ErrSessionNotFound", err)
+	}
+
+	// Ended session -> ErrSessionEnded.
+	if err := m.EndSession(ctx, s.ID); err != nil {
+		t.Fatalf("EndSession() = %v", err)
+	}
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); !errors.Is(err, store.ErrSessionEnded) {
+		t.Errorf("UploadTraffic(ended session) = %v, want ErrSessionEnded", err)
+	}
+}
+
+func TestCaptureManager_UploadTraffic_AcceptAndCount(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+
+	now := time.Now()
+	entries := []*capture.TrafficEntry{
+		trafficEntry("GET", "http://example.com/a?x=1", now), // kept
+		nil, // dropped: nil
+		{Method: "", URL: "http://x/b", Timestamp: now},                 // dropped: empty method
+		{Method: "POST", URL: "", Timestamp: now},                       // dropped: empty url
+		{Method: "PUT", URL: "http://x/c", Timestamp: time.Time{}},      // dropped: zero timestamp
+		trafficEntry("DELETE", "http://x/d", now.Add(time.Millisecond)), // kept
+	}
+	count, err := m.UploadTraffic(ctx, "app", "d1", s.ID, entries)
+	if err != nil {
+		t.Fatalf("UploadTraffic() = %v", err)
+	}
+	if count != 2 {
+		t.Errorf("count = %d, want 2 (2 of 6 kept)", count)
+	}
+
+	// Session RequestCount persisted.
+	got, err := m.GetSession(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("GetSession() = %v", err)
+	}
+	if got.RequestCount != 2 {
+		t.Errorf("RequestCount = %d, want 2", got.RequestCount)
+	}
+
+	// Server-generated ID + session binding + arrival order preserved.
+	list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListSessionTraffic() = %v", err)
+	}
+	if total != 2 || len(list) != 2 {
+		t.Fatalf("total=%d len=%d, want 2/2", total, len(list))
+	}
+	if list[0].ID == "" || list[0].SessionID != s.ID {
+		t.Errorf("entry id/session = %q/%q, want generated id + %q", list[0].ID, list[0].SessionID, s.ID)
+	}
+	if list[0].Method != "GET" || list[1].Method != "DELETE" {
+		t.Errorf("order = %q,%q; want GET,DELETE", list[0].Method, list[1].Method)
+	}
+
+	// Returned entries are copies: mutating them must not touch storage.
+	list[0].Method = "HACKED"
+	again, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	if again[0].Method != "GET" {
+		t.Errorf("stored entry mutated through returned copy: %q", again[0].Method)
+	}
+
+	// GetTraffic by server-generated ID.
+	first, err := m.GetTraffic(ctx, again[0].ID)
+	if err != nil || first.URL != "http://example.com/a?x=1" {
+		t.Errorf("GetTraffic() = %+v, %v", first, err)
+	}
+	if _, err := m.GetTraffic(ctx, "no-such-id"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetTraffic(unknown) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCaptureManager_ListSessionTraffic_PagingAndClear(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+
+	now := time.Now()
+	entries := make([]*capture.TrafficEntry, 5)
+	for i := range entries {
+		entries[i] = trafficEntry("GET", "http://x/"+string(rune('a'+i)), now.Add(time.Duration(i)*time.Millisecond))
+	}
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID, entries); err != nil {
+		t.Fatalf("UploadTraffic() = %v", err)
+	}
+
+	// Paging: limit 2, offset 1 -> entries 1..2 of 5.
+	list, total, err := m.ListSessionTraffic(ctx, s.ID, 2, 1)
+	if err != nil {
+		t.Fatalf("ListSessionTraffic() = %v", err)
+	}
+	if total != 5 || len(list) != 2 {
+		t.Fatalf("total=%d len=%d, want 5/2", total, len(list))
+	}
+	if list[0].URL != "http://x/b" || list[1].URL != "http://x/c" {
+		t.Errorf("paged = %q,%q; want b,c", list[0].URL, list[1].URL)
+	}
+
+	// limit 0 = no limit.
+	list, total, _ = m.ListSessionTraffic(ctx, s.ID, 0, 3)
+	if len(list) != 2 || total != 5 {
+		t.Errorf("limit=0 offset=3: len=%d total=%d; want 2/5", len(list), total)
+	}
+
+	// offset beyond total -> empty.
+	list, total, _ = m.ListSessionTraffic(ctx, s.ID, 10, 99)
+	if len(list) != 0 || total != 5 {
+		t.Errorf("offset beyond: len=%d total=%d; want 0/5", len(list), total)
+	}
+
+	// Unknown session.
+	if _, _, err := m.ListSessionTraffic(ctx, "no-such-session", 0, 0); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("ListSessionTraffic(unknown) = %v, want ErrSessionNotFound", err)
+	}
+
+	// Ended session: traffic cleared -> empty list with total 0, entry gone,
+	// but RequestCount keeps its final value.
+	if err := m.EndSession(ctx, s.ID); err != nil {
+		t.Fatalf("EndSession() = %v", err)
+	}
+	list, total, err = m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListSessionTraffic(ended) = %v", err)
+	}
+	if len(list) != 0 || total != 0 {
+		t.Errorf("after end: len=%d total=%d; want 0/0", len(list), total)
+	}
+	got, _ := m.GetSession(ctx, s.ID)
+	if got.RequestCount != 5 {
+		t.Errorf("RequestCount after end = %d, want 5", got.RequestCount)
+	}
+	if _, err := m.GetTraffic(ctx, "any-old-id"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetTraffic(after end) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCaptureManager_Traffic_SessionIsolation(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	for _, d := range []*capture.Device{{App: "app", Did: "d1"}, {App: "app", Did: "d2"}} {
+		if _, err := m.RegisterDevice(ctx, d); err != nil {
+			t.Fatalf("RegisterDevice(%s) = %v", d.Did, err)
+		}
+	}
+	s1, _, _ := m.ActivateSession(ctx, "app", "d1")
+	s2, _, _ := m.ActivateSession(ctx, "app", "d2")
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s1.ID,
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/one", time.Now())}); err != nil {
+		t.Fatalf("UploadTraffic(s1) = %v", err)
+	}
+	if _, err := m.UploadTraffic(ctx, "app", "d2", s2.ID,
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/two", time.Now())}); err != nil {
+		t.Fatalf("UploadTraffic(s2) = %v", err)
+	}
+
+	list1, total1, _ := m.ListSessionTraffic(ctx, s1.ID, 0, 0)
+	if total1 != 1 || len(list1) != 1 || list1[0].URL != "http://x/one" {
+		t.Errorf("session1 traffic = %d/%d (%q); want 1/1 one", len(list1), total1, list1[0].URL)
+	}
+	list2, total2, _ := m.ListSessionTraffic(ctx, s2.ID, 0, 0)
+	if total2 != 1 || len(list2) != 1 || list2[0].URL != "http://x/two" {
+		t.Errorf("session2 traffic = %d/%d (%q); want 1/1 two", len(list2), total2, list2[0].URL)
+	}
+}
+
+func TestCaptureManager_HeartbeatTimeout_ClearsTraffic(t *testing.T) {
+	// Health check ends the session on heartbeat timeout; the session's
+	// temporary traffic must be cleared along with it.
+	m, _ := newCaptureManager(t, 300*time.Millisecond)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); err != nil {
+		t.Fatalf("UploadTraffic() = %v", err)
+	}
+
+	m.StartHealthCheck(ctx)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+		if err == nil && total == 0 && len(list) == 0 {
+			got, _ := m.GetSession(ctx, s.ID)
+			if got.Status == capture.SessionStatusEnded {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("traffic not cleared after heartbeat-timeout session end")
+}
