@@ -35,3 +35,65 @@ button.danger { background: var(--danger); }
 button:disabled { background: #c9cdd4; cursor: not-allowed; }
 .empty { color: var(--muted); text-align: center; padding: 40px 0; }
 .updated { color: var(--muted); font-size: 12px; margin-top: 8px; }
+
+/* ===== M2.5 设备详情 + 请求流 ===== */
+button.ghost { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
+button.ghost:hover { background: #eef3ff; }
+button.small { padding: 3px 10px; font-size: 12px; }
+button.mini { padding: 2px 8px; font-size: 11px; background: #eef3ff; color: var(--primary); }
+button.mini:hover { background: #dbe7ff; }
+button.mini.active { background: var(--primary); color: #fff; }
+
+.detail-header { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+                 padding: 14px 16px; margin-bottom: 14px; }
+#backBtn { margin-bottom: 12px; }
+
+.section-title { font-size: 13px; font-weight: 600; color: var(--text); margin: 16px 0 8px; }
+.section-title .sub { font-weight: 400; }
+
+.session-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+                padding: 10px 14px; margin-bottom: 8px; cursor: pointer; display: flex;
+                align-items: center; gap: 12px; }
+.session-card:hover { border-color: var(--primary); }
+.session-card.active { border-color: var(--primary); background: #f4f8ff; }
+.session-card .s-body { flex: 1; min-width: 0; }
+.session-card .s-row1 { font-size: 13px; font-weight: 600; display: flex; gap: 10px; align-items: center; }
+.session-card .s-row2 { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.session-card .s-id { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted); }
+
+.traffic-row { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+               padding: 8px 14px; margin-bottom: 6px; cursor: pointer; display: flex;
+               align-items: center; gap: 12px; font-size: 13px; }
+.traffic-row:hover { border-color: var(--primary); }
+.traffic-row.active { border-color: var(--primary); background: #f4f8ff; }
+.method { display: inline-block; min-width: 44px; text-align: center; padding: 1px 6px;
+          border-radius: 4px; font-size: 11px; font-weight: 600; flex: none; }
+.method.get { background: #e6f4ea; color: #1e7d3c; }
+.method.post { background: #e8efff; color: #1f5eff; }
+.method.put { background: #fff3e0; color: #b26a00; }
+.method.delete { background: #fdeee8; color: #d9480f; }
+.method.other { background: #f0f1f3; color: #5f6673; }
+.t-url { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+         color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-status { flex: none; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.st-2xx { color: #1e7d3c; }
+.st-3xx { color: #b26a00; }
+.st-4xx { color: #d9480f; }
+.st-5xx { color: #c92a2a; }
+.st-err { color: #8a9099; }
+.t-dur, .t-time { flex: none; color: var(--muted); font-size: 12px; }
+
+.detail-panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+                padding: 14px 16px; font-size: 13px; }
+.detail-panel .d-kv { display: flex; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+.detail-panel .d-k { color: var(--muted); flex: none; min-width: 72px; }
+.detail-panel .d-v { font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; }
+.detail-panel .d-block { margin-top: 10px; }
+.detail-panel .d-block .d-title { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.detail-panel pre { background: #f6f7f9; border: 1px solid var(--border); border-radius: 6px;
+                    padding: 8px 10px; font-size: 12px; font-family: ui-monospace, Menlo, monospace;
+                    white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
+.detail-panel .d-err { color: var(--danger); }
+
+/* CSP 合规视图切换：初始隐藏详情视图（不用内联 style，避免被 default-src 'self' 拦截） */
+.hidden { display: none; }

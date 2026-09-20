@@ -1,17 +1,22 @@
 "use strict";
 const API = "/api/v1";
 const POLL_MS = 5000;        // 设备列表轮询
+const TRAFFIC_POLL_MS = 2000; // 请求流轮询（决策 D-M2-1：轮询 2s，秒级可见）
+const TRAFFIC_PAGE = 100;    // 每页条数（契约 limit 上限 500，取 100 最新）
 const RENEW_MS = 60000;      // viewer 续租（TTL 120s 的一半）
 
 // sessionId -> { viewerId, timer }
 const viewers = new Map();
-let pollTimer = null;
+let pollTimer = null;        // 列表轮询
+let trafficTimer = null;     // 请求流轮询
+let detail = null;           // { app, did, sessionId }
 
 const $ = (id) => document.getElementById(id);
 const STATUS = {
   idle:      { label: "待命",   cls: "idle" },
   capturing: { label: "抓包中", cls: "capturing" },
   offline:   { label: "离线",   cls: "offline" },
+  ended:     { label: "已结束", cls: "offline" },
 };
 
 function showError(msg) {
@@ -32,6 +37,31 @@ function relTime(iso) {
   if (diff < 86400) return Math.floor(diff / 3600) + " 小时前";
   return new Date(iso).toLocaleString("zh-CN");
 }
+function clockTime(iso) {
+  if (!iso) return "—";
+  const t = new Date(iso);
+  return t.toLocaleTimeString("zh-CN", { hour12: false }) + "." +
+    String(t.getMilliseconds()).padStart(3, "0");
+}
+function esc(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+function shortId(id) { return id ? id.slice(0, 8) + "…" : ""; }
+function methodCls(m) {
+  const u = (m || "").toUpperCase();
+  if (u === "GET") return "get";
+  if (u === "POST") return "post";
+  if (u === "PUT" || u === "PATCH") return "put";
+  if (u === "DELETE") return "delete";
+  return "other";
+}
+
+// ============================================================================
+// 设备列表（M1.6）
+// ============================================================================
 
 async function loadDevices() {
   try {
@@ -52,7 +82,7 @@ function render(devices) {
       || new Date(b.lastSeenAt || 0) - new Date(a.lastSeenAt || 0));
 
   const online = devices.filter((d) => d.status !== "offline").length;
-  $("stats").textContent = `共 ${devices.length} 台设备 · ${online} 台在线`;
+  $("stats").textContent = `共 ${devices.length} 台设备 · ${online} 台在线 · 点击设备查看请求流`;
 
   if (devices.length === 0) {
     $("list").innerHTML = '<div class="empty">暂无设备。启动接入 SDK 的 Debug App 后，设备会出现在这里。</div>';
@@ -66,6 +96,8 @@ function render(devices) {
     card.className = "card";
     card.dataset.app = d.app;
     card.dataset.did = d.did;
+    card.title = "点击查看请求流";
+    card.onclick = () => openDetail(d.app, d.did);
 
     const dot = document.createElement("span");
     dot.className = "dot " + st.cls;
@@ -87,12 +119,12 @@ function render(devices) {
     if (d.currentSession && d.currentSession.status === "capturing") {
       btn.textContent = "断开";
       btn.className = "danger";
-      btn.onclick = () => disconnect(d);
+      btn.onclick = (e) => { e.stopPropagation(); disconnect(d); };
     } else {
       btn.textContent = "连接";
       btn.disabled = d.status === "offline";
       btn.title = d.status === "offline" ? "设备离线（心跳超时），无法连接" : "";
-      btn.onclick = () => connect(d);
+      btn.onclick = (e) => { e.stopPropagation(); connect(d); };
     }
     actions.appendChild(btn);
 
@@ -104,13 +136,6 @@ function render(devices) {
   $("updated").textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN");
 }
 
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-function shortId(id) { return id ? id.slice(0, 8) + "…" : ""; }
-
 async function connect(d) {
   try {
     const res = await fetch(API + "/sessions", {
@@ -121,9 +146,13 @@ async function connect(d) {
     const session = await res.json().catch(() => null);
     if (!res.ok) { showError((session && session.message) || "连接失败（HTTP " + res.status + "）"); return; }
     if (session && session.id) {
-      await registerViewer(session);
+      await registerViewer(session, "设备列表页");
     }
-    await loadDevices();
+    if (detail && detail.app === d.app && detail.did === d.did) {
+      await loadDetail();   // 详情页打开时刷新
+    } else {
+      await loadDevices();
+    }
   } catch (e) {
     showError("连接失败：" + e.message);
   }
@@ -136,33 +165,270 @@ async function disconnect(d) {
     const res = await fetch(API + "/sessions/" + encodeURIComponent(s.id), { method: "DELETE" });
     if (!res.ok && res.status !== 404) { showError("断开失败（HTTP " + res.status + "）"); return; }
     stopViewer(s.id);
-    await loadDevices();
+    if (detail && detail.sessionId === s.id) {
+      stopTrafficPoll();
+      detail.sessionId = null;
+      await loadDetail();
+    } else {
+      await loadDevices();
+    }
   } catch (e) {
     showError("断开失败：" + e.message);
   }
 }
 
-async function registerViewer(session) {
+// ============================================================================
+// 设备详情 + 请求流（M2.5）
+// ============================================================================
+
+async function openDetail(app, did) {
+  location.hash = "#/device/" + encodeURIComponent(app) + "/" + encodeURIComponent(did);
+}
+
+async function enterDetail(app, did) {
+  detail = { app, did, sessionId: null };
+  $("listView").classList.add("hidden");
+  $("detailView").classList.remove("hidden");
+  $("dApp").textContent = app;
+  $("dDid").textContent = did;
+  await loadDetail();
+}
+
+/** 加载设备信息 + 会话列表；默认选中当前抓包会话（无则最近一个会话）。 */
+async function loadDetail() {
+  if (!detail) return;
+  const { app, did } = detail;
+  try {
+    const [devRes, sesRes] = await Promise.all([
+      fetch(API + "/devices/" + encodeURIComponent(app) + "/" + encodeURIComponent(did)),
+      fetch(API + "/sessions?app=" + encodeURIComponent(app) + "&did=" + encodeURIComponent(did)),
+    ]);
+    const dev = devRes.ok ? await devRes.json() : null;
+    const ses = sesRes.ok ? await sesRes.json() : { sessions: [], total: 0 };
+
+    const st = STATUS[dev && dev.status] || STATUS.idle;
+    const stBadge = $("dStatus");
+    stBadge.textContent = st.label;
+    stBadge.className = "badge " + st.cls;
+    $("dLastSeen").textContent = "最后活跃：" + relTime(dev && dev.lastSeenAt);
+
+    const cur = dev && dev.currentSession;
+    const toggle = $("dToggleSession");
+    if (cur && cur.status === "capturing") {
+      toggle.textContent = "断开";
+      toggle.className = "small danger";
+      toggle.onclick = () => disconnect(dev);
+    } else {
+      toggle.textContent = "连接";
+      toggle.className = "small";
+      toggle.disabled = !dev || dev.status === "offline";
+      toggle.onclick = () => connect(dev);
+    }
+
+    renderSessions(ses.sessions || [], cur);
+
+    // 默认选中：当前抓包会话优先；否则最近一个历史会话。
+    const pick = cur && cur.status === "capturing"
+      ? cur
+      : (ses.sessions || []).find((s) => !cur || s.id !== cur.id) || (ses.sessions || [])[0];
+    if (!detail.sessionId || !(ses.sessions || []).some((s) => s.id === detail.sessionId)) {
+      selectSession(pick ? pick.id : null);
+    }
+  } catch (e) {
+    showError("加载设备详情失败：" + e.message);
+  }
+}
+
+function renderSessions(sessions, current) {
+  const box = $("sessionList");
+  if (!sessions.length) {
+    box.innerHTML = '<div class="empty">暂无会话。点击「连接」开始抓包。</div>';
+    return;
+  }
+  box.innerHTML = "";
+  for (const s of sessions) {
+    const st = STATUS[s.status] || STATUS.ended;
+    const el = document.createElement("div");
+    el.className = "session-card" + (detail.sessionId === s.id ? " active" : "");
+    el.dataset.sid = s.id;
+    el._session = s;
+    el.innerHTML =
+      '<span class="badge ' + st.cls + '">' + st.label + "</span>" +
+      '<div class="s-body">' +
+        '<div class="s-row1">' + esc(s.id) +
+          (s.id === (current && current.id) ? '<span class="badge capturing">当前</span>' : "") +
+        "</div>" +
+        '<div class="s-row2">开始 ' + relTime(s.startedAt) +
+          (s.endedAt ? " · 结束 " + relTime(s.endedAt) : "") +
+          " · 请求数 " + s.requestCount +
+          (s.viewerCount ? " · 查看者 " + s.viewerCount : "") +
+        "</div>" +
+      "</div>";
+    el.onclick = () => selectSession(s.id);
+    box.appendChild(el);
+  }
+}
+
+/** 选中会话：capturing → 注册 viewer + 2s 轮询；ended → 停止轮询并提示清空。 */
+function selectSession(sessionId) {
+  if (!detail) return;
+  stopTrafficPoll();
+  const old = detail.sessionId;
+  detail.sessionId = sessionId;
+  if (old && old !== sessionId) stopViewer(old);
+
+  const session = sessionFor(sessionId);
+  $("trafficList").innerHTML = "";
+  $("trafficDetail").innerHTML = '<div class="empty">点击上方请求查看完整详情。</div>';
+
+  if (!sessionId) {
+    $("trafficInfo").textContent = "";
+    $("trafficList").innerHTML = '<div class="empty">请选择会话查看实时请求。</div>';
+    return;
+  }
+  if (session && session.status === "capturing") {
+    $("trafficInfo").textContent = "实时 · 2s 轮询 · 会话 " + shortId(sessionId);
+    registerViewer(session, "设备详情页");
+    trafficTimer = setInterval(pollTraffic, TRAFFIC_POLL_MS);
+    pollTraffic();
+  } else {
+    $("trafficInfo").textContent = "会话已结束";
+    $("trafficList").innerHTML = '<div class="empty">会话已结束，临时记录已清空（历史流量不保留）。</div>';
+  }
+  document.querySelectorAll(".session-card").forEach((el) => {
+    el.classList.toggle("active", el.dataset.sid === sessionId);
+  });
+}
+
+function sessionFor(sessionId) {
+  const el = document.querySelector('.session-card[data-sid="' + sessionId + '"]');
+  return el ? el._session : null;
+}
+
+function stopTrafficPoll() {
+  if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
+}
+
+/** 请求流轮询：先拿 total，再拉最新一页（契约升序 + offset 分页），按 id 去重合并。 */
+async function pollTraffic() {
+  if (!detail || !detail.sessionId) return;
+  const sid = detail.sessionId;
+  try {
+    const meta = await fetch(API + "/sessions/" + encodeURIComponent(sid) + "/traffic?limit=1").then(r => r.json());
+    if (!meta || typeof meta.total !== "number") return;
+    const offset = Math.max(0, meta.total - TRAFFIC_PAGE);
+    const data = await fetch(API + "/sessions/" + encodeURIComponent(sid) +
+      "/traffic?limit=" + TRAFFIC_PAGE + "&offset=" + offset).then(r => r.json());
+    renderTraffic(data.entries || []);
+  } catch (e) {
+    $("trafficInfo").textContent = "请求流拉取失败：" + e.message;
+  }
+}
+
+function renderTraffic(entries) {
+  if (!detail || !detail.sessionId) return;
+  // 倒序：最新在上（服务端按 timestamp 升序）。
+  entries = entries.slice().sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+  $("trafficInfo").textContent = "实时 · 2s 轮询 · 共 " + entries.length + " 条（显示最近 " + TRAFFIC_PAGE + " 条）";
+
+  const box = $("trafficList");
+  if (!entries.length) {
+    box.innerHTML = '<div class="empty">暂无请求。设备产生流量后会实时出现在这里。</div>';
+    return;
+  }
+  box.innerHTML = "";
+  for (const e of entries) {
+    const el = document.createElement("div");
+    el.className = "traffic-row" + (detail._activeTraffic === e.id ? " active" : "");
+    const statusCls = e.statusCode == null ? "st-err"
+      : e.statusCode < 300 ? "st-2xx" : e.statusCode < 400 ? "st-3xx"
+      : e.statusCode < 500 ? "st-4xx" : "st-5xx";
+    el.innerHTML =
+      '<span class="method ' + methodCls(e.method) + '">' + esc(e.method || "?") + "</span>" +
+      '<span class="t-url">' + esc(e.path || e.url) + (e.query ? "?" + esc(e.query) : "") + "</span>" +
+      '<span class="t-status ' + statusCls + '">' + (e.statusCode ?? "ERR") + "</span>" +
+      '<span class="t-dur">' + e.durationMs + "ms</span>" +
+      '<span class="t-time">' + clockTime(e.timestamp) + "</span>";
+    el.onclick = () => {
+      detail._activeTraffic = e.id;
+      renderTrafficDetail(e);
+      box.querySelectorAll(".traffic-row").forEach((r) =>
+        r.classList.toggle("active", r === el));
+    };
+    box.appendChild(el);
+  }
+}
+
+/** 请求详情面板（列表数据已含完整字段，无需再查详情接口）。 */
+function renderTrafficDetail(e) {
+  const box = $("trafficDetail");
+  const headRows = (h) => Object.entries(h || {})
+    .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
+      '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("");
+
+  box.innerHTML =
+    '<div class="detail-panel">' +
+      '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
+      '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
+        (e.statusCode != null ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "") : "请求失败： " + esc(e.error || "")) +
+      "</span></div>" +
+      '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + e.durationMs + " ms</span></div>" +
+      '<div class="d-kv"><span class="d-k">时间</span><span class="d-v">' + esc(e.timestamp || "—") + "</span></div>" +
+      (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是（M3 起标记）</span></div>' : "") +
+      '<div class="d-block"><div class="d-title">请求头</div>' +
+        (headRows(e.requestHeaders) || '<div class="d-v">—</div>') + "</div>" +
+      '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(e.requestBody) || "（空）") + "</pre></div>" +
+      '<div class="d-block"><div class="d-title">响应头</div>' +
+        (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
+      '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(e.responseBody) || "（空）") + "</pre></div>" +
+    "</div>";
+}
+
+function backToList() {
+  stopTrafficPoll();
+  if (detail && detail.sessionId) stopViewer(detail.sessionId);
+  detail = null;
+  location.hash = "";
+  $("detailView").classList.add("hidden");
+  $("listView").classList.remove("hidden");
+  loadDevices();
+}
+
+// hash 路由：#/device/{app}/{did}
+window.addEventListener("hashchange", () => {
+  const m = location.hash.match(/^#\/device\/([^/]+)\/(.+)$/);
+  if (m) {
+    enterDetail(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+  } else if (detail) {
+    backToList();
+  }
+});
+
+// ============================================================================
+// viewer 租约（M1.6）
+// ============================================================================
+
+async function registerViewer(session, label) {
   const viewerId = crypto.randomUUID();
   try {
     const res = await fetch(API + "/sessions/" + encodeURIComponent(session.id) + "/viewers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ viewerId, label: "设备列表页" }),
+      body: JSON.stringify({ viewerId, label }),
     });
     if (!res.ok) return;
-  } catch { /* 租约失败不影响列表；服务端 TTL 兜底 */ }
+  } catch { /* 租约失败不影响展示；服务端 TTL 兜底 */ }
   stopViewer(session.id);
-  const timer = setInterval(() => renewViewer(session.id, viewerId), RENEW_MS);
+  const timer = setInterval(() => renewViewer(session.id, viewerId, label), RENEW_MS);
   viewers.set(session.id, { viewerId, timer });
 }
 
-async function renewViewer(sessionId, viewerId) {
+async function renewViewer(sessionId, viewerId, label) {
   try {
     await fetch(API + "/sessions/" + encodeURIComponent(sessionId) + "/viewers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ viewerId, label: "设备列表页" }),
+      body: JSON.stringify({ viewerId, label }),
     });
   } catch { /* 网络抖动；TTL 120s 兜底 */ }
 }
@@ -181,8 +447,18 @@ function releaseAllViewers() {
 }
 window.addEventListener("pagehide", releaseAllViewers);
 
+// ============================================================================
+// 启动
+// ============================================================================
+
 function start() {
-  loadDevices();
-  pollTimer = setInterval(loadDevices, POLL_MS);
+  $("backBtn").onclick = backToList;
+  const m = location.hash.match(/^#\/device\/([^/]+)\/(.+)$/);
+  if (m) {
+    enterDetail(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+  } else {
+    loadDevices();
+    pollTimer = setInterval(loadDevices, POLL_MS);
+  }
 }
 start();

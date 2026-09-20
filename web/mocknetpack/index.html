@@ -13,9 +13,36 @@
     <span class="sub" id="apiInfo">连接中…</span>
   </header>
   <div id="errorBar"></div>
-  <div class="stats" id="stats"></div>
-  <div id="list"><div class="empty">加载中…</div></div>
-  <div class="updated" id="updated"></div>
+
+  <!-- ===== 视图：设备列表（M1.6） ===== -->
+  <div id="listView">
+    <div class="stats" id="stats"></div>
+    <div id="list"><div class="empty">加载中…</div></div>
+    <div class="updated" id="updated"></div>
+  </div>
+
+  <!-- ===== 视图：设备详情 + 请求流（M2.5） ===== -->
+  <div id="detailView" class="hidden">
+    <button id="backBtn" class="ghost">← 返回设备列表</button>
+    <div class="detail-header">
+      <div class="app" id="dApp"></div>
+      <div class="did" id="dDid"></div>
+      <div class="row2">
+        <span class="badge idle" id="dStatus"></span>
+        <span id="dLastSeen"></span>
+        <button id="dToggleSession" class="small"></button>
+      </div>
+    </div>
+
+    <div class="section-title">会话</div>
+    <div id="sessionList"><div class="empty">加载中…</div></div>
+
+    <div class="section-title">请求流 <span class="sub" id="trafficInfo"></span></div>
+    <div id="trafficList"><div class="empty">请选择会话查看实时请求。</div></div>
+
+    <div class="section-title">请求详情</div>
+    <div id="trafficDetail"><div class="empty">点击上方请求查看完整详情。</div></div>
+  </div>
 </div>
 <script src="app.js"></script>
 </body>
