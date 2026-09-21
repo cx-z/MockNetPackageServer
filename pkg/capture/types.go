@@ -46,6 +46,10 @@ type Device struct {
 	Did string `json:"did"`
 	// Name is an optional custom name set from the Web UI ("张三的 15 Pro").
 	Name string `json:"name,omitempty"`
+	// Owner is the account username that manually registered this device
+	// (M7.2). Empty for legacy SDK-auto-registered devices (transitional until
+	// M7.2.3). Owner filtering (dev sees own / admin sees all) lands M7.2.2.
+	Owner string `json:"owner,omitempty"`
 	// Platform is the OS platform (ios for M1).
 	Platform Platform `json:"platform,omitempty"`
 	// OSVersion is the OS version reported at registration.

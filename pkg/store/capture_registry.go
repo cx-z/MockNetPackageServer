@@ -150,6 +150,26 @@ func (m *CaptureManager) ServerConfig() capture.ServerConfig {
 // Devices
 // ============================================================================
 
+// CreateManualDevice creates a device entry from the Web UI (M7.2.1): it does
+// NOT upsert — an existing (App, Did) returns ErrAlreadyExists so the Web can
+// report a conflict. The caller (handler) stamps Owner and Name; this is the
+// only device-creation path once M7.2.3 stops SDK auto-registration.
+func (m *CaptureManager) CreateManualDevice(ctx context.Context, d *capture.Device) (*capture.Device, error) {
+	if _, err := m.devices.Get(ctx, d.App, d.Did); err == nil {
+		return nil, ErrAlreadyExists
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	now := time.Now()
+	d.RegisteredAt = now
+	d.LastSeenAt = now
+	if err := m.devices.Create(ctx, d); err != nil {
+		return nil, err
+	}
+	out := *d
+	return &out, nil
+}
+
 // RegisterDevice registers or re-registers a device (idempotent upsert on
 // (App, Did)). A re-registration refreshes metadata and marks the device
 // active (LastSeenAt = now). Registration is only accepted for a device

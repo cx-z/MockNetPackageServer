@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/getmockd/mockd/pkg/capture"
@@ -31,6 +32,70 @@ type RegisterDeviceRequest struct {
 	OSVersion  string           `json:"osVersion,omitempty"`
 	SDKVersion string           `json:"sdkVersion,omitempty"`
 	AppVersion string           `json:"appVersion,omitempty"`
+}
+
+// CreateDeviceRequest is the Web manual-registration payload (M7.2.1): pick an
+// app from the fixed catalog, type the SDK did, and give the device a name.
+type CreateDeviceRequest struct {
+	App  string `json:"app"`
+	Did  string `json:"did"`
+	Name string `json:"name"`
+}
+
+// allowedApps is the fixed app catalog (M7 拍板 #5): only one app for now;
+// admin-only app management is a recorded backlog item.
+var allowedApps = map[string]bool{"com.example.integrating": true}
+
+// handleCreateDevice handles POST /api/v1/devices — Web manual device
+// registration. The logged-in user becomes the owner; an existing (App, Did)
+// conflicts. SDK auto-registration is removed in M7.2.3, making this the only
+// creation path afterwards.
+func (a *API) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
+	var req CreateDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+	req.App = strings.TrimSpace(req.App)
+	req.Did = strings.TrimSpace(req.Did)
+	req.Name = strings.TrimSpace(req.Name)
+	if req.App == "" || req.Did == "" || req.Name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_field", "app, did and name are required")
+		return
+	}
+	if !allowedApps[req.App] {
+		writeError(w, http.StatusBadRequest, "invalid_app", "app is not in the allowed catalog")
+		return
+	}
+	if len(req.Did) > 128 || len(req.Name) > 64 {
+		writeError(w, http.StatusBadRequest, "invalid_field", "did must be <=128 chars, name <=64 chars")
+		return
+	}
+	owner := ""
+	if u := currentUser(r); u != nil {
+		owner = u.Username
+	}
+	d := &capture.Device{
+		App:      req.App,
+		Did:      req.Did,
+		Name:     req.Name,
+		Owner:    owner,
+		Platform: capture.PlatformIOS,
+	}
+	if _, err := a.captureManager.CreateManualDevice(r.Context(), d); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			writeError(w, http.StatusConflict, "device_taken", "device already registered")
+			return
+		}
+		writeCaptureError(w, err)
+		return
+	}
+	view, err := a.captureManager.GetDevice(r.Context(), req.App, req.Did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, view)
 }
 
 // RegisterDeviceResponse is returned on successful registration.

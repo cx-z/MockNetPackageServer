@@ -543,6 +543,50 @@ paths:
                   total:
                     type: integer
 
+  /devices:
+    post:
+      tags: [devices]
+      x-milestone: m7.2.1
+      summary: 手动注册设备（Web）
+      description: |
+        Web 手动创建设备条目：从固定 app 清单选 app、填入 SDK 的 did、命名设备。
+        当前登录账号即 owner；同一 (app,did) 已存在则 409。
+        需 Bearer 登录态（SDK 自动注册在 M7.2.3 后废弃，此为唯一创建设备途径）。
+      operationId: createDevice
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeviceRequest'
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '400':
+          description: 参数缺失或 app 不在清单
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 该设备已存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /devices/{app}/{did}:
     get:
       tags: [devices]
@@ -819,6 +863,10 @@ components:
           type: string
           nullable: true
           description: 自定义名称（Web 设置）
+        owner:
+          type: string
+          nullable: true
+          description: 手动注册该设备的账号用户名（M7.2）；SDK 自动注册的遗留设备为空
         platform:
           type: string
           enum: [ios]
@@ -845,6 +893,22 @@ components:
         currentSession:
           $ref: '#/components/schemas/CaptureSession'
           description: 当前激活会话（仅 capturing 时有值）
+
+    CreateDeviceRequest:
+      type: object
+      required: [app, did, name]
+      properties:
+        app:
+          type: string
+          description: 固定 app 清单（当前仅 com.example.integrating）
+        did:
+          type: string
+          maxLength: 128
+          description: SDK 生成的设备标识
+        name:
+          type: string
+          maxLength: 64
+          description: 自定义设备名
 
     RegisterDeviceRequest:
       type: object
