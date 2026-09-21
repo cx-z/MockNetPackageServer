@@ -217,8 +217,20 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, RegisterDeviceResponse{
 		Device:       view,
-		ServerConfig: a.captureManager.ServerConfig(),
+		ServerConfig: idleHeartbeatConfig(a.captureManager.ServerConfig()),
 	})
+}
+
+// idleHeartbeatConfig 返回 idle（未抓包）状态的心跳间隔（M8.2：5s，快速感知会话激活）。
+func idleHeartbeatConfig(cfg capture.ServerConfig) capture.ServerConfig {
+	cfg.HeartbeatIntervalSeconds = 5
+	return cfg
+}
+
+// capturingHeartbeatConfig 返回 capturing（抓包中）状态的心跳间隔（M8.3：3s，快速感知规则变更）。
+func capturingHeartbeatConfig(cfg capture.ServerConfig) capture.ServerConfig {
+	cfg.HeartbeatIntervalSeconds = 3
+	return cfg
 }
 
 // handleDeviceHeartbeat handles POST /api/v1/devices/{app}/{did}/heartbeat.
@@ -245,10 +257,20 @@ func (a *API) handleDeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, HeartbeatResponse{
 		OK:           true,
 		ServerTime:   time.Now(),
-		ServerConfig: a.captureManager.ServerConfig(),
+		// M8.2/M8.3：心跳间隔按会话状态动态下发——capturing 3s（快速感知规则变更）、
+		// idle 5s（快速感知会话激活）；SDK 按响应间隔调度下一次心跳。
+		ServerConfig: heartbeatConfigForSession(a.captureManager.ServerConfig(), session),
 		Session:      session,
 		RulesVersion: rulesVersion,
 	})
+}
+
+// heartbeatConfigForSession 根据会话是否激活返回对应心跳间隔配置。
+func heartbeatConfigForSession(base capture.ServerConfig, session *capture.CaptureSession) capture.ServerConfig {
+	if session != nil {
+		return capturingHeartbeatConfig(base)
+	}
+	return idleHeartbeatConfig(base)
 }
 
 // handleActivateSession handles POST /api/v1/sessions (Web「连接」).

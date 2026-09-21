@@ -78,7 +78,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	assert.Equal(t, "com.example.integrating", reg.Device.App)
 	assert.Equal(t, "dev-1", reg.Device.Did)
 	assert.Equal(t, capture.DeviceStatusIdle, reg.Device.Status)
-	assert.Equal(t, 20, reg.ServerConfig.HeartbeatIntervalSeconds)
+	assert.Equal(t, 5, reg.ServerConfig.HeartbeatIntervalSeconds, "M8.2: register returns idle 5s")
 	assert.Equal(t, 60, reg.ServerConfig.HeartbeatTimeoutSeconds)
 
 	// Heartbeat with no session.
@@ -87,6 +87,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, hb.OK)
 	assert.Nil(t, hb.Session, "heartbeat before activation must carry no session")
+	assert.Equal(t, 5, hb.ServerConfig.HeartbeatIntervalSeconds, "M8.2: idle heartbeat 5s")
 
 	// Activate from Web.
 	var session capture.CaptureSession
@@ -102,6 +103,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NotNil(t, hb.Session)
 	assert.Equal(t, sessionID, hb.Session.ID)
+	assert.Equal(t, 3, hb.ServerConfig.HeartbeatIntervalSeconds, "M8.3: capturing heartbeat 3s")
 
 	// Device list shows capturing.
 	var devices DeviceListResponse
@@ -133,6 +135,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.integrating/dev-1/heartbeat", nil, &hb)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Nil(t, hb.Session, "heartbeat after session end must carry no session")
+	assert.Equal(t, 5, hb.ServerConfig.HeartbeatIntervalSeconds, "M8.2: back to idle heartbeat 5s")
 
 	// Device back to idle.
 	devices = DeviceListResponse{}
