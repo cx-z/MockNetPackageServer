@@ -540,6 +540,56 @@ func (m *CaptureManager) GetTraffic(ctx context.Context, id string) (*capture.Tr
 	return nil, ErrNotFound
 }
 
+// DeleteTraffic deletes a single traffic entry by its server-generated ID
+// (M9.5: Web per-row "删除"). Traffic is session-scoped temporary data; the
+// owning session's persisted RequestCount is decremented when the session still
+// exists. An unknown ID (including traffic of an already-deleted session)
+// reports ErrNotFound — the caller treats delete as best-effort idempotent.
+func (m *CaptureManager) DeleteTraffic(ctx context.Context, id string) error {
+	m.trafficMu.Lock()
+	defer m.trafficMu.Unlock()
+	for sid, entries := range m.traffic {
+		for i, e := range entries {
+			if e.ID != id {
+				continue
+			}
+			m.traffic[sid] = append(entries[:i], entries[i+1:]...)
+			// Keep the persisted session count in sync (best-effort; sessions
+			// may already be gone under M9 delete-on-end semantics).
+			if s, err := m.sessions.Get(ctx, sid); err == nil && s.RequestCount > 0 {
+				s.RequestCount--
+				_ = m.sessions.Update(ctx, s)
+			}
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+// ClearSessionTraffic clears all traffic of an active session and resets its
+// request count to 0 (M9.5: Web "清空日志" — the timeline restarts, new
+// uploads accumulate again). An unknown session returns ErrSessionNotFound;
+// an ended session is rejected (M9: ended sessions are deleted anyway).
+func (m *CaptureManager) ClearSessionTraffic(ctx context.Context, sessionID string) error {
+	s, err := m.sessions.Get(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrSessionNotFound
+		}
+		return err
+	}
+	if s.Status == capture.SessionStatusEnded {
+		return ErrSessionEnded
+	}
+	m.trafficMu.Lock()
+	delete(m.traffic, sessionID)
+	m.trafficMu.Unlock()
+
+	sc := *s
+	sc.RequestCount = 0
+	return m.sessions.Update(ctx, &sc)
+}
+
 // ============================================================================
 // Viewer leases
 // ============================================================================

@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.5.2
+  version: 0.5.3
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
     - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
@@ -15,6 +15,7 @@ info:
     - 会话结束规则失效（M4，需求 6.6/F4.5/决策13）：抓包会话一旦结束（页面关闭/最后一个查看者释放/心跳超时/手动断开），服务端把该设备所有 enabled=true 的 Mock 规则批量置为 enabled=false 并 Bump 规则版本；规则不删除、仍在 Web 规则列表中，下次建立会话后由用户从历史规则手动一键重新启用。SDK 拉到的新规则集全为 disabled，不再自动生效。
     - 7 天滑动清理（M4，F8.3/决策15）：Mock 规则及其 source 快照持久化保留，默认 7 天（服务端配置项），滑动窗口起点为 lastUsedAt。命中回包、Web 编辑保存、Web toggle 启停三类操作刷新 lastUsedAt；心跳/规则版本轮询/Web 纯浏览不刷新。过期规则连同其 source 快照自动删除。
     - 协议解码器增强（M4）：SDK 暴露 setBodyDecoder 注入点，由各 App 把二进制私有协议（如 xcp）解成可读 UTF-8 文本；解码结果以 TrafficEntry.responseBodyDecoded / MockRuleSource.responseBodyDecoded 独立通道上传展示，原始 base64 仍只用于回放。
+    - 日志删除（M9.5）：Web 可单条删除（DELETE /traffic/{id}）或清空（DELETE /sessions/{id}/traffic）会话内临时流量；只作用于日志展示，不触碰已持久化的 Mock 规则（日志与规则互相独立）。
     - 会话结束即删（M9）：用户视角只有当前会话。会话结束（同 M4 的四条结束路径）时服务端删除该会话记录及其临时流量；GET /sessions 仅返回激活中的会话；对已结束（已删除）会话的 GET /sessions/{id} 与会话流量访问返回 404 session_not_found。规则不受影响——保留并自动禁用（见 M4）。
     - 规则备注与编辑语义（M5，M7 收窄）：MockRule 新增 note（字符串，可空，单条覆盖式更新，不做编辑历史）。创建（POST）时 note 可空；编辑（PUT）时 note 必须非空——仅当请求体实际改动 response 内容（statusCode/headers/body 与现值不一致）时校验（空或纯空白返回 400）；纯开关操作（response 原样回传、仅 enabled 变化）note 可空，未编辑的"Mock 此请求"规则可直接启用。匹配键 method/path 不可改——PUT 请求体改用独立的 UpdateMockRuleInput（不含 method/path），编辑只允许改 response（statusCode/headers/body）与 note、enabled。编辑成功刷新 lastUsedAt（与 M4 既有口径一致）。note 为纯管理面字段，不参与匹配、不下发给 SDK。
     - 实现状态：每个 path 用 x-milestone 标注实现阶段（m1/m2/m3/m4/m5/m6），当前阶段之外的仅契约定义、未实现。
@@ -311,6 +312,22 @@ paths:
                 $ref: '#/components/schemas/TrafficEntry'
         '404':
           $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [traffic]
+      x-milestone: m9
+      summary: 删除单条日志（M9.5，Web 每行「删除」）
+      description: |
+        删除一条会话内临时流量记录，仅作用于日志展示；不影响任何已持久化的 Mock 规则
+        （日志与规则互相独立）。条目不存在（含已结束/已删除会话中的条目）返回 404 not_found，
+        调用方按幂等容错处理。
+      operationId: deleteTraffic
+      parameters:
+        - $ref: '#/components/parameters/TrafficIdPath'
+      responses:
+        '204':
+          description: 已删除
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /sessions/{id}/traffic:
     get:
@@ -352,6 +369,21 @@ paths:
                       $ref: '#/components/schemas/TrafficEntry'
                   total:
                     type: integer
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [traffic]
+      x-milestone: m9
+      summary: 清空会话流量（M9.5，Web「清空」）
+      description: |
+        清空当前会话的全部临时流量并把会话请求计数重置为 0（时间线重开，新流量继续累积）。
+        仅作用于日志展示，不影响任何已持久化的 Mock 规则。未知会话返回 404 session_not_found。
+      operationId: clearSessionTraffic
+      parameters:
+        - $ref: '#/components/parameters/SessionIdPath'
+      responses:
+        '204':
+          description: 已清空
         '404':
           $ref: '#/components/responses/NotFound'
 

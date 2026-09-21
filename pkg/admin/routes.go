@@ -307,6 +307,8 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+captureAPIPrefix+"/traffic", a.handleUploadTraffic)
 	mux.HandleFunc("GET "+captureAPIPrefix+"/traffic/{id}", a.handleGetTraffic)
 	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions/{id}/traffic", a.handleListSessionTraffic)
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/traffic/{id}", a.handleDeleteTraffic)
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}/traffic", a.handleClearSessionTraffic)
 
 	// Mock rules (M3): Web CRUD/toggle + SDK incremental snapshot pull.
 	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.handleListMockRules)

@@ -329,14 +329,55 @@ function renderTraffic(entries) {
       '<span class="t-url">' + esc(e.path || e.url) + (e.query ? "?" + esc(e.query) : "") + "</span>" +
       '<span class="t-status ' + statusCls + '">' + (e.statusCode ?? "ERR") + "</span>" +
       '<span class="t-dur">' + e.durationMs + "ms</span>" +
-      '<span class="t-time">' + clockTime(e.timestamp) + "</span>";
+      '<span class="t-time">' + clockTime(e.timestamp) + "</span>" +
+      '<button class="t-del" title="删除该日志（不影响已创建的 Mock 规则）">✕</button>';
     el.onclick = () => {
       detail._activeTraffic = e.id;
       renderTrafficDetail(e);
       box.querySelectorAll(".traffic-row").forEach((r) =>
         r.classList.toggle("active", r === el));
     };
+    el.querySelector(".t-del").onclick = (ev) => {
+      ev.stopPropagation();   // 只删日志，不触发详情
+      deleteTrafficEntry(e);
+    };
     box.appendChild(el);
+  }
+}
+
+/** M9.5：删除单条日志。连接中同步删服务端该条流量（该条可能属于当前会话；
+ *  属于已删旧会话则 404 容错）。只动日志，不影响已创建的 Mock 规则。 */
+async function deleteTrafficEntry(e) {
+  if (!detail) return;
+  pageLog = pageLog.filter((x) => x.id !== e.id);
+  if (detail.sessionId) {
+    try { await fetch(API + "/traffic/" + encodeURIComponent(e.id), { method: "DELETE" }); } catch { /* 容错 */ }
+  }
+  if (detail._activeTraffic === e.id) {
+    detail._activeTraffic = null;
+    $("trafficDetail").innerHTML = '<div class="empty">点击左侧请求或规则查看详情。</div>';
+    showDetailPane("traffic");
+  }
+  renderTraffic(pageLog);
+}
+
+/** M9.5：清空本页历史日志。连接中同步清服务端当前会话流量（防轮询"复活"）；
+ *  断开状态只清前端。只动日志，不影响已创建的 Mock 规则。 */
+async function clearTrafficLog() {
+  if (!detail) return;
+  pageLog = [];
+  const sid = detail.sessionId;
+  if (sid) {
+    try { await fetch(API + "/sessions/" + encodeURIComponent(sid) + "/traffic", { method: "DELETE" }); } catch { /* 容错 */ }
+    renderTraffic(pageLog);   // live：共 0 条，新流量继续累积
+  } else {
+    $("trafficInfo").textContent = "";
+    $("trafficList").innerHTML = '<div class="empty">暂无进行中的会话。点击「连接」开始抓包。</div>';
+  }
+  if (detail._activeTraffic) {
+    detail._activeTraffic = null;
+    $("trafficDetail").innerHTML = '<div class="empty">点击左侧请求或规则查看详情。</div>';
+    showDetailPane("traffic");
   }
 }
 
@@ -789,6 +830,8 @@ window.addEventListener("pagehide", releaseAllViewers);
 
 function start() {
   $("backBtn").onclick = backToList;
+  const clearBtn = $("trafficClearBtn");
+  if (clearBtn) clearBtn.onclick = clearTrafficLog;
   const m = location.hash.match(/^#\/device\/([^/]+)\/(.+)$/);
   if (m) {
     enterDetail(decodeURIComponent(m[1]), decodeURIComponent(m[2]));

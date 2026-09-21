@@ -371,6 +371,29 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, TrafficListResponse{Entries: entries, Total: total})
 }
 
+// handleDeleteTraffic handles DELETE /api/v1/traffic/{id} (Web per-row
+// "删除"; M9.5). 204 on success; 404 not_found for an unknown entry — the Web
+// treats delete as best-effort (the entry may belong to an already-deleted
+// session).
+func (a *API) handleDeleteTraffic(w http.ResponseWriter, r *http.Request) {
+	if err := a.captureManager.DeleteTraffic(r.Context(), r.PathValue("id")); err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleClearSessionTraffic handles DELETE /api/v1/sessions/{id}/traffic
+// (Web "清空日志"; M9.5). 204 on success; 404 session_not_found for an unknown
+// session.
+func (a *API) handleClearSessionTraffic(w http.ResponseWriter, r *http.Request) {
+	if err := a.captureManager.ClearSessionTraffic(r.Context(), r.PathValue("id")); err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // queryInt parses an integer query parameter, returning def when the parameter
 // is absent or empty.
 func queryInt(r *http.Request, key string, def int) (int, error) {

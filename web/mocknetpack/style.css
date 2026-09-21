@@ -48,8 +48,10 @@ button.mini.active { background: var(--primary); color: #fff; }
                  padding: 14px 16px; margin-bottom: 14px; }
 #backBtn { margin-bottom: 12px; }
 
-.section-title { font-size: 13px; font-weight: 600; color: var(--text); margin: 16px 0 8px; }
-.section-title .sub { font-weight: 400; }
+.section-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
+                 color: var(--text); margin: 16px 0 8px; }
+.section-title .sub { font-weight: 400; flex: 1; }
+#trafficClearBtn { margin-left: auto; }
 
 .traffic-row { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
                padding: 8px 14px; margin-bottom: 6px; cursor: pointer; display: flex;
@@ -72,6 +74,10 @@ button.mini.active { background: var(--primary); color: #fff; }
 .st-5xx { color: #c92a2a; }
 .st-err { color: #8a9099; }
 .t-dur, .t-time { flex: none; color: var(--muted); font-size: 12px; }
+/* M9.5 单条日志删除按钮 */
+.t-del { flex: none; border: 0; background: transparent; color: var(--muted);
+         font-size: 13px; line-height: 1; padding: 2px 6px; cursor: pointer; border-radius: 4px; }
+.t-del:hover { color: var(--danger); background: #fdeee8; }
 
 .detail-panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
                 padding: 14px 16px; font-size: 13px; }

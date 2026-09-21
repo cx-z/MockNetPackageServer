@@ -352,10 +352,35 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	require.Len(t, page.Entries, 1)
 	assert.Equal(t, "GET", page.Entries[0].Method)
 
+	// M9.5: single-entry delete (Web per-row 删除) — 204, detail 404, total drops.
+	var errResp ErrorResponse
+	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/traffic/"+first.ID, nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/traffic/"+first.ID, nil, &errResp)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "not_found", errResp.Error)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 1, list.Total)
+
+	// M9.5: clear session traffic (Web 清空日志) — 204, total 0, session stays.
+	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 0, list.Total)
+	require.Len(t, list.Entries, 0)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &gotSession)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 0, gotSession.RequestCount)
+
+	// Unknown traffic id -> 404.
+	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/traffic/nope", nil, nil)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+
 	// End session (M9: 结束即删) -> session and its traffic are gone: 404.
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
-	var errResp ErrorResponse
 	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &errResp)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, "session_not_found", errResp.Error)
