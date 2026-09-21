@@ -153,6 +153,12 @@ async function connect(d) {
     }
     if (detail && detail.app === d.app && detail.did === d.did) {
       await loadDetail();   // 详情页打开时刷新
+      // M8.1：绑定新会话并启动流量轮询。
+      // 此前仅 loadDetail()：若旧历史会话仍被选中（且在会话列表中），其选中守卫会跳过
+      // selectSession，新会话不绑定、轮询不启动 → 必须退回重进才恢复。此处显式选中新会话。
+      if (session && session.id) {
+        selectSession(session.id);
+      }
     } else {
       await loadDevices();
     }
