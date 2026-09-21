@@ -26,7 +26,8 @@ function apiFetch(path, options = {}) {
 
 // sessionId -> { viewerId, timer }
 const viewers = new Map();
-let pollTimer = null;        // 列表轮询
+let pollTimer = null;
+let detailPollTimer = null;        // 列表轮询
 let trafficTimer = null;     // 请求流轮询
 let detail = null;           // { app, did, sessionId }
 let ruleStore = [];          // 当前规则列表（供详情/删除使用）
@@ -239,6 +240,10 @@ async function loadDetail() {
     loadRules();
     // M9：只绑定当前抓包会话（无则空态），不展示历史会话。
     bindSession(cur && cur.status === "capturing" ? cur : null);
+    // M7.2.4: 详情页定时刷新设备状态（熄屏重启后 offline→online 同步）
+    if (!detailPollTimer) {
+      detailPollTimer = setInterval(loadDetail, POLL_MS);
+    }
   } catch (e) {
     showError("加载设备详情失败：" + e.message);
   }
@@ -430,6 +435,7 @@ function renderTrafficDetail(e) {
 
 function backToList() {
   stopTrafficPoll();
+  if (detailPollTimer) { clearInterval(detailPollTimer); detailPollTimer = null; }
   if (detail && detail.sessionId) stopViewer(detail.sessionId);
   detail = null;
   pageLog = [];        // M9.4 诉求 4：返回设备列表清空页面日志
@@ -996,6 +1002,15 @@ async function doLogout() {
   }
   setToken(null);
   authUser = null;
+  // M7.2.4: 清详情页状态/轮询/会话，回到列表页，避免换账号后残留旧设备
+  stopTrafficPoll();
+  if (detail && detail.sessionId) stopViewer(detail.sessionId);
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  detail = null;
+  pageLog = [];
+  location.hash = "";
+  $("detailView").classList.add("hidden");
+  $("listView").classList.remove("hidden");
   showAuth();
 }
 
@@ -1012,13 +1027,8 @@ function enterApp() {
   $("backBtn").onclick = backToList;
   const clearBtn = $("trafficClearBtn");
   if (clearBtn) clearBtn.onclick = clearTrafficLog;
-  const m = location.hash.match(/^#\/device\/([^/]+)\/(.+)$/);
-  if (m) {
-    enterDetail(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
-  } else {
-    loadDevices();
-    pollTimer = setInterval(loadDevices, POLL_MS);
-  }
+  loadDevices();
+  pollTimer = setInterval(loadDevices, POLL_MS);
 }
 
 // 启动：有 token 先验 /auth/me（刷新保持登录）；无效/无 token 进登录门禁。
