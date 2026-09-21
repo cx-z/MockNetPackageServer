@@ -142,24 +142,8 @@ function render(devices) {
       renameBtn.onclick = (e) => { e.stopPropagation(); renameDevice(d); };
     }
 
-    const actions = document.createElement("div");
-    actions.className = "actions";
-    const btn = document.createElement("button");
-    if (d.currentSession && d.currentSession.status === "capturing") {
-      btn.textContent = "断开";
-      btn.className = "danger";
-      btn.onclick = (e) => { e.stopPropagation(); disconnect(d); };
-    } else {
-      btn.textContent = "连接";
-      btn.disabled = d.status === "offline";
-      btn.title = d.status === "offline" ? "设备离线（心跳超时），无法连接" : "";
-      btn.onclick = (e) => { e.stopPropagation(); connect(d); };
-    }
-    actions.appendChild(btn);
-
     card.appendChild(dot);
     card.appendChild(meta);
-    card.appendChild(actions);
     $("list").appendChild(card);
   }
   $("updated").textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN");
@@ -243,6 +227,7 @@ async function loadDetail() {
     if (cur && cur.status === "capturing") {
       toggle.textContent = "断开";
       toggle.className = "small danger";
+      toggle.disabled = false;
       toggle.onclick = () => disconnect(dev);
     } else {
       toggle.textContent = "连接";
