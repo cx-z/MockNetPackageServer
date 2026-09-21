@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.5.1
+  version: 0.5.2
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
     - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
@@ -12,9 +12,10 @@ info:
     - 流量语义：全量抓包、会话内临时可见、会话结束清空（被 Mock 的请求持久化，M3 起）。
     - 推送通道：Web 请求流按 2s 轮询 GET /sessions/{id}/traffic 实现秒级可见（已定，不新增推送端点）。
     - Mock 规则语义（M3）：规则=接口回包，Method+URL 路径匹配；同一接口运行时仅一条 effective=true（异常态多条 enabled 则该接口全部 effective=false、不回包，并在 MockRuleList.conflicts 上报前端弹窗）；规则持久化但 SDK 仅在抓包会话 capturing 期间应用；"Mock 此请求"固化的真实请求快照（原始值+Mock 值）随规则持久化。
-    - 会话结束规则失效（M4，需求 6.6/F4.5/决策13）：抓包会话一旦结束（页面关闭/最后一个查看者释放/心跳超时/手动断开），服务端把该设备所有 enabled=true 的 Mock 规则批量置为 enabled=false 并 Bump 规则版本；规则不删除、仍在 Web 历史列表中，下次建立会话后由用户从历史规则手动一键重新启用。SDK 拉到的新规则集全为 disabled，不再自动生效。
+    - 会话结束规则失效（M4，需求 6.6/F4.5/决策13）：抓包会话一旦结束（页面关闭/最后一个查看者释放/心跳超时/手动断开），服务端把该设备所有 enabled=true 的 Mock 规则批量置为 enabled=false 并 Bump 规则版本；规则不删除、仍在 Web 规则列表中，下次建立会话后由用户从历史规则手动一键重新启用。SDK 拉到的新规则集全为 disabled，不再自动生效。
     - 7 天滑动清理（M4，F8.3/决策15）：Mock 规则及其 source 快照持久化保留，默认 7 天（服务端配置项），滑动窗口起点为 lastUsedAt。命中回包、Web 编辑保存、Web toggle 启停三类操作刷新 lastUsedAt；心跳/规则版本轮询/Web 纯浏览不刷新。过期规则连同其 source 快照自动删除。
     - 协议解码器增强（M4）：SDK 暴露 setBodyDecoder 注入点，由各 App 把二进制私有协议（如 xcp）解成可读 UTF-8 文本；解码结果以 TrafficEntry.responseBodyDecoded / MockRuleSource.responseBodyDecoded 独立通道上传展示，原始 base64 仍只用于回放。
+    - 会话结束即删（M9）：用户视角只有当前会话。会话结束（同 M4 的四条结束路径）时服务端删除该会话记录及其临时流量；GET /sessions 仅返回激活中的会话；对已结束（已删除）会话的 GET /sessions/{id} 与会话流量访问返回 404 session_not_found。规则不受影响——保留并自动禁用（见 M4）。
     - 规则备注与编辑语义（M5，M7 收窄）：MockRule 新增 note（字符串，可空，单条覆盖式更新，不做编辑历史）。创建（POST）时 note 可空；编辑（PUT）时 note 必须非空——仅当请求体实际改动 response 内容（statusCode/headers/body 与现值不一致）时校验（空或纯空白返回 400）；纯开关操作（response 原样回传、仅 enabled 变化）note 可空，未编辑的"Mock 此请求"规则可直接启用。匹配键 method/path 不可改——PUT 请求体改用独立的 UpdateMockRuleInput（不含 method/path），编辑只允许改 response（statusCode/headers/body）与 note、enabled。编辑成功刷新 lastUsedAt（与 M4 既有口径一致）。note 为纯管理面字段，不参与匹配、不下发给 SDK。
     - 实现状态：每个 path 用 x-milestone 标注实现阶段（m1/m2/m3/m4/m5/m6），当前阶段之外的仅契约定义、未实现。
 
@@ -141,7 +142,7 @@ paths:
       tags: [sessions]
       x-milestone: m1
       summary: 会话列表（按设备查询）
-      description: 返回该 (app, did) 的历史会话概要，按开始时间倒序。app、did 均为必填 query 参数（隔离强制）。
+      description: 返回该 (app, did) 的会话列表（M9 起仅当前激活会话；历史会话结束即删）。app、did 均为必填 query 参数（隔离强制）。
       operationId: listSessions
       parameters:
         - $ref: '#/components/parameters/AppQuery'
@@ -188,8 +189,10 @@ paths:
       description: |
         结束会话：SDK 停止采集与 Mock；清空会话临时流量记录；设备回到待命。
         与"最后一个查看者释放"、"心跳超时"同为会话结束路径。
+        M9（会话结束即删）：会话记录连同其临时流量一并删除，用户视角无历史会话；后续
+        访问该会话（GET /sessions/{id}、流量、上传）一律 404 session_not_found。
         会话结束（任意路径）统一副作用：该设备所有 enabled=true 的 Mock 规则批量置为
-        enabled=false 并 Bump 规则版本（需求 6.6/F4.5/决策13），规则不删除、仍在历史列表，
+        enabled=false 并 Bump 规则版本（需求 6.6/F4.5/决策13），规则不删除、仍在规则列表，
         下次建立会话后由用户手动一键重新启用。
       operationId: endSession
       parameters:
@@ -261,7 +264,7 @@ paths:
         临时语义：本会话流量仅会话存续期间可见，会话结束（页面关闭 / 心跳超时 / 强制断开）即清空；
         命中 Mock 的请求仍按临时流量上传（mocked=true，其响应即 Mock 回包），随会话结束一并清空；
         持久化保留的是规则及其 source 快照（原始值+Mock 值），不是每条命中流量。
-        仅接受激活会话内的流量：sessionId 不存在 → 404 session_not_found；会话已结束 → 409 session_ended。
+        仅接受激活会话内的流量：sessionId 不存在或会话已结束（M9 结束即删）→ 404 session_not_found。
       operationId: uploadTraffic
       requestBody:
         required: true
@@ -313,13 +316,12 @@ paths:
     get:
       tags: [traffic]
       x-milestone: m2
-      summary: 会话内流量列表（实时 + 历史）
+      summary: 会话内流量列表（实时）
       description: |
         Web 请求流数据源。推送通道已定为轮询：Web 每 2s 拉取本接口实现秒级可见（需求决策 #5，
         秒级即可、不做毫秒级保证），客户端用 limit 拉取最新条目并按 id 本地去重，不新增推送端点。
         排序：按 timestamp 升序返回（请求时间线）；Web 展示可自行倒序。
-        会话不存在 → 404 session_not_found；会话已结束 → 200 且 entries=[]、total=0
-        （临时流量已清空；会话对象本身仍在历史会话列表可见，requestCount 保留为结束时计数）。
+        会话不存在或已结束（M9 结束即删）→ 404 session_not_found；会话激活期间返回按 timestamp 升序的流量列表。
       operationId: listSessionTraffic
       parameters:
         - $ref: '#/components/parameters/SessionIdPath'
@@ -755,7 +757,7 @@ components:
     SessionStatus:
       type: string
       enum: [capturing, ended]
-      description: capturing=抓包中；ended=已结束
+      description: capturing=抓包中；ended=已结束（M9 起仅瞬时状态：会话结束即删除记录，不持久化 ended）
 
     CaptureSession:
       type: object
