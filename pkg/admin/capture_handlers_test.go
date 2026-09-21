@@ -108,11 +108,11 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 
-	var ended capture.CaptureSession
-	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &ended)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, capture.SessionStatusEnded, ended.Status)
-	require.NotNil(t, ended.EndedAt)
+	// M9 (会话结束即删): the session record is gone after disconnect.
+	var errResp ErrorResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &errResp)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "session_not_found", errResp.Error)
 
 	// Heartbeat now carries no session (SDK stops capture).
 	hb = HeartbeatResponse{}
@@ -213,19 +213,19 @@ func TestCaptureAPI_ViewerLifecycle(t *testing.T) {
 	assert.Equal(t, 1, got.ViewerCount)
 	assert.Equal(t, capture.SessionStatusCapturing, got.Status)
 
-	// Release the last viewer: session ends.
+	// Release the last viewer: session ends and its record is deleted (M9).
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID+"/viewers/v2", nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
-	doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &got)
-	assert.Equal(t, capture.SessionStatusEnded, got.Status)
-	assert.Equal(t, 0, got.ViewerCount)
-
-	// Registering a viewer on an ended session is rejected.
 	var errResp ErrorResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &errResp)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "session_not_found", errResp.Error)
+
+	// Registering a viewer on a deleted session is rejected.
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions/"+sessionID+"/viewers",
 		RegisterViewerRequest{ViewerID: "v3"}, &errResp)
-	require.Equal(t, http.StatusConflict, resp.StatusCode)
-	assert.Equal(t, "session_ended", errResp.Error)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "session_not_found", errResp.Error)
 }
 
 func TestCaptureAPI_ErrorPaths(t *testing.T) {
@@ -352,15 +352,13 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	require.Len(t, page.Entries, 1)
 	assert.Equal(t, "GET", page.Entries[0].Method)
 
-	// End session -> traffic cleared: empty list + total 0, detail 404.
+	// End session (M9: 结束即删) -> session and its traffic are gone: 404.
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
-	var cleared TrafficListResponse
-	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &cleared)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, 0, cleared.Total)
-	assert.Len(t, cleared.Entries, 0)
 	var errResp ErrorResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &errResp)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "session_not_found", errResp.Error)
 	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/traffic/"+first.ID, nil, &errResp)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, "not_found", errResp.Error)
@@ -426,11 +424,11 @@ func TestCaptureAPI_TrafficErrors(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, "session_not_found", errResp.Error)
 
-	// Ended session upload -> 409 session_ended.
+	// Ended session (M9: 结束即删) upload -> 404 session_not_found.
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
 		TrafficUploadRequest{App: "app", Did: "d1", SessionID: sessionID, Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
-	require.Equal(t, http.StatusConflict, resp.StatusCode)
-	assert.Equal(t, "session_ended", errResp.Error)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "session_not_found", errResp.Error)
 }

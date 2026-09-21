@@ -152,17 +152,14 @@ func TestCaptureManager_EndSession(t *testing.T) {
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
-	got, err := m.GetSession(ctx, s.ID)
-	if err != nil {
-		t.Fatalf("GetSession() = %v", err)
-	}
-	if got.Status != capture.SessionStatusEnded || got.EndedAt == nil {
-		t.Errorf("GetSession() = %+v, want ended with EndedAt", got)
+	// M9 (会话结束即删): the session record is deleted on end.
+	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("GetSession() after end = %v, want ErrSessionNotFound (M9: 结束即删)", err)
 	}
 
-	// Idempotent.
-	if err := m.EndSession(ctx, s.ID); err != nil {
-		t.Errorf("EndSession(again) = %v, want nil (idempotent)", err)
+	// Ending a deleted session reports not found (Web treats 404 as success).
+	if err := m.EndSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("EndSession(again) = %v, want ErrSessionNotFound (record deleted)", err)
 	}
 
 	// Device list reflects no active session after end.
@@ -222,16 +219,12 @@ func TestCaptureManager_ViewerLifecycle_LastViewerEndsSession(t *testing.T) {
 		t.Errorf("renew changed ViewerCount = %d, want 1", got.ViewerCount)
 	}
 
-	// Release the last viewer: session ends.
+	// Release the last viewer: session ends and its record is deleted (M9).
 	if err := m.ReleaseViewer(ctx, s.ID, "viewer-2"); err != nil {
 		t.Fatalf("ReleaseViewer(2) = %v", err)
 	}
-	got, _ = m.GetSession(ctx, s.ID)
-	if got.Status != capture.SessionStatusEnded || got.ViewerCount != 0 {
-		t.Errorf("after last release: status=%q count=%d; want ended 0", got.Status, got.ViewerCount)
-	}
-	if got.EndedAt == nil {
-		t.Error("EndedAt not set after last viewer release")
+	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("GetSession() after last release = %v, want ErrSessionNotFound (M9: 结束即删)", err)
 	}
 
 	// Releasing an unknown viewer is idempotent.
@@ -257,9 +250,8 @@ func TestCaptureManager_HeartbeatTimeout_EndsSession(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		got, err := m.GetSession(ctx, s.ID)
-		if err == nil && got.Status == capture.SessionStatusEnded {
-			return // session ended by health check
+		if _, err := m.GetSession(ctx, s.ID); errors.Is(err, store.ErrSessionNotFound) {
+			return // session ended (M9: record deleted) by health check
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -292,12 +284,8 @@ func TestCaptureManager_ViewerLeaseExpiry_EndsSession(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		got, err := m.GetSession(ctx, s.ID)
-		if err == nil && got.Status == capture.SessionStatusEnded {
-			if got.ViewerCount != 0 {
-				t.Errorf("ViewerCount = %d, want 0 after expiry", got.ViewerCount)
-			}
-			return
+		if _, err := m.GetSession(ctx, s.ID); errors.Is(err, store.ErrSessionNotFound) {
+			return // session ended (M9: record deleted) after viewer lease expiry
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -392,13 +380,13 @@ func TestCaptureManager_UploadTraffic_Validation(t *testing.T) {
 		t.Errorf("UploadTraffic(cross-device) = %v, want ErrSessionNotFound", err)
 	}
 
-	// Ended session -> ErrSessionEnded.
+	// Ended session (M9: record deleted) -> ErrSessionNotFound.
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
 	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
-		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); !errors.Is(err, store.ErrSessionEnded) {
-		t.Errorf("UploadTraffic(ended session) = %v, want ErrSessionEnded", err)
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("UploadTraffic(ended session) = %v, want ErrSessionNotFound (M9: 结束即删)", err)
 	}
 }
 
@@ -522,21 +510,15 @@ func TestCaptureManager_ListSessionTraffic_PagingAndClear(t *testing.T) {
 		t.Errorf("ListSessionTraffic(unknown) = %v, want ErrSessionNotFound", err)
 	}
 
-	// Ended session: traffic cleared -> empty list with total 0, entry gone,
-	// but RequestCount keeps its final value.
+	// Ended session (M9: record deleted): traffic/entry/session are gone.
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
-	list, total, err = m.ListSessionTraffic(ctx, s.ID, 0, 0)
-	if err != nil {
-		t.Fatalf("ListSessionTraffic(ended) = %v", err)
+	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("ListSessionTraffic(ended) = %v, want ErrSessionNotFound (M9: 结束即删)", err)
 	}
-	if len(list) != 0 || total != 0 {
-		t.Errorf("after end: len=%d total=%d; want 0/0", len(list), total)
-	}
-	got, _ := m.GetSession(ctx, s.ID)
-	if got.RequestCount != 5 {
-		t.Errorf("RequestCount after end = %d, want 5", got.RequestCount)
+	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("GetSession(after end) = %v, want ErrSessionNotFound", err)
 	}
 	if _, err := m.GetTraffic(ctx, "any-old-id"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetTraffic(after end) = %v, want ErrNotFound", err)
@@ -595,12 +577,8 @@ func TestCaptureManager_HeartbeatTimeout_ClearsTraffic(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
-		if err == nil && total == 0 && len(list) == 0 {
-			got, _ := m.GetSession(ctx, s.ID)
-			if got.Status == capture.SessionStatusEnded {
-				return
-			}
+		if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); errors.Is(err, store.ErrSessionNotFound) {
+			return // session ended (M9: record + traffic deleted)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

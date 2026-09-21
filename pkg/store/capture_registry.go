@@ -328,6 +328,11 @@ func (m *CaptureManager) ActivateSession(ctx context.Context, app, did string) (
 // EndSession ends a capture session (forced disconnect, last viewer released,
 // or heartbeat timeout). Idempotent: ending an already-ended session is a
 // no-op. Viewer leases for the session are cleared.
+//
+// M9 (会话结束即删): ending a session deletes its record — the user's view
+// keeps only the current session, no history. Mock rules are NOT deleted:
+// they persist per device and are disabled on session end (M4/F4.5 决策13),
+// re-enabled manually on the next session.
 func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	s, err := m.sessions.Get(ctx, id)
 	if err != nil {
@@ -344,20 +349,19 @@ func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	delete(m.viewers, id)
 	m.viewerMu.Unlock()
 
-	// Clear the session's temporary traffic: a session that has ended no
-	// longer exposes its traffic (contract: ended session => empty list).
+	// Clear the session's temporary traffic: an ended session no longer
+	// exposes its traffic (contract: ended session => empty list).
 	m.trafficMu.Lock()
 	delete(m.traffic, id)
 	m.trafficMu.Unlock()
 
-	sc := *s
-	sc.End(time.Now())
-	sc.ViewerCount = 0
-	if err := m.sessions.Update(ctx, &sc); err != nil {
+	// M9: 结束即删 — delete the session record instead of keeping an
+	// "ended" entry. The device and rule stores are untouched.
+	if err := m.sessions.Delete(ctx, id); err != nil {
 		return err
 	}
 	// M4 (F4.5/决策13): any session end disables all of the device mock rules;
-	// they stay in Web history but must be re-enabled manually.
+	// they stay but must be re-enabled manually.
 	m.disableDeviceRules(ctx, s.App, s.Did)
 	return nil
 }
@@ -614,17 +618,16 @@ func (m *CaptureManager) ReleaseViewer(ctx context.Context, sessionID, viewerID 
 		return err
 	}
 
+	// M9: last viewer released while capturing => the session ends and its
+	// record is deleted (EndSession: clears traffic, disables rules, removes).
+	if count == 0 && s.Status == capture.SessionStatusCapturing {
+		return m.EndSession(ctx, sessionID)
+	}
+
 	sc := *s
 	sc.ViewerCount = count
-	wasCapturing := sc.Status == capture.SessionStatusCapturing
-	if count == 0 && wasCapturing {
-		sc.End(time.Now())
-	}
 	if err := m.sessions.Update(ctx, &sc); err != nil {
 		return err
-	}
-	if count == 0 && wasCapturing {
-		m.disableDeviceRules(ctx, s.App, s.Did)
 	}
 	return nil
 }
@@ -737,14 +740,10 @@ func (m *CaptureManager) checkViewerLeases(ctx context.Context) {
 		if s.Status != capture.SessionStatusCapturing {
 			continue
 		}
-		sc := *s
-		sc.ViewerCount = 0
-		sc.End(now)
-		if err := m.sessions.Update(ctx, &sc); err != nil {
+		// M9: last viewer lease expired => end = delete the session record.
+		if err := m.EndSession(ctx, sessionID); err != nil {
 			m.log.Warn("capture health check: end session after viewer expiry failed", "session", sessionID, "error", err)
-			continue
 		}
-		m.disableDeviceRules(ctx, s.App, s.Did)
 	}
 }
 
