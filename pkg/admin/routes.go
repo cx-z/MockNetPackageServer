@@ -293,28 +293,36 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	// MockNetPack capture API (contract: server/openapi/mocknetpack.yaml).
 	// All endpoints live under /api/v1 (contract base path), keeping them
 	// separate from mockd's native /sessions proxy-recording routes.
+	//
+	// M7.1.3 auth split (拍板 #6):
+	//   - SDK-facing routes (register, heartbeat, traffic upload) stay OPEN —
+	//     the SDK carries no credentials; did is its identity (unknown-did
+	//     rejection lands in M7.2.3).
+	//   - Web-facing routes (device list/detail, session control, viewer
+	//     leases, traffic query/delete, mock-rule CRUD) require a logged-in
+	//     Bearer token via requireAuth (--no-auth bypasses for smoke).
 	// =========================================================================
 	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/register", a.handleRegisterDevice)
 	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/heartbeat", a.handleDeviceHeartbeat)
-	mux.HandleFunc("GET "+captureAPIPrefix+"/devices", a.handleListDevices)
-	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}", a.handleGetDevice)
-	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions", a.handleActivateSession)
-	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions", a.handleListSessions)
-	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions/{id}", a.handleGetSession)
-	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}", a.handleEndSession)
-	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions/{id}/viewers", a.handleRegisterViewer)
-	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}/viewers/{viewerId}", a.handleReleaseViewer)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/devices", a.requireAuth(a.handleListDevices))
+	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}", a.requireAuth(a.handleGetDevice))
+	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions", a.requireAuth(a.handleActivateSession))
+	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions", a.requireAuth(a.handleListSessions))
+	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions/{id}", a.requireAuth(a.handleGetSession))
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}", a.requireAuth(a.handleEndSession))
+	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions/{id}/viewers", a.requireAuth(a.handleRegisterViewer))
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}/viewers/{viewerId}", a.requireAuth(a.handleReleaseViewer))
 	mux.HandleFunc("POST "+captureAPIPrefix+"/traffic", a.handleUploadTraffic)
-	mux.HandleFunc("GET "+captureAPIPrefix+"/traffic/{id}", a.handleGetTraffic)
-	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions/{id}/traffic", a.handleListSessionTraffic)
-	mux.HandleFunc("DELETE "+captureAPIPrefix+"/traffic/{id}", a.handleDeleteTraffic)
-	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}/traffic", a.handleClearSessionTraffic)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/traffic/{id}", a.requireAuth(a.handleGetTraffic))
+	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions/{id}/traffic", a.requireAuth(a.handleListSessionTraffic))
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/traffic/{id}", a.requireAuth(a.handleDeleteTraffic))
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}/traffic", a.requireAuth(a.handleClearSessionTraffic))
 
 	// Mock rules (M3): Web CRUD/toggle + SDK incremental snapshot pull.
-	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.handleListMockRules)
-	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.handleCreateMockRule)
-	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.handleUpdateMockRule)
-	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.handleDeleteMockRule)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.requireAuth(a.handleListMockRules))
+	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.requireAuth(a.handleCreateMockRule))
+	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.requireAuth(a.handleUpdateMockRule))
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.requireAuth(a.handleDeleteMockRule))
 
 	// Account system (M7.1, contract v0.6.0): open registration (dev only),
 	// login (server-issued token), logout (server-side revocation), me.
