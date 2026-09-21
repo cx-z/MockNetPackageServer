@@ -1,8 +1,6 @@
 package admin
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -43,24 +41,17 @@ func updateBody(body, note string, enabled *bool) map[string]any {
 	return m
 }
 
-
-// seedMockRuleDevice registers the default com.example.app/dev-1 device so the
+// seedMockRuleDevice registers the default com.example.integrating/dev-1 device so the
 // mock-rule ownership check (M7.2.2) has a device to authorize.
 func seedMockRuleDevice(t *testing.T, srv *httptest.Server) {
 	t.Helper()
-	var sb bytes.Buffer
-	_ = json.NewEncoder(&sb).Encode(map[string]string{"app": "com.example.app", "did": "dev-1"})
-	resp, err := http.Post(srv.URL+"/api/v1/devices/register", "application/json", &sb)
-	if err != nil || (resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK) {
-		t.Fatalf("seed device failed: status=%v err=%v", resp.StatusCode, err)
-	}
-	resp.Body.Close()
+	mustSeedDevice(t, srv, "com.example.integrating", "dev-1")
 }
 
 func TestMockRuleAPI_CRUDAndVersion(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	seedMockRuleDevice(t, srv)
-	base := srv.URL + "/api/v1/devices/com.example.app/dev-1/mock-rules"
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
 
 	// Create (default disabled).
 	var created capture.MockRuleView
@@ -103,7 +94,7 @@ func TestMockRuleAPI_CRUDAndVersion(t *testing.T) {
 func TestMockRuleAPI_SameInterfaceConflict(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	seedMockRuleDevice(t, srv)
-	base := srv.URL + "/api/v1/devices/com.example.app/dev-1/mock-rules"
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
 
 	// First enabled rule.
 	var r1 capture.MockRuleView
@@ -133,7 +124,7 @@ func TestMockRuleAPI_SameInterfaceConflict(t *testing.T) {
 func TestMockRuleAPI_ValidationAndNotFound(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	seedMockRuleDevice(t, srv)
-	base := srv.URL + "/api/v1/devices/com.example.app/dev-1/mock-rules"
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
 
 	// Missing method.
 	resp := doJSON(t, http.MethodPost, base, map[string]any{"path": "/a", "response": map[string]any{"statusCode": 200}}, nil)
@@ -157,18 +148,18 @@ func TestMockRuleAPI_HeartbeatCarriesRulesVersion(t *testing.T) {
 	// Register the device (heartbeat requires it).
 	var reg RegisterDeviceResponse
 	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register", map[string]any{
-		"app": "com.example.app", "did": "dev-1",
+		"app": "com.example.integrating", "did": "dev-1",
 	}, &reg)
 
 	var hb HeartbeatResponse
-	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.app/dev-1/heartbeat", nil, &hb)
+	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.integrating/dev-1/heartbeat", nil, &hb)
 	assert.Equal(t, 0, hb.RulesVersion, "no rules yet")
 
 	// Create a rule -> version 1.
-	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.app/dev-1/mock-rules",
+	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.integrating/dev-1/mock-rules",
 		ruleBody("GET", "/api/b", false), nil)
 
-	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.app/dev-1/heartbeat", nil, &hb)
+	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.integrating/dev-1/heartbeat", nil, &hb)
 	assert.Equal(t, 1, hb.RulesVersion, "heartbeat reports bumped rule version")
 }
 
@@ -177,7 +168,7 @@ func TestMockRuleAPI_HeartbeatCarriesRulesVersion(t *testing.T) {
 func TestMockRuleAPI_EditNoteValidation(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	seedMockRuleDevice(t, srv)
-	base := srv.URL + "/api/v1/devices/com.example.app/dev-1/mock-rules"
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
 
 	var created capture.MockRuleView
 	doJSON(t, http.MethodPost, base, ruleBody("POST", "/api/a", false), &created)
@@ -210,7 +201,7 @@ func TestMockRuleAPI_EditNoteValidation(t *testing.T) {
 func TestMockRuleAPI_EditOmitsEnabledKeepsSwitch(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	seedMockRuleDevice(t, srv)
-	base := srv.URL + "/api/v1/devices/com.example.app/dev-1/mock-rules"
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
 
 	// Start disabled.
 	var created capture.MockRuleView

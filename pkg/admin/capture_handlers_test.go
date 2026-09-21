@@ -34,6 +34,19 @@ func newCaptureTestAPI(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// mustSeedDevice creates a device via the Web manual-registration endpoint
+// (M7.2.3 retired SDK auto-register). no-auth test mode stamps owner="".
+func mustSeedDevice(t *testing.T, srv *httptest.Server, app, did string) {
+	t.Helper()
+	var sb bytes.Buffer
+	_ = json.NewEncoder(&sb).Encode(map[string]string{"app": app, "did": did, "name": "seed-" + did})
+	resp, err := http.Post(srv.URL+"/api/v1/devices", "application/json", &sb)
+	if err != nil || (resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK) {
+		t.Fatalf("seed device %s/%s failed: status=%v err=%v", app, did, resp.StatusCode, err)
+	}
+	resp.Body.Close()
+}
+
 func doJSON(t *testing.T, method, url string, body any, out any) *http.Response {
 	t.Helper()
 	var buf bytes.Buffer
@@ -55,13 +68,14 @@ func doJSON(t *testing.T, method, url string, body any, out any) *http.Response 
 func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 
-	// Register.
+	// M7.2.3: device must pre-exist; register refreshes metadata.
+	mustSeedDevice(t, srv, "com.example.integrating", "dev-1")
 	var reg RegisterDeviceResponse
 	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
-		RegisterDeviceRequest{App: "com.example.app", Did: "dev-1", OSVersion: "17.5", SDKVersion: "0.1.0"}, &reg)
+		RegisterDeviceRequest{App: "com.example.integrating", Did: "dev-1", OSVersion: "17.5", SDKVersion: "0.1.0"}, &reg)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NotNil(t, reg.Device)
-	assert.Equal(t, "com.example.app", reg.Device.App)
+	assert.Equal(t, "com.example.integrating", reg.Device.App)
 	assert.Equal(t, "dev-1", reg.Device.Did)
 	assert.Equal(t, capture.DeviceStatusIdle, reg.Device.Status)
 	assert.Equal(t, 20, reg.ServerConfig.HeartbeatIntervalSeconds)
@@ -69,7 +83,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 
 	// Heartbeat with no session.
 	var hb HeartbeatResponse
-	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.app/dev-1/heartbeat", nil, &hb)
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.integrating/dev-1/heartbeat", nil, &hb)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, hb.OK)
 	assert.Nil(t, hb.Session, "heartbeat before activation must carry no session")
@@ -77,14 +91,14 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	// Activate from Web.
 	var session capture.CaptureSession
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
-		ActivateSessionRequest{App: "com.example.app", Did: "dev-1"}, &session)
+		ActivateSessionRequest{App: "com.example.integrating", Did: "dev-1"}, &session)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	assert.Equal(t, capture.SessionStatusCapturing, session.Status)
 	sessionID := session.ID
 
 	// Heartbeat now carries the session (SDK starts capture).
 	hb = HeartbeatResponse{}
-	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.app/dev-1/heartbeat", nil, &hb)
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.integrating/dev-1/heartbeat", nil, &hb)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NotNil(t, hb.Session)
 	assert.Equal(t, sessionID, hb.Session.ID)
@@ -100,7 +114,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 
 	// GET single device.
 	var dv capture.DeviceView
-	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/devices/com.example.app/dev-1", nil, &dv)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/devices/com.example.integrating/dev-1", nil, &dv)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, capture.DeviceStatusCapturing, dv.Status)
 
@@ -116,7 +130,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 
 	// Heartbeat now carries no session (SDK stops capture).
 	hb = HeartbeatResponse{}
-	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.app/dev-1/heartbeat", nil, &hb)
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.integrating/dev-1/heartbeat", nil, &hb)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Nil(t, hb.Session, "heartbeat after session end must carry no session")
 
@@ -132,18 +146,16 @@ func TestCaptureAPI_MultiDeviceIsolation(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 
 	for _, d := range []*capture.Device{
-		{App: "app-a", Did: "dev-1"},
-		{App: "app-a", Did: "dev-2"},
-		{App: "app-b", Did: "dev-1"},
+		{App: "com.example.integrating", Did: "dev-1"},
+		{App: "com.example.integrating", Did: "dev-2"},
+		{App: "com.example.integrating", Did: "dev-3"},
 	} {
-		resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
-			RegisterDeviceRequest{App: d.App, Did: d.Did}, nil)
-		require.Equal(t, http.StatusOK, resp.StatusCode, "register %s/%s", d.App, d.Did)
+		mustSeedDevice(t, srv, d.App, d.Did)
 	}
 
 	// Activate only app-a/dev-1.
 	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
-		ActivateSessionRequest{App: "app-a", Did: "dev-1"}, nil)
+		ActivateSessionRequest{App: "com.example.integrating", Did: "dev-1"}, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	var devices DeviceListResponse
@@ -155,25 +167,25 @@ func TestCaptureAPI_MultiDeviceIsolation(t *testing.T) {
 	for _, v := range devices.Devices {
 		byKey[v.App+"/"+v.Did] = v
 	}
-	assert.Equal(t, capture.DeviceStatusCapturing, byKey["app-a/dev-1"].Status)
-	assert.Equal(t, capture.DeviceStatusIdle, byKey["app-a/dev-2"].Status)
-	assert.Equal(t, capture.DeviceStatusIdle, byKey["app-b/dev-1"].Status)
+	assert.Equal(t, capture.DeviceStatusCapturing, byKey["com.example.integrating/dev-1"].Status)
+	assert.Equal(t, capture.DeviceStatusIdle, byKey["com.example.integrating/dev-2"].Status)
+	assert.Equal(t, capture.DeviceStatusIdle, byKey["com.example.integrating/dev-3"].Status)
 
 	// Sessions are isolated per device: app-b/dev-1 has none.
 	var list SessionListResponse
-	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions?app=app-b&did=dev-1", nil, &list)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions?app=com.example.integrating&did=dev-3", nil, &list)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Empty(t, list.Sessions)
 
 	list = SessionListResponse{}
-	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions?app=app-a&did=dev-1", nil, &list)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions?app=com.example.integrating&did=dev-1", nil, &list)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Len(t, list.Sessions, 1)
 	assert.Equal(t, capture.SessionStatusCapturing, list.Sessions[0].Status)
 
 	// Heartbeat for app-b/dev-1 must not see app-a/dev-1's session.
 	var hb HeartbeatResponse
-	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/app-b/dev-1/heartbeat", nil, &hb)
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.integrating/dev-3/heartbeat", nil, &hb)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Nil(t, hb.Session)
 }
@@ -181,12 +193,11 @@ func TestCaptureAPI_MultiDeviceIsolation(t *testing.T) {
 func TestCaptureAPI_ViewerLifecycle(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 
-	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
-		RegisterDeviceRequest{App: "app", Did: "dev-1"}, nil)
+	mustSeedDevice(t, srv, "com.example.integrating", "dev-1")
 
 	var session capture.CaptureSession
 	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
-		ActivateSessionRequest{App: "app", Did: "dev-1"}, &session)
+		ActivateSessionRequest{App: "com.example.integrating", Did: "dev-1"}, &session)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	sessionID := session.ID
 
@@ -239,7 +250,7 @@ func TestCaptureAPI_ErrorPaths(t *testing.T) {
 
 	// Activate unregistered device -> 404.
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
-		ActivateSessionRequest{App: "app", Did: "nope"}, &errResp)
+		ActivateSessionRequest{App: "com.example.integrating", Did: "nope"}, &errResp)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, "device_not_registered", errResp.Error)
 
@@ -256,7 +267,7 @@ func TestCaptureAPI_ErrorPaths(t *testing.T) {
 	fs := file.New(store.Config{DataDir: dir})
 	require.NoError(t, fs.Open(t.Context()))
 	require.NoError(t, fs.Devices().Create(t.Context(), &capture.Device{
-		App: "app", Did: "stale",
+		App: "com.example.integrating", Did: "stale",
 		RegisteredAt: time.Now().Add(-time.Hour),
 		LastSeenAt:   time.Now().Add(-time.Hour),
 	}))
@@ -272,7 +283,7 @@ func TestCaptureAPI_ErrorPaths(t *testing.T) {
 
 	errResp = ErrorResponse{}
 	resp = doJSON(t, http.MethodPost, srv2.URL+"/api/v1/sessions",
-		ActivateSessionRequest{App: "app", Did: "stale"}, &errResp)
+		ActivateSessionRequest{App: "com.example.integrating", Did: "stale"}, &errResp)
 	require.Equal(t, http.StatusConflict, resp.StatusCode)
 	assert.Equal(t, "device_offline", errResp.Error)
 
@@ -284,11 +295,10 @@ func TestCaptureAPI_ErrorPaths(t *testing.T) {
 func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 
-	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
-		RegisterDeviceRequest{App: "com.example.app", Did: "dev-1"}, nil)
+	mustSeedDevice(t, srv, "com.example.integrating", "dev-1")
 	var session capture.CaptureSession
 	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
-		ActivateSessionRequest{App: "com.example.app", Did: "dev-1"}, &session)
+		ActivateSessionRequest{App: "com.example.integrating", Did: "dev-1"}, &session)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	sessionID := session.ID
 
@@ -310,7 +320,7 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	}
 	var up TrafficUploadResponse
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
-		TrafficUploadRequest{App: "com.example.app", Did: "dev-1", SessionID: sessionID, Entries: entries}, &up)
+		TrafficUploadRequest{App: "com.example.integrating", Did: "dev-1", SessionID: sessionID, Entries: entries}, &up)
 	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 	assert.True(t, up.Accepted)
 	assert.Equal(t, 2, up.Count)
@@ -399,26 +409,25 @@ func TestCaptureAPI_TrafficErrors(t *testing.T) {
 	// Unknown session upload -> 404 session_not_found.
 	var errResp ErrorResponse
 	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
-		TrafficUploadRequest{App: "app", Did: "d1", SessionID: "nope", Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
+		TrafficUploadRequest{App: "com.example.integrating", Did: "d1", SessionID: "nope", Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, "session_not_found", errResp.Error)
 
-	doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
-		RegisterDeviceRequest{App: "app", Did: "d1"}, nil)
+	mustSeedDevice(t, srv, "com.example.integrating", "d1")
 	var session capture.CaptureSession
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
-		ActivateSessionRequest{App: "app", Did: "d1"}, &session)
+		ActivateSessionRequest{App: "com.example.integrating", Did: "d1"}, &session)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	sessionID := session.ID
 
 	// Empty entries -> 400.
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
-		TrafficUploadRequest{App: "app", Did: "d1", SessionID: sessionID, Entries: []*capture.TrafficEntry{}}, &errResp)
+		TrafficUploadRequest{App: "com.example.integrating", Did: "d1", SessionID: sessionID, Entries: []*capture.TrafficEntry{}}, &errResp)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	// All entries invalid -> 400 invalid_field.
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
-		TrafficUploadRequest{App: "app", Did: "d1", SessionID: sessionID,
+		TrafficUploadRequest{App: "com.example.integrating", Did: "d1", SessionID: sessionID,
 			Entries: []*capture.TrafficEntry{{Method: "", URL: "http://x", Timestamp: time.Now(), DurationMs: 1}}}, &errResp)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, "invalid_field", errResp.Error)
@@ -429,12 +438,12 @@ func TestCaptureAPI_TrafficErrors(t *testing.T) {
 		big[i] = validEntry()
 	}
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
-		TrafficUploadRequest{App: "app", Did: "d1", SessionID: sessionID, Entries: big}, &errResp)
+		TrafficUploadRequest{App: "com.example.integrating", Did: "d1", SessionID: sessionID, Entries: big}, &errResp)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	// Cross-device upload (isolation) -> 404 session_not_found.
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
-		TrafficUploadRequest{App: "app", Did: "other", SessionID: sessionID, Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
+		TrafficUploadRequest{App: "com.example.integrating", Did: "other", SessionID: sessionID, Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, "session_not_found", errResp.Error)
 
@@ -453,7 +462,7 @@ func TestCaptureAPI_TrafficErrors(t *testing.T) {
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
-		TrafficUploadRequest{App: "app", Did: "d1", SessionID: sessionID, Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
+		TrafficUploadRequest{App: "com.example.integrating", Did: "d1", SessionID: sessionID, Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, "session_not_found", errResp.Error)
 }

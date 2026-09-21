@@ -189,6 +189,14 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// M7.2.3: SDK auto-registration is retired. A device must already exist
+	// (created manually in the Web UI). An unknown did gets a technical 404 —
+	// no user-facing "please register in Web" copy here; that guidance belongs
+	// to the Web UI, not the debug SDK channel.
+	if _, err := a.captureManager.GetDevice(r.Context(), req.App, req.Did); err != nil {
+		writeCaptureError(w, err)
+		return
+	}
 	d := &capture.Device{
 		App:        req.App,
 		Did:        req.Did,

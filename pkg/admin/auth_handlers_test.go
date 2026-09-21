@@ -95,10 +95,10 @@ func TestAuthRegister(t *testing.T) {
 
 	// 400: invalid credentials.
 	for _, c := range []struct{ u, p string }{
-		{"", "secret123"},   // empty username
-		{"bob", "123"},      // password too short
+		{"", "secret123"},       // empty username
+		{"bob", "123"},          // password too short
 		{"sp ace", "secret123"}, // whitespace in username
-		{"bob", ""},         // empty password
+		{"bob", ""},             // empty password
 	} {
 		res, _ := registerUser(t, ts, c.u, c.p)
 		if res.StatusCode != http.StatusBadRequest {

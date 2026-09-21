@@ -735,7 +735,7 @@ func TestHandleImportConfig(t *testing.T) {
 				"mocks": []map[string]interface{}{{
 					"id": "place-order", "type": "http",
 					"http": map[string]interface{}{
-						"matcher": map[string]interface{}{"method": "POST", "path": "/orders"},
+						"matcher":  map[string]interface{}{"method": "POST", "path": "/orders"},
 						"response": map[string]interface{}{"statusCode": 200, "body": "ok"},
 					},
 				}},
@@ -755,9 +755,9 @@ func TestHandleImportConfig(t *testing.T) {
 		resources, err := api.dataStore.StatefulResources().List(ctx)
 		require.NoError(t, err)
 		var (
-			otherProducts  bool
-			thirdOrders    bool
-			targetOrders   bool
+			otherProducts bool
+			thirdOrders   bool
+			targetOrders  bool
 		)
 		for _, r := range resources {
 			switch {

@@ -34,4 +34,3 @@ func TestHandleCreateWorkspace_DefaultPathUsesAdminDataDir(t *testing.T) {
 		t.Fatalf("workspace path=%q, want prefix %q", ws.Path, wantPrefix)
 	}
 }
-
