@@ -857,6 +857,8 @@ function showAuth() {
   $("registerForm").reset();
   $("loginForm").classList.remove("hidden");
   $("registerForm").classList.add("hidden");
+  $("switchToRegister").classList.remove("hidden");
+  $("switchToLogin").classList.add("hidden");
   stopTrafficPoll();
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   releaseAllViewers();
@@ -920,6 +922,8 @@ async function doRegister(ev) {
       showAuthError("注册成功，自动登录失败：" + (ldata.message || "HTTP " + lres.status));
       $("registerForm").classList.add("hidden");
       $("loginForm").classList.remove("hidden");
+      $("switchToLogin").classList.add("hidden");
+      $("switchToRegister").classList.remove("hidden");
       return;
     }
     setToken(ldata.token);
@@ -973,11 +977,15 @@ async function boot() {
     hideAuthError();
     $("loginForm").classList.add("hidden");
     $("registerForm").classList.remove("hidden");
+    $("switchToRegister").classList.add("hidden");
+    $("switchToLogin").classList.remove("hidden");
   });
   $("toLogin").addEventListener("click", () => {
     hideAuthError();
     $("registerForm").classList.add("hidden");
     $("loginForm").classList.remove("hidden");
+    $("switchToLogin").classList.add("hidden");
+    $("switchToRegister").classList.remove("hidden");
   });
 
   const token = getToken();

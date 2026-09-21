@@ -19,7 +19,7 @@
       <input id="loginPass" class="auth-input" type="password" placeholder="密码" autocomplete="current-password" required>
       <button type="submit" class="auth-btn">登录</button>
     </form>
-    <div class="auth-switch">还没有账号？<button id="toRegister" class="link-btn" type="button">注册</button></div>
+    <div id="switchToRegister" class="auth-switch">还没有账号？<button id="toRegister" class="link-btn" type="button">注册</button></div>
 
     <form id="registerForm" class="hidden">
       <input id="regUser" class="auth-input" placeholder="用户名（1-64 字符，不含空格）" autocomplete="username" required>
@@ -27,7 +27,7 @@
       <input id="regPass2" class="auth-input" type="password" placeholder="确认密码" autocomplete="new-password" required>
       <button type="submit" class="auth-btn">注册并登录</button>
     </form>
-    <div class="auth-switch">已有账号？<button id="toLogin" class="link-btn" type="button">返回登录</button></div>
+    <div id="switchToLogin" class="auth-switch hidden">已有账号？<button id="toLogin" class="link-btn" type="button">返回登录</button></div>
   </div>
 </div>
 
