@@ -51,16 +51,6 @@ button.mini.active { background: var(--primary); color: #fff; }
 .section-title { font-size: 13px; font-weight: 600; color: var(--text); margin: 16px 0 8px; }
 .section-title .sub { font-weight: 400; }
 
-.session-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-                padding: 10px 14px; margin-bottom: 8px; cursor: pointer; display: flex;
-                align-items: center; gap: 12px; }
-.session-card:hover { border-color: var(--primary); }
-.session-card.active { border-color: var(--primary); background: #f4f8ff; }
-.session-card .s-body { flex: 1; min-width: 0; }
-.session-card .s-row1 { font-size: 13px; font-weight: 600; display: flex; gap: 10px; align-items: center; }
-.session-card .s-row2 { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.session-card .s-id { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted); }
-
 .traffic-row { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
                padding: 8px 14px; margin-bottom: 6px; cursor: pointer; display: flex;
                align-items: center; gap: 12px; font-size: 13px; }
@@ -152,8 +142,6 @@ button.mini.active { background: var(--primary); color: #fff; }
 .col-left > .section-title:first-child { margin-top: 0; }
 .col-right { position: sticky; top: 12px; }
 .col-right > .section-title { margin-top: 0; }
-#sessionList { display: flex; flex-wrap: wrap; gap: 8px; }
-#sessionList .session-card { margin-bottom: 0; flex: 1 1 300px; }
 .rule-row.active { border-color: var(--primary); background: #f4f8ff; }
 @media (max-width: 900px) {
   .detail-grid { grid-template-columns: 1fr; }

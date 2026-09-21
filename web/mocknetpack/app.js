@@ -152,13 +152,8 @@ async function connect(d) {
       await registerViewer(session, "设备列表页");
     }
     if (detail && detail.app === d.app && detail.did === d.did) {
-      await loadDetail();   // 详情页打开时刷新
-      // M8.1：绑定新会话并启动流量轮询。
-      // 此前仅 loadDetail()：若旧历史会话仍被选中（且在会话列表中），其选中守卫会跳过
-      // selectSession，新会话不绑定、轮询不启动 → 必须退回重进才恢复。此处显式选中新会话。
-      if (session && session.id) {
-        selectSession(session.id);
-      }
+      // M9：loadDetail 直接绑定当前会话并启动轮询，无需显式选中。
+      await loadDetail();
     } else {
       await loadDevices();
     }
@@ -175,8 +170,7 @@ async function disconnect(d) {
     if (!res.ok && res.status !== 404) { showError("断开失败（HTTP " + res.status + "）"); return; }
     stopViewer(s.id);
     if (detail && detail.sessionId === s.id) {
-      stopTrafficPoll();
-      detail.sessionId = null;
+      // M9：会话已删，loadDetail 绑定空会话 → 停轮询并清空流量列表。
       await loadDetail();
     } else {
       await loadDevices();
@@ -203,17 +197,13 @@ async function enterDetail(app, did) {
   await loadDetail();
 }
 
-/** 加载设备信息 + 会话列表；默认选中当前抓包会话（无则最近一个会话）。 */
+/** 加载设备信息；绑定当前抓包会话（M9：仅当前会话，无历史）。 */
 async function loadDetail() {
   if (!detail) return;
   const { app, did } = detail;
   try {
-    const [devRes, sesRes] = await Promise.all([
-      fetch(API + "/devices/" + encodeURIComponent(app) + "/" + encodeURIComponent(did)),
-      fetch(API + "/sessions?app=" + encodeURIComponent(app) + "&did=" + encodeURIComponent(did)),
-    ]);
+    const devRes = await fetch(API + "/devices/" + encodeURIComponent(app) + "/" + encodeURIComponent(did));
     const dev = devRes.ok ? await devRes.json() : null;
-    const ses = sesRes.ok ? await sesRes.json() : { sessions: [], total: 0 };
 
     const st = STATUS[dev && dev.status] || STATUS.idle;
     const stBadge = $("dStatus");
@@ -234,88 +224,36 @@ async function loadDetail() {
       toggle.onclick = () => connect(dev);
     }
 
-    renderSessions(ses.sessions || [], cur);
     loadRules();
-
-    // 默认选中：当前抓包会话优先；否则最近一个历史会话。
-    const pick = cur && cur.status === "capturing"
-      ? cur
-      : (ses.sessions || []).find((s) => !cur || s.id !== cur.id) || (ses.sessions || [])[0];
-    if (!detail.sessionId || !(ses.sessions || []).some((s) => s.id === detail.sessionId)) {
-      selectSession(pick ? pick.id : null);
-    }
+    // M9：只绑定当前抓包会话（无则空态），不展示历史会话。
+    bindSession(cur && cur.status === "capturing" ? cur : null);
   } catch (e) {
     showError("加载设备详情失败：" + e.message);
   }
 }
 
-function renderSessions(sessions, current) {
-  const box = $("sessionList");
-  if (!sessions.length) {
-    box.innerHTML = '<div class="empty">暂无会话。点击「连接」开始抓包。</div>';
-    return;
-  }
-  box.innerHTML = "";
-  for (const s of sessions) {
-    const st = STATUS[s.status] || STATUS.ended;
-    const el = document.createElement("div");
-    el.className = "session-card" + (detail.sessionId === s.id ? " active" : "");
-    el.dataset.sid = s.id;
-    el._session = s;
-    el.innerHTML =
-      '<span class="badge ' + st.cls + '">' + st.label + "</span>" +
-      '<div class="s-body">' +
-        '<div class="s-row1">' + esc(s.id) +
-          (s.id === (current && current.id) ? '<span class="badge capturing">当前</span>' : "") +
-        "</div>" +
-        '<div class="s-row2">开始 ' + relTime(s.startedAt) +
-          (s.endedAt ? " · 结束 " + relTime(s.endedAt) : "") +
-          " · 请求数 " + s.requestCount +
-          (s.viewerCount ? " · 查看者 " + s.viewerCount : "") +
-        "</div>" +
-      "</div>";
-    el.onclick = () => selectSession(s.id);
-    box.appendChild(el);
-  }
-}
-
-/** 选中会话：capturing → 注册 viewer + 2s 轮询；ended → 停止轮询并提示清空。 */
-function selectSession(sessionId) {
-  if (!detail) return;
+/** M9：绑定当前会话（用户视角只有当前会话）。capturing → 注册 viewer + 2s 轮询；
+ *  无会话 → 停止轮询并清空列表。会话结束即被服务端删除，前端不做历史切换。 */
+function bindSession(session) {
   stopTrafficPoll();
-  const old = detail.sessionId;
-  detail.sessionId = sessionId;
-  if (old && old !== sessionId) stopViewer(old);
-
-  const session = sessionFor(sessionId);
+  detail.sessionId = session ? session.id : null;
+  detail._activeTraffic = null;
+  detail._activeRule = null;
+  document.querySelectorAll(".traffic-row").forEach((el) => el.classList.remove("active"));
+  document.querySelectorAll(".rule-row").forEach((el) => el.classList.remove("active"));
   $("trafficList").innerHTML = "";
   $("trafficDetail").innerHTML = '<div class="empty">点击左侧请求或规则查看详情。</div>';
-  detail._activeRule = null;
-  document.querySelectorAll(".rule-row").forEach((el) => el.classList.remove("active"));
   showDetailPane("traffic");
 
-  if (!sessionId) {
+  if (!session || session.status !== "capturing") {
     $("trafficInfo").textContent = "";
-    $("trafficList").innerHTML = '<div class="empty">请选择会话查看实时请求。</div>';
+    $("trafficList").innerHTML = '<div class="empty">暂无进行中的会话。点击「连接」开始抓包。</div>';
     return;
   }
-  if (session && session.status === "capturing") {
-    $("trafficInfo").textContent = "实时 · 2s 轮询 · 会话 " + shortId(sessionId);
-    registerViewer(session, "设备详情页");
-    trafficTimer = setInterval(pollTraffic, TRAFFIC_POLL_MS);
-    pollTraffic();
-  } else {
-    $("trafficInfo").textContent = "会话已结束";
-    $("trafficList").innerHTML = '<div class="empty">会话已结束，临时记录已清空（历史流量不保留）。</div>';
-  }
-  document.querySelectorAll(".session-card").forEach((el) => {
-    el.classList.toggle("active", el.dataset.sid === sessionId);
-  });
-}
-
-function sessionFor(sessionId) {
-  const el = document.querySelector('.session-card[data-sid="' + sessionId + '"]');
-  return el ? el._session : null;
+  $("trafficInfo").textContent = "实时 · 2s 轮询 · 会话 " + shortId(session.id);
+  registerViewer(session, "设备详情页");
+  trafficTimer = setInterval(pollTraffic, TRAFFIC_POLL_MS);
+  pollTraffic();
 }
 
 function stopTrafficPoll() {
