@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.5.0
+  version: 0.5.1
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
     - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
@@ -15,7 +15,7 @@ info:
     - 会话结束规则失效（M4，需求 6.6/F4.5/决策13）：抓包会话一旦结束（页面关闭/最后一个查看者释放/心跳超时/手动断开），服务端把该设备所有 enabled=true 的 Mock 规则批量置为 enabled=false 并 Bump 规则版本；规则不删除、仍在 Web 历史列表中，下次建立会话后由用户从历史规则手动一键重新启用。SDK 拉到的新规则集全为 disabled，不再自动生效。
     - 7 天滑动清理（M4，F8.3/决策15）：Mock 规则及其 source 快照持久化保留，默认 7 天（服务端配置项），滑动窗口起点为 lastUsedAt。命中回包、Web 编辑保存、Web toggle 启停三类操作刷新 lastUsedAt；心跳/规则版本轮询/Web 纯浏览不刷新。过期规则连同其 source 快照自动删除。
     - 协议解码器增强（M4）：SDK 暴露 setBodyDecoder 注入点，由各 App 把二进制私有协议（如 xcp）解成可读 UTF-8 文本；解码结果以 TrafficEntry.responseBodyDecoded / MockRuleSource.responseBodyDecoded 独立通道上传展示，原始 base64 仍只用于回放。
-    - 规则备注与编辑语义（M5）：MockRule 新增 note（字符串，可空，单条覆盖式更新，不做编辑历史）。创建（POST）时 note 可空；编辑（PUT）时 note 必须非空（服务端校验，空或纯空白返回 400）。匹配键 method/path 不可改——PUT 请求体改用独立的 UpdateMockRuleInput（不含 method/path），编辑只允许改 response（statusCode/headers/body）与 note、enabled。编辑成功刷新 lastUsedAt（与 M4 既有口径一致）。note 为纯管理面字段，不参与匹配、不下发给 SDK。
+    - 规则备注与编辑语义（M5，M7 收窄）：MockRule 新增 note（字符串，可空，单条覆盖式更新，不做编辑历史）。创建（POST）时 note 可空；编辑（PUT）时 note 必须非空——仅当请求体实际改动 response 内容（statusCode/headers/body 与现值不一致）时校验（空或纯空白返回 400）；纯开关操作（response 原样回传、仅 enabled 变化）note 可空，未编辑的"Mock 此请求"规则可直接启用。匹配键 method/path 不可改——PUT 请求体改用独立的 UpdateMockRuleInput（不含 method/path），编辑只允许改 response（statusCode/headers/body）与 note、enabled。编辑成功刷新 lastUsedAt（与 M4 既有口径一致）。note 为纯管理面字段，不参与匹配、不下发给 SDK。
     - 实现状态：每个 path 用 x-milestone 标注实现阶段（m1/m2/m3/m4/m5/m6），当前阶段之外的仅契约定义、未实现。
 
 servers:
@@ -421,7 +421,8 @@ paths:
       summary: 更新规则（编辑回包内容 / 备注 / 启停）
       description: |
         编辑规则内容（M5）。请求体为独立的 UpdateMockRuleInput，不含 method/path——匹配键不可改，
-        编辑只允许改 response（statusCode/headers/body）、note、enabled。note 必须非空（空或纯空白返回 400），
+        编辑只允许改 response（statusCode/headers/body）、note、enabled。note 仅当响应内容实际改动时
+        必填（空或纯空白返回 400，M7）；纯开关操作（response 原样回传）note 可空。
         单条覆盖式更新、不做编辑历史；编辑成功刷新 lastUsedAt。
         同一接口仅一条生效的服务端兜底在此执行：若置为启用时发现同接口已有其他生效规则，返回 409（前端应先做开关互斥）。
       operationId: updateMockRule
@@ -1099,7 +1100,8 @@ components:
         note:
           type: string
           description: |
-            规则备注，编辑时必填且非空（空串或纯空白返回 400）。单条覆盖式更新，不做编辑历史。
+            规则备注，单条覆盖式更新，不做编辑历史。仅当请求体实际改动 response 内容（编辑）时必填且非空
+            （空串或纯空白返回 400，M7）；纯开关操作（response 原样回传）可省略或留空。
         enabled:
           type: boolean
           description: |

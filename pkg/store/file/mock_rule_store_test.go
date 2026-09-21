@@ -199,6 +199,45 @@ func TestMockRule_UpdateToggleConflict(t *testing.T) {
 	}
 }
 
+func TestMockRule_UpdateNoteRequiredOnlyOnEdit(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	r, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false))
+	if err != nil {
+		t.Fatalf("Create = %v", err)
+	}
+
+	// Pure toggle (response echoed unchanged) with blank note -> allowed (M7):
+	// a rule created from a capture has no note and must be enableable directly.
+	updated, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"ok":true}`, "", boolPtr(true)))
+	if err != nil {
+		t.Fatalf("toggle with blank note = %v, want ok", err)
+	}
+	if !updated.Enabled {
+		t.Errorf("toggle did not enable the rule")
+	}
+
+	// Edit (response changed) with blank note -> rejected.
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "", nil)); !errors.Is(err, store.ErrNoteRequired) {
+		t.Errorf("edit with blank note = %v, want ErrNoteRequired", err)
+	}
+	// Whitespace-only note on an edit -> also rejected.
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "   ", nil)); !errors.Is(err, store.ErrNoteRequired) {
+		t.Errorf("edit with whitespace note = %v, want ErrNoteRequired", err)
+	}
+	// Edit with a note -> applied.
+	updated, _, err = m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "why", nil))
+	if err != nil || updated.Response.Body != `{"changed":true}` {
+		t.Errorf("edit with note = %v body=%q; want ok changed", err, updated.Response.Body)
+	}
+	// The edited rule still toggles with a blank note (response now unchanged).
+	updated, _, err = m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "", boolPtr(false)))
+	if err != nil || updated.Enabled {
+		t.Errorf("toggle after edit with blank note = %v enabled=%v; want ok off", err, updated.Enabled)
+	}
+}
+
 func TestMockRule_SourcePersisted(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +29,12 @@ var (
 	// ErrRuleConflict means enabling this rule would leave more than one enabled
 	// rule on the same interface (maps to HTTP 409).
 	ErrRuleConflict = errors.New("mock rule conflict: another enabled rule already exists for this interface")
+	// ErrNoteRequired means the PUT actually edits the canned response
+	// (body/statusCode/headers changed) but carries a blank note (maps to HTTP 400).
+	// A pure toggle (response echoed unchanged) may leave the note blank — rules
+	// created from a capture ("Mock 此请求") have no note and must be enableable
+	// without forcing an edit (M7).
+	ErrNoteRequired = errors.New("mock rule note is required when editing the canned response")
 )
 
 // MockRuleConflictMessage is the fixed popup message Web shows when an interface
@@ -895,6 +903,15 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 	}
 	if existing.App != app || existing.Did != did {
 		return nil, 0, ErrRuleNotFound
+	}
+
+	// M7: note is required only when the PUT actually edits the canned
+	// response (statusCode/headers/body changed). A pure toggle echoes the
+	// stored response unchanged and may leave the note blank — rules created
+	// from a capture ("Mock 此请求") carry no note and enabling them must not
+	// force an edit.
+	if !reflect.DeepEqual(existing.Response, in.Response) && strings.TrimSpace(in.Note) == "" {
+		return nil, 0, ErrNoteRequired
 	}
 
 	// Enforce single-active on the frozen interface when the edit turns the

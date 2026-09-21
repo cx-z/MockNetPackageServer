@@ -299,8 +299,9 @@ type MockRule struct {
 	LastUsedAt time.Time `json:"lastUsedAt"`
 	// Note is the human-readable rule memo (M5). A single string, overwritten
 	// on each edit (no edit history). Optional at creation; required (non-blank)
-	// when editing via PUT. Pure admin-side field: never used for matching or
-	// pushed to the SDK. Empty string means no note (legacy rows pre-M5).
+	// only when a PUT actually changes the canned response (editing, M7). A pure
+	// toggle may leave it blank. Pure admin-side field: never used for matching
+	// or pushed to the SDK. Empty string means no note (legacy rows pre-M5).
 	Note string `json:"note,omitempty"`
 }
 

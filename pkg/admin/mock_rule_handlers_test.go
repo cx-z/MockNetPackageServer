@@ -22,8 +22,10 @@ func ruleBody(method, path string, enabled bool) map[string]any {
 }
 
 // updateBody builds an edit payload (M5 UpdateMockRuleInput). No method/path:
-// the match key is immutable on edit. note is required; enabled may be omitted
-// (nil) to leave the switch untouched.
+// the match key is immutable on edit. note is required when the canned response
+// actually changes (editing); a pure toggle (response echoed unchanged) may
+// leave it blank (M7). enabled may be omitted (nil) to leave the switch
+// untouched.
 func updateBody(body, note string, enabled *bool) map[string]any {
 	m := map[string]any{
 		"note": note,
@@ -158,12 +160,19 @@ func TestMockRuleAPI_EditNoteValidation(t *testing.T) {
 	var created capture.MockRuleView
 	doJSON(t, http.MethodPost, base, ruleBody("POST", "/api/a", false), &created)
 
-	// Empty note -> 400.
-	resp := doJSON(t, http.MethodPut, base+"/"+created.ID, updateBody(`{"ok":true}`, "", boolPtr(false)), nil)
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "empty note rejected")
+	// Pure toggle (response unchanged) with blank note -> 200 (M7): rules
+	// created from a capture carry no note and must be enableable directly.
+	var toggled capture.MockRuleView
+	resp := doJSON(t, http.MethodPut, base+"/"+created.ID, updateBody(`{"ok":true}`, "", boolPtr(true)), &toggled)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "pure toggle with blank note allowed")
+	assert.True(t, toggled.Enabled)
+
+	// Editing the response with an empty note -> 400.
+	resp = doJSON(t, http.MethodPut, base+"/"+created.ID, updateBody(`{"changed":true}`, "", boolPtr(false)), nil)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "empty note rejected on edit")
 	// Whitespace-only note -> 400.
-	resp = doJSON(t, http.MethodPut, base+"/"+created.ID, updateBody(`{"ok":true}`, "   ", boolPtr(false)), nil)
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "whitespace note rejected")
+	resp = doJSON(t, http.MethodPut, base+"/"+created.ID, updateBody(`{"changed":true}`, "   ", boolPtr(false)), nil)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "whitespace note rejected on edit")
 
 	// Valid note -> 200 and round-trips.
 	var updated capture.MockRuleView

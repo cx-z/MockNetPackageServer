@@ -402,6 +402,8 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "rule_not_found", "Mock rule not found")
 	case errors.Is(err, store.ErrRuleConflict):
 		writeError(w, http.StatusConflict, "rule_conflict", store.MockRuleConflictMessage)
+	case errors.Is(err, store.ErrNoteRequired):
+		writeError(w, http.StatusBadRequest, "missing_field", "note is required when editing the canned response")
 	case errors.Is(err, store.ErrAlreadyExists):
 		writeError(w, http.StatusConflict, "already_exists", "Resource already exists")
 	case errors.Is(err, store.ErrReadOnly):
