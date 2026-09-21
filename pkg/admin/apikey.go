@@ -205,6 +205,19 @@ func (a *apiKeyAuth) isExempt(path string) bool {
 		}
 	}
 
+	// M7.2.4: SDK-facing routes exempt from API key auth (did is identity;
+	// unknown did returns 404 from the handler itself).
+	//   POST /api/v1/devices/register
+	//   POST /api/v1/devices/{app}/{did}/heartbeat
+	//   POST /api/v1/devices/{app}/{did}/traffic
+	if path == "/api/v1/devices/register" || path == "/api/v1/traffic" {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/v1/devices/") &&
+		(strings.HasSuffix(path, "/heartbeat") || strings.HasSuffix(path, "/traffic")) {
+		return true
+	}
+
 	// Dashboard static assets are exempt — they're the UI shell (like a login page).
 	// API routes use specific prefixes (/mocks, /config, etc.) so this only
 	// matches the SPA catch-all and its static files.

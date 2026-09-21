@@ -360,13 +360,28 @@ func (a *API) withMiddleware(handler http.Handler) http.Handler {
 	// Security headers middleware wraps CORS
 	securityHandler := SecurityHeadersMiddleware(corsHandler)
 
+	// M7.2.4 debug: access log middleware (always on, regardless of tracer)
+	accessLogged := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wrapped := &adminStatusCapturingResponseWriter{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+		}
+		securityHandler.ServeHTTP(wrapped, r)
+		slog.Info("http",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", wrapped.statusCode,
+			"remote", r.RemoteAddr,
+		)
+	})
+
 	// Tracing middleware (outermost, captures full request lifecycle)
 	// Only applied if a tracer is configured
 	if a.tracer != nil {
-		return a.tracingMiddleware(securityHandler)
+		return a.tracingMiddleware(accessLogged)
 	}
 
-	return securityHandler
+	return accessLogged
 }
 
 // skipTracingPaths contains paths that should not create traces.
