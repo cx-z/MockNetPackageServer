@@ -12,7 +12,8 @@ let trafficTimer = null;     // 请求流轮询
 let detail = null;           // { app, did, sessionId }
 let ruleStore = [];          // 当前规则列表（供详情/删除使用）
 let trafficFilter = "";      // 展示规则：页面级字符串过滤（刷新即清空，F3.6/决策16）
-let lastTraffic = [];       // 最近一次拉到的请求流（供过滤后重渲染）
+let pageLog = [];            // M9.4 页面级日志缓冲（详情页停留期间跨会话累积，离开页面清空）
+const LOG_CAP = 300;         // 页面日志上限（防止长时间抓包内存/DOM 过大）
 
 const $ = (id) => document.getElementById(id);
 const STATUS = {
@@ -170,7 +171,7 @@ async function disconnect(d) {
     if (!res.ok && res.status !== 404) { showError("断开失败（HTTP " + res.status + "）"); return; }
     stopViewer(s.id);
     if (detail && detail.sessionId === s.id) {
-      // M9：会话已删，loadDetail 绑定空会话 → 停轮询并清空流量列表。
+      // M9.4：会话已删，loadDetail 绑定空会话 → 停轮询；页面日志保留展示（离开页面才清空）。
       await loadDetail();
     } else {
       await loadDevices();
@@ -190,6 +191,7 @@ async function openDetail(app, did) {
 
 async function enterDetail(app, did) {
   detail = { app, did, sessionId: null };
+  pageLog = [];   // M9.4：进入设备详情（含跨设备跳转）即重新开始页面日志
   $("listView").classList.add("hidden");
   $("detailView").classList.remove("hidden");
   $("dApp").textContent = app;
@@ -232,25 +234,26 @@ async function loadDetail() {
   }
 }
 
-/** M9：绑定当前会话（用户视角只有当前会话）。capturing → 注册 viewer + 2s 轮询；
- *  无会话 → 停止轮询并清空列表。会话结束即被服务端删除，前端不做历史切换。 */
+/** M9.4：绑定当前会话。capturing → 注册 viewer + 2s 轮询，日志合并进 pageLog 继续累积；
+ *  无会话（断开）→ 停止轮询，已展示日志保留不清空（离开页面才清空）。 */
 function bindSession(session) {
   stopTrafficPoll();
   detail.sessionId = session ? session.id : null;
-  detail._activeTraffic = null;
-  detail._activeRule = null;
-  document.querySelectorAll(".traffic-row").forEach((el) => el.classList.remove("active"));
-  document.querySelectorAll(".rule-row").forEach((el) => el.classList.remove("active"));
-  $("trafficList").innerHTML = "";
-  $("trafficDetail").innerHTML = '<div class="empty">点击左侧请求或规则查看详情。</div>';
-  showDetailPane("traffic");
 
   if (!session || session.status !== "capturing") {
-    $("trafficInfo").textContent = "";
-    $("trafficList").innerHTML = '<div class="empty">暂无进行中的会话。点击「连接」开始抓包。</div>';
+    // 断开/无会话：有页面日志则保留展示（诉求 2），否则空态。
+    if (pageLog.length) {
+      renderTraffic(pageLog);
+    } else {
+      $("trafficInfo").textContent = "";
+      $("trafficList").innerHTML = '<div class="empty">暂无进行中的会话。点击「连接」开始抓包。</div>';
+    }
     return;
   }
-  $("trafficInfo").textContent = "实时 · 2s 轮询 · 会话 " + shortId(session.id);
+  // 连接中：若已有页面日志，提示跨会话保留（诉求 3）。
+  $("trafficInfo").textContent = pageLog.length
+    ? "实时 · 2s 轮询 · 共 " + pageLog.length + " 条（含上次会话日志）"
+    : "实时 · 2s 轮询 · 会话 " + shortId(session.id);
   registerViewer(session, "设备详情页");
   trafficTimer = setInterval(pollTraffic, TRAFFIC_POLL_MS);
   pollTraffic();
@@ -266,7 +269,7 @@ function showDetailPane(kind) {
   $("trafficDetail").classList.toggle("hidden", kind !== "traffic");
 }
 
-/** 请求流轮询：先拿 total，再拉最新一页（契约升序 + offset 分页），按 id 去重合并。 */
+/** 请求流轮询：拉当前会话最新一页，合并进页面日志 pageLog（M9.4 跨会话保留、时间线混排）。 */
 async function pollTraffic() {
   if (!detail || !detail.sessionId) return;
   const sid = detail.sessionId;
@@ -276,15 +279,27 @@ async function pollTraffic() {
     const offset = Math.max(0, meta.total - TRAFFIC_PAGE);
     const data = await fetch(API + "/sessions/" + encodeURIComponent(sid) +
       "/traffic?limit=" + TRAFFIC_PAGE + "&offset=" + offset).then(r => r.json());
-    renderTraffic(data.entries || []);
+    pageLog = mergeLog(pageLog, data.entries || []);
+    renderTraffic(pageLog);
   } catch (e) {
     $("trafficInfo").textContent = "请求流拉取失败：" + e.message;
   }
 }
 
+/** 合并日志：按 id 去重、timestamp 升序，保留最近 LOG_CAP 条（跨会话时间线混排）。 */
+function mergeLog(base, fresh) {
+  const seen = new Map();
+  for (const e of base) seen.set(e.id, e);
+  for (const e of fresh) if (!seen.has(e.id)) seen.set(e.id, e);
+  const arr = Array.from(seen.values())
+    .sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
+  return arr.length > LOG_CAP ? arr.slice(arr.length - LOG_CAP) : arr;
+}
+
+/** 渲染页面日志（live = 当前绑定会话在抓包；断开后仅展示与过滤，不轮询）。 */
 function renderTraffic(entries) {
-  if (!detail || !detail.sessionId) return;
-  lastTraffic = entries;
+  if (!detail) return;
+  const live = !!detail.sessionId;
   // 倒序：最新在上（服务端按 timestamp 升序）。
   entries = entries.slice().sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
   const q = trafficFilter.trim().toLowerCase();
@@ -294,7 +309,8 @@ function renderTraffic(entries) {
       (e.path || e.url || "").toLowerCase().includes(q) ||
       (e.method || "").toLowerCase().includes(q));
   }
-  $("trafficInfo").textContent = "实时 · 2s 轮询 · 共 " + total + " 条" + (q ? "（过滤出 " + entries.length + " 条）" : "（显示最近 " + TRAFFIC_PAGE + " 条）");
+  $("trafficInfo").textContent = (live ? "实时 · 2s 轮询" : "已断开 · 日志保留") +
+    " · 共 " + total + " 条" + (q ? "（过滤出 " + entries.length + " 条）" : "");
 
   const box = $("trafficList");
   if (!entries.length) {
@@ -365,6 +381,8 @@ function backToList() {
   stopTrafficPoll();
   if (detail && detail.sessionId) stopViewer(detail.sessionId);
   detail = null;
+  pageLog = [];        // M9.4 诉求 4：返回设备列表清空页面日志
+  trafficFilter = "";
   location.hash = "";
   $("detailView").classList.add("hidden");
   $("listView").classList.remove("hidden");
@@ -786,6 +804,6 @@ start();
   const box = $("trafficFilter");
   if (box) box.addEventListener("input", (ev) => {
     trafficFilter = ev.target.value || "";
-    renderTraffic(lastTraffic);
+    renderTraffic(pageLog);
   });
 })();
