@@ -5,6 +5,25 @@ const TRAFFIC_POLL_MS = 2000; // 请求流轮询（决策 D-M2-1：轮询 2s，�
 const TRAFFIC_PAGE = 100;    // 每页条数（契约 limit 上限 500，取 100 最新）
 const RENEW_MS = 60000;      // viewer 续租（TTL 120s 的一半）
 
+// ===== M7.1.2 账号登录态：token 存储 + 统一鉴权头 =====
+const TOKEN_KEY = "mocknetpack_token";
+let authUser = null; // { username, role, createdAt }
+
+function getToken() { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } }
+function setToken(t) {
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* 隐私模式等场景降级为内存态 */ }
+}
+// 所有 MockNetPack API 请求统一带 Authorization 头（M7.1.3 服务端强制鉴权后无缝）。
+function apiFetch(path, options = {}) {
+  const headers = Object.assign({}, options.headers);
+  const token = getToken();
+  if (token) headers["Authorization"] = "Bearer " + token;
+  return fetch(API + path, Object.assign({}, options, { headers }));
+}
+
 // sessionId -> { viewerId, timer }
 const viewers = new Map();
 let pollTimer = null;        // 列表轮询
@@ -69,7 +88,7 @@ function methodCls(m) {
 
 async function loadDevices() {
   try {
-    const res = await fetch(API + "/devices");
+    const res = await apiFetch("/devices");
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     render(data.devices || []);
@@ -142,7 +161,7 @@ function render(devices) {
 
 async function connect(d) {
   try {
-    const res = await fetch(API + "/sessions", {
+    const res = await apiFetch("/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ app: d.app, did: d.did }),
@@ -167,7 +186,7 @@ async function disconnect(d) {
   const s = d.currentSession;
   if (!s) return;
   try {
-    const res = await fetch(API + "/sessions/" + encodeURIComponent(s.id), { method: "DELETE" });
+    const res = await apiFetch("/sessions/" + encodeURIComponent(s.id), { method: "DELETE" });
     if (!res.ok && res.status !== 404) { showError("断开失败（HTTP " + res.status + "）"); return; }
     stopViewer(s.id);
     if (detail && detail.sessionId === s.id) {
@@ -204,7 +223,7 @@ async function loadDetail() {
   if (!detail) return;
   const { app, did } = detail;
   try {
-    const devRes = await fetch(API + "/devices/" + encodeURIComponent(app) + "/" + encodeURIComponent(did));
+    const devRes = await apiFetch("/devices/" + encodeURIComponent(app) + "/" + encodeURIComponent(did));
     const dev = devRes.ok ? await devRes.json() : null;
 
     const st = STATUS[dev && dev.status] || STATUS.idle;
@@ -274,10 +293,10 @@ async function pollTraffic() {
   if (!detail || !detail.sessionId) return;
   const sid = detail.sessionId;
   try {
-    const meta = await fetch(API + "/sessions/" + encodeURIComponent(sid) + "/traffic?limit=1").then(r => r.json());
+    const meta = await apiFetch("/sessions/" + encodeURIComponent(sid) + "/traffic?limit=1").then(r => r.json());
     if (!meta || typeof meta.total !== "number") return;
     const offset = Math.max(0, meta.total - TRAFFIC_PAGE);
-    const data = await fetch(API + "/sessions/" + encodeURIComponent(sid) +
+    const data = await apiFetch("/sessions/" + encodeURIComponent(sid) +
       "/traffic?limit=" + TRAFFIC_PAGE + "&offset=" + offset).then(r => r.json());
     pageLog = mergeLog(pageLog, data.entries || []);
     renderTraffic(pageLog);
@@ -351,7 +370,7 @@ async function deleteTrafficEntry(e) {
   if (!detail) return;
   pageLog = pageLog.filter((x) => x.id !== e.id);
   if (detail.sessionId) {
-    try { await fetch(API + "/traffic/" + encodeURIComponent(e.id), { method: "DELETE" }); } catch { /* 容错 */ }
+    try { await apiFetch("/traffic/" + encodeURIComponent(e.id), { method: "DELETE" }); } catch { /* 容错 */ }
   }
   if (detail._activeTraffic === e.id) {
     detail._activeTraffic = null;
@@ -368,7 +387,7 @@ async function clearTrafficLog() {
   pageLog = [];
   const sid = detail.sessionId;
   if (sid) {
-    try { await fetch(API + "/sessions/" + encodeURIComponent(sid) + "/traffic", { method: "DELETE" }); } catch { /* 容错 */ }
+    try { await apiFetch("/sessions/" + encodeURIComponent(sid) + "/traffic", { method: "DELETE" }); } catch { /* 容错 */ }
     renderTraffic(pageLog);   // live：共 0 条，新流量继续累积
   } else {
     $("trafficInfo").textContent = "";
@@ -448,7 +467,7 @@ async function loadRules() {
   if (!detail) return;
   const { app, did } = detail;
   try {
-    const res = await fetch(API + "/devices/" + encodeURIComponent(app) + "/" + encodeURIComponent(did) + "/mock-rules");
+    const res = await apiFetch("/devices/" + encodeURIComponent(app) + "/" + encodeURIComponent(did) + "/mock-rules");
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     renderRules(data);
@@ -641,7 +660,7 @@ async function saveRuleEdit(rule) {
   }
 
   try {
-    const res = await fetch(API + "/devices/" + encodeURIComponent(detail.app) + "/" +
+    const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
       encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(rule.id), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -670,7 +689,7 @@ async function deleteRule(rule) {
   if (!detail) return;
   if (!confirm("删除规则 " + rule.method + " " + rule.path + " ？")) return;
   try {
-    const res = await fetch(API + "/devices/" + encodeURIComponent(detail.app) + "/" +
+    const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
       encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(rule.id), {
       method: "DELETE",
     });
@@ -688,7 +707,7 @@ async function deleteRule(rule) {
 async function toggleRule(rule, enabled) {
   if (!detail) return;
   try {
-    const res = await fetch(API + "/devices/" + encodeURIComponent(detail.app) + "/" +
+    const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
       encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(rule.id), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -750,7 +769,7 @@ async function mockThisRequest(e) {
     },
   };
   try {
-    const res = await fetch(API + "/devices/" + encodeURIComponent(detail.app) + "/" +
+    const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
       encodeURIComponent(detail.did) + "/mock-rules", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -788,7 +807,7 @@ function newUuid() {
 async function registerViewer(session, label) {
   const viewerId = newUuid();
   try {
-    const res = await fetch(API + "/sessions/" + encodeURIComponent(session.id) + "/viewers", {
+    const res = await apiFetch("/sessions/" + encodeURIComponent(session.id) + "/viewers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ viewerId, label }),
@@ -802,7 +821,7 @@ async function registerViewer(session, label) {
 
 async function renewViewer(sessionId, viewerId, label) {
   try {
-    await fetch(API + "/sessions/" + encodeURIComponent(sessionId) + "/viewers", {
+    await apiFetch("/sessions/" + encodeURIComponent(sessionId) + "/viewers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ viewerId, label }),
@@ -818,17 +837,121 @@ function stopViewer(sessionId) {
 // 页面关闭/隐藏：尽力释放全部 viewer 租约（keepalive），服务端 TTL 兜底。
 function releaseAllViewers() {
   for (const [sessionId, v] of viewers) {
-    fetch(API + "/sessions/" + encodeURIComponent(sessionId) + "/viewers/" + encodeURIComponent(v.viewerId),
+    apiFetch("/sessions/" + encodeURIComponent(sessionId) + "/viewers/" + encodeURIComponent(v.viewerId),
       { method: "DELETE", keepalive: true });
   }
 }
 window.addEventListener("pagehide", releaseAllViewers);
 
 // ============================================================================
-// 启动
+// 启动（M7.1.2：登录门禁 → enterApp）
 // ============================================================================
 
-function start() {
+function showAuth() {
+  $("authView").classList.remove("hidden");
+  $("appWrap").classList.add("hidden");
+  $("userInfo").textContent = "";
+  $("logoutBtn").classList.add("hidden");
+  // 清空表单（避免登出后残留他人输入的账号/密码）
+  $("loginForm").reset();
+  $("registerForm").reset();
+  $("loginForm").classList.remove("hidden");
+  $("registerForm").classList.add("hidden");
+  stopTrafficPoll();
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  releaseAllViewers();
+  detail = null;
+  pageLog = [];
+}
+function showAuthError(msg) {
+  const b = $("authError");
+  b.textContent = msg;
+  b.classList.remove("hidden");
+}
+function hideAuthError() { $("authError").classList.add("hidden"); }
+
+async function doLogin(ev) {
+  ev.preventDefault();
+  const u = $("loginUser").value.trim();
+  const p = $("loginPass").value;
+  hideAuthError();
+  if (!u || !p) { showAuthError("请输入用户名和密码"); return; }
+  try {
+    const res = await fetch(API + "/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: p }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showAuthError(data.message || "登录失败（HTTP " + res.status + "）"); return; }
+    setToken(data.token);
+    authUser = data.user;
+    $("loginForm").reset();
+    enterApp();
+  } catch (e) {
+    showAuthError("无法连接服务器：" + e.message);
+  }
+}
+
+async function doRegister(ev) {
+  ev.preventDefault();
+  const u = $("regUser").value.trim();
+  const p = $("regPass").value;
+  const p2 = $("regPass2").value;
+  hideAuthError();
+  if (!u || !p) { showAuthError("请输入用户名和密码"); return; }
+  if (p !== p2) { showAuthError("两次输入的密码不一致"); return; }
+  try {
+    const res = await fetch(API + "/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: p }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showAuthError(data.message || "注册失败（HTTP " + res.status + "）"); return; }
+    // 注册成功自动登录（拿 token 进主界面）。
+    const lres = await fetch(API + "/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: p }),
+    });
+    const ldata = await lres.json().catch(() => ({}));
+    if (!lres.ok) {
+      showAuthError("注册成功，自动登录失败：" + (ldata.message || "HTTP " + lres.status));
+      $("registerForm").classList.add("hidden");
+      $("loginForm").classList.remove("hidden");
+      return;
+    }
+    setToken(ldata.token);
+    authUser = ldata.user;
+    $("registerForm").reset();
+    enterApp();
+  } catch (e) {
+    showAuthError("无法连接服务器：" + e.message);
+  }
+}
+
+// 登出：服务端吊销 token + 清除本地 + 回登录页（吊销后 token 立即失效）。
+async function doLogout() {
+  const token = getToken();
+  if (token) {
+    try { await apiFetch("/auth/logout", { method: "POST" }); } catch { /* 服务不可达也继续清本地 */ }
+  }
+  setToken(null);
+  authUser = null;
+  showAuth();
+}
+
+function enterApp() {
+  $("authView").classList.add("hidden");
+  $("appWrap").classList.remove("hidden");
+  hideAuthError();
+  const u = authUser;
+  $("userInfo").textContent = u
+    ? (u.username + " · " + (u.role === "admin" ? "管理员" : "开发者"))
+    : "";
+  $("logoutBtn").classList.remove("hidden");
+
   $("backBtn").onclick = backToList;
   const clearBtn = $("trafficClearBtn");
   if (clearBtn) clearBtn.onclick = clearTrafficLog;
@@ -840,7 +963,40 @@ function start() {
     pollTimer = setInterval(loadDevices, POLL_MS);
   }
 }
-start();
+
+// 启动：有 token 先验 /auth/me（刷新保持登录）；无效/无 token 进登录门禁。
+async function boot() {
+  $("loginForm").addEventListener("submit", doLogin);
+  $("registerForm").addEventListener("submit", doRegister);
+  $("logoutBtn").addEventListener("click", doLogout);
+  $("toRegister").addEventListener("click", () => {
+    hideAuthError();
+    $("loginForm").classList.add("hidden");
+    $("registerForm").classList.remove("hidden");
+  });
+  $("toLogin").addEventListener("click", () => {
+    hideAuthError();
+    $("registerForm").classList.add("hidden");
+    $("loginForm").classList.remove("hidden");
+  });
+
+  const token = getToken();
+  if (token) {
+    try {
+      const res = await apiFetch("/auth/me");
+      if (res.ok) {
+        authUser = await res.json();
+        enterApp();
+        return;
+      }
+      setToken(null);   // token 失效/已吊销 → 回登录页
+    } catch (e) {
+      showAuthError("无法连接服务器：" + e.message);
+    }
+  }
+  showAuth();
+}
+boot();
 
 // M4.6 展示规则：页面级字符串过滤，仅当前页面、刷新即清空（F3.6/决策16）。
 (function () {

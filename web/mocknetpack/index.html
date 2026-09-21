@@ -7,10 +7,36 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="wrap">
+<!-- M7.1.2 登录门禁：未登录仅显示登录/注册视图，主界面登录后显示 -->
+<div id="authView" class="auth-wrap hidden">
+  <div class="auth-card">
+    <h2>MockNetPack</h2>
+    <span class="sub">登录后管理设备、抓包与 Mock 规则</span>
+    <div id="authError" class="auth-error hidden"></div>
+
+    <form id="loginForm">
+      <input id="loginUser" class="auth-input" placeholder="用户名" autocomplete="username" required>
+      <input id="loginPass" class="auth-input" type="password" placeholder="密码" autocomplete="current-password" required>
+      <button type="submit" class="auth-btn">登录</button>
+    </form>
+    <div class="auth-switch">还没有账号？<button id="toRegister" class="link-btn" type="button">注册</button></div>
+
+    <form id="registerForm" class="hidden">
+      <input id="regUser" class="auth-input" placeholder="用户名（1-64 字符，不含空格）" autocomplete="username" required>
+      <input id="regPass" class="auth-input" type="password" placeholder="密码（至少 6 位）" autocomplete="new-password" required>
+      <input id="regPass2" class="auth-input" type="password" placeholder="确认密码" autocomplete="new-password" required>
+      <button type="submit" class="auth-btn">注册并登录</button>
+    </form>
+    <div class="auth-switch">已有账号？<button id="toLogin" class="link-btn" type="button">返回登录</button></div>
+  </div>
+</div>
+
+<div class="wrap hidden" id="appWrap">
   <header>
     <h1>MockNetPack · 设备</h1>
     <span class="sub" id="apiInfo">连接中…</span>
+    <span class="sub" id="userInfo"></span>
+    <button id="logoutBtn" class="ghost small hidden">登出</button>
   </header>
   <div id="errorBar"></div>
 

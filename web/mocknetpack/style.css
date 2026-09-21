@@ -95,6 +95,25 @@ button.mini.active { background: var(--primary); color: #fff; }
 /* CSP 合规视图切换：初始隐藏详情视图（不用内联 style，避免被 default-src 'self' 拦截） */
 .hidden { display: none; }
 
+/* ===== M7.1.2 登录/注册门禁 ===== */
+.auth-wrap { display: flex; justify-content: center; padding-top: 8vh; }
+.auth-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+             padding: 28px 32px; width: 100%; max-width: 380px; }
+.auth-card h2 { font-size: 20px; margin-bottom: 4px; }
+.auth-card .sub { display: block; margin-bottom: 18px; }
+.auth-input { width: 100%; box-sizing: border-box; padding: 9px 12px; margin-bottom: 10px;
+              border: 1px solid #d0d7de; border-radius: 6px; font-size: 14px; }
+.auth-input:focus { outline: none; border-color: var(--primary); }
+.auth-btn { width: 100%; padding: 9px 0; font-size: 14px; }
+.auth-error { background: #fff1f0; color: var(--danger); border: 1px solid #ffccc7;
+              border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 13px; }
+.auth-switch { margin-top: 14px; font-size: 13px; color: var(--muted); text-align: center; }
+.link-btn { background: none; border: 0; color: var(--primary); cursor: pointer;
+            padding: 0; font-size: 13px; text-decoration: underline; }
+.link-btn:hover { background: none; color: var(--primary-hover); }
+#userInfo { margin-left: auto; color: var(--muted); }
+#logoutBtn { flex: none; }
+
 /* ===== M3.5 Mock 规则 ===== */
 .rule-row { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
             padding: 10px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
