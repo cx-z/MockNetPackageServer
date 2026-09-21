@@ -254,6 +254,9 @@ func (a *API) handleActivateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_field", "app and did are required")
 		return
 	}
+	if !a.authorizeDeviceAccess(w, r, req.App, req.Did) {
+		return
+	}
 
 	session, created, err := a.captureManager.ActivateSession(r.Context(), req.App, req.Did)
 	if err != nil {
@@ -277,6 +280,9 @@ func (a *API) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !a.authorizeDeviceAccess(w, r, app, did) {
+		return
+	}
 	filter := &store.SessionFilter{App: &app, Did: &did}
 	sessions, err := a.captureManager.ListSessions(r.Context(), filter)
 	if err != nil {
@@ -288,16 +294,18 @@ func (a *API) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 // handleGetSession handles GET /api/v1/sessions/{id}.
 func (a *API) handleGetSession(w http.ResponseWriter, r *http.Request) {
-	session, err := a.captureManager.GetSession(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeCaptureError(w, err)
+	sid, ok := a.authorizeSessionAccess(w, r, r.PathValue("id"))
+	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, session)
+	writeJSON(w, http.StatusOK, sid)
 }
 
 // handleEndSession handles DELETE /api/v1/sessions/{id} (Web「断开」).
 func (a *API) handleEndSession(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorizeSessionAccess(w, r, r.PathValue("id")); !ok {
+		return
+	}
 	if err := a.captureManager.EndSession(r.Context(), r.PathValue("id")); err != nil {
 		writeCaptureError(w, err)
 		return
@@ -316,6 +324,9 @@ func (a *API) handleRegisterViewer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_viewer_id", "viewerId is required")
 		return
 	}
+	if _, ok := a.authorizeSessionAccess(w, r, r.PathValue("id")); !ok {
+		return
+	}
 
 	lease, err := a.captureManager.RegisterViewer(r.Context(), r.PathValue("id"), req.ViewerID, req.Label)
 	if err != nil {
@@ -327,6 +338,9 @@ func (a *API) handleRegisterViewer(w http.ResponseWriter, r *http.Request) {
 
 // handleReleaseViewer handles DELETE /api/v1/sessions/{id}/viewers/{viewerId}.
 func (a *API) handleReleaseViewer(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorizeSessionAccess(w, r, r.PathValue("id")); !ok {
+		return
+	}
 	if err := a.captureManager.ReleaseViewer(r.Context(), r.PathValue("id"), r.PathValue("viewerId")); err != nil {
 		writeCaptureError(w, err)
 		return
@@ -341,12 +355,64 @@ func (a *API) handleListDevices(w http.ResponseWriter, r *http.Request) {
 		writeCaptureError(w, err)
 		return
 	}
+	// M7.2.2 ownership filtering: admin sees all; a dev sees only its own devices.
+	if u := currentUser(r); u != nil && !isAdmin(u) {
+		filtered := make([]*capture.DeviceView, 0, len(devices))
+		for _, d := range devices {
+			if d.Owner == u.Username {
+				filtered = append(filtered, d)
+			}
+		}
+		devices = filtered
+	}
 	writeJSON(w, http.StatusOK, DeviceListResponse{Devices: devices, Total: len(devices)})
 }
 
 // handleGetDevice handles GET /api/v1/devices/{app}/{did}.
 func (a *API) handleGetDevice(w http.ResponseWriter, r *http.Request) {
-	view, err := a.captureManager.GetDevice(r.Context(), r.PathValue("app"), r.PathValue("did"))
+	app, did := r.PathValue("app"), r.PathValue("did")
+	if !a.authorizeDeviceAccess(w, r, app, did) {
+		return
+	}
+	view, err := a.captureManager.GetDevice(r.Context(), app, did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+// UpdateDeviceNameRequest is the M7.2.2 rename payload.
+type UpdateDeviceNameRequest struct {
+	Name string `json:"name"`
+}
+
+// handleUpdateDeviceName handles PUT /api/v1/devices/{app}/{did} — rename a
+// device. Ownership is enforced (owner or admin only; others see 404).
+func (a *API) handleUpdateDeviceName(w http.ResponseWriter, r *http.Request) {
+	app, did := r.PathValue("app"), r.PathValue("did")
+	if !a.authorizeDeviceAccess(w, r, app, did) {
+		return
+	}
+	var req UpdateDeviceNameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_field", "name is required")
+		return
+	}
+	if len(req.Name) > 64 {
+		writeError(w, http.StatusBadRequest, "invalid_field", "name must be <=64 characters")
+		return
+	}
+	if _, err := a.captureManager.UpdateDeviceName(r.Context(), app, did, req.Name); err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	view, err := a.captureManager.GetDevice(r.Context(), app, did)
 	if err != nil {
 		writeCaptureError(w, err)
 		return
@@ -398,6 +464,9 @@ func (a *API) handleGetTraffic(w http.ResponseWriter, r *http.Request) {
 		writeCaptureError(w, err)
 		return
 	}
+	if _, ok := a.authorizeSessionAccess(w, r, entry.SessionID); !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, entry)
 }
 
@@ -428,6 +497,9 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, ok := a.authorizeSessionAccess(w, r, r.PathValue("id")); !ok {
+		return
+	}
 	entries, total, err := a.captureManager.ListSessionTraffic(r.Context(), r.PathValue("id"), limit, offset)
 	if err != nil {
 		writeCaptureError(w, err)
@@ -441,6 +513,14 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 // treats delete as best-effort (the entry may belong to an already-deleted
 // session).
 func (a *API) handleDeleteTraffic(w http.ResponseWriter, r *http.Request) {
+	entry, err := a.captureManager.GetTraffic(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	if _, ok := a.authorizeSessionAccess(w, r, entry.SessionID); !ok {
+		return
+	}
 	if err := a.captureManager.DeleteTraffic(r.Context(), r.PathValue("id")); err != nil {
 		writeCaptureError(w, err)
 		return
@@ -452,6 +532,9 @@ func (a *API) handleDeleteTraffic(w http.ResponseWriter, r *http.Request) {
 // (Web "清空日志"; M9.5). 204 on success; 404 session_not_found for an unknown
 // session.
 func (a *API) handleClearSessionTraffic(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorizeSessionAccess(w, r, r.PathValue("id")); !ok {
+		return
+	}
 	if err := a.captureManager.ClearSessionTraffic(r.Context(), r.PathValue("id")); err != nil {
 		writeCaptureError(w, err)
 		return

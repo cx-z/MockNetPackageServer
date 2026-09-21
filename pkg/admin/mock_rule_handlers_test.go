@@ -1,7 +1,10 @@
 package admin
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/getmockd/mockd/pkg/capture"
@@ -40,8 +43,23 @@ func updateBody(body, note string, enabled *bool) map[string]any {
 	return m
 }
 
+
+// seedMockRuleDevice registers the default com.example.app/dev-1 device so the
+// mock-rule ownership check (M7.2.2) has a device to authorize.
+func seedMockRuleDevice(t *testing.T, srv *httptest.Server) {
+	t.Helper()
+	var sb bytes.Buffer
+	_ = json.NewEncoder(&sb).Encode(map[string]string{"app": "com.example.app", "did": "dev-1"})
+	resp, err := http.Post(srv.URL+"/api/v1/devices/register", "application/json", &sb)
+	if err != nil || (resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK) {
+		t.Fatalf("seed device failed: status=%v err=%v", resp.StatusCode, err)
+	}
+	resp.Body.Close()
+}
+
 func TestMockRuleAPI_CRUDAndVersion(t *testing.T) {
 	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
 	base := srv.URL + "/api/v1/devices/com.example.app/dev-1/mock-rules"
 
 	// Create (default disabled).
@@ -84,6 +102,7 @@ func TestMockRuleAPI_CRUDAndVersion(t *testing.T) {
 
 func TestMockRuleAPI_SameInterfaceConflict(t *testing.T) {
 	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
 	base := srv.URL + "/api/v1/devices/com.example.app/dev-1/mock-rules"
 
 	// First enabled rule.
@@ -113,6 +132,7 @@ func TestMockRuleAPI_SameInterfaceConflict(t *testing.T) {
 
 func TestMockRuleAPI_ValidationAndNotFound(t *testing.T) {
 	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
 	base := srv.URL + "/api/v1/devices/com.example.app/dev-1/mock-rules"
 
 	// Missing method.
@@ -132,6 +152,7 @@ func TestMockRuleAPI_ValidationAndNotFound(t *testing.T) {
 
 func TestMockRuleAPI_HeartbeatCarriesRulesVersion(t *testing.T) {
 	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
 
 	// Register the device (heartbeat requires it).
 	var reg RegisterDeviceResponse
@@ -155,6 +176,7 @@ func TestMockRuleAPI_HeartbeatCarriesRulesVersion(t *testing.T) {
 
 func TestMockRuleAPI_EditNoteValidation(t *testing.T) {
 	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
 	base := srv.URL + "/api/v1/devices/com.example.app/dev-1/mock-rules"
 
 	var created capture.MockRuleView
@@ -187,6 +209,7 @@ func TestMockRuleAPI_EditNoteValidation(t *testing.T) {
 
 func TestMockRuleAPI_EditOmitsEnabledKeepsSwitch(t *testing.T) {
 	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
 	base := srv.URL + "/api/v1/devices/com.example.app/dev-1/mock-rules"
 
 	// Start disabled.

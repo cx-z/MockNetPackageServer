@@ -29,6 +29,9 @@ type MockRuleListResponse struct {
 func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	did := r.PathValue("did")
+	if !a.authorizeDeviceAccess(w, r, app, did) {
+		return
+	}
 
 	raw := r.URL.Query().Get("sinceVersion")
 	if raw != "" {
@@ -82,6 +85,9 @@ func (a *API) handleCreateMockRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !a.authorizeDeviceAccess(w, r, r.PathValue("app"), r.PathValue("did")) {
+		return
+	}
 	view, _, err := a.captureManager.CreateMockRule(r.Context(), r.PathValue("app"), r.PathValue("did"), &in)
 	if err != nil {
 		writeCaptureError(w, err)
@@ -106,6 +112,9 @@ func (a *API) handleUpdateMockRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !a.authorizeDeviceAccess(w, r, r.PathValue("app"), r.PathValue("did")) {
+		return
+	}
 	view, _, err := a.captureManager.UpdateMockRule(r.Context(), r.PathValue("app"), r.PathValue("did"), r.PathValue("ruleId"), &in)
 	if err != nil {
 		writeCaptureError(w, err)
@@ -116,6 +125,9 @@ func (a *API) handleUpdateMockRule(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteMockRule handles DELETE /api/v1/devices/{app}/{did}/mock-rules/{ruleId}.
 func (a *API) handleDeleteMockRule(w http.ResponseWriter, r *http.Request) {
+	if !a.authorizeDeviceAccess(w, r, r.PathValue("app"), r.PathValue("did")) {
+		return
+	}
 	if _, err := a.captureManager.DeleteMockRule(r.Context(), r.PathValue("app"), r.PathValue("did"), r.PathValue("ruleId")); err != nil {
 		writeCaptureError(w, err)
 		return

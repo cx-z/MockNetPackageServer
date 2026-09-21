@@ -175,6 +175,22 @@ func (m *CaptureManager) CreateManualDevice(ctx context.Context, d *capture.Devi
 // active (LastSeenAt = now). Registration is only accepted for a device
 // that already exists OR is new; nothing is rejected here — offline devices
 // come back online on their next register/heartbeat.
+// UpdateDeviceName changes a device's display name (M7.2.2). Returns
+// ErrNotFound when the (app, did) does not exist; ownership is checked by the
+// admin handler layer before calling this.
+func (m *CaptureManager) UpdateDeviceName(ctx context.Context, app, did, name string) (*capture.Device, error) {
+	d, err := m.devices.Get(ctx, app, did)
+	if err != nil {
+		return nil, err
+	}
+	d.Name = name
+	if err := m.devices.Update(ctx, d); err != nil {
+		return nil, err
+	}
+	out := *d
+	return &out, nil
+}
+
 func (m *CaptureManager) RegisterDevice(ctx context.Context, d *capture.Device) (*capture.Device, error) {
 	now := time.Now()
 	d.LastSeenAt = now

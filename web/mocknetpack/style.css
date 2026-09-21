@@ -173,3 +173,19 @@ button.mini.active { background: var(--primary); color: #fff; }
   .detail-grid { grid-template-columns: 1fr; }
   .col-right { position: static; }
 }
+
+/* M7.2.2 modal */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.modal-card {
+  background: #fff; border-radius: 10px; padding: 20px 24px;
+  width: 360px; max-width: 92vw; box-shadow: 0 8px 30px rgba(0,0,0,.2);
+}
+.modal-card h3 { margin: 0 0 12px; font-size: 16px; }
+.form-label { display: block; font-size: 12px; color: #666; margin: 10px 0 4px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.rename-btn { background: none; border: none; cursor: pointer; font-size: 12px; padding: 0 2px; }
+.stats { display: flex; align-items: center; justify-content: space-between; }
+.toolbar { display: flex; justify-content: flex-end; margin-bottom: 6px; }

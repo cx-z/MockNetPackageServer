@@ -85,3 +85,62 @@ func (a *API) requireRole(role account.Role, next http.HandlerFunc) http.Handler
 		next(w, r)
 	})
 }
+
+// ============================================================================
+// Ownership enforcement (M7.2.2): developers see only devices they registered;
+// admins see everything. Cross-owner access is reported as 404 (not 403) so
+// the existence of another user's devices is not leaked.
+// ============================================================================
+
+// ownsDevice reports whether the current user may see/act on a device owned by
+// owner. nil user (--no-auth smoke mode) always passes.
+func ownsDevice(u *UserCtx, owner string) bool {
+	if u == nil {
+		return true
+	}
+	if u.Role == account.RoleAdmin {
+		return true
+	}
+	return u.Username == owner
+}
+
+// authorizeDeviceAccess loads the device and enforces ownership. On failure it
+// writes the error response and returns false; on success the caller proceeds.
+// A missing device surfaces as 404 either way (ErrDeviceNotRegistered vs
+// cross-owner), so the API hides other users' devices entirely.
+func (a *API) authorizeDeviceAccess(w http.ResponseWriter, r *http.Request, app, did string) bool {
+	view, err := a.captureManager.GetDevice(r.Context(), app, did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return false
+	}
+	if !ownsDevice(currentUser(r), view.Owner) {
+		writeError(w, http.StatusNotFound, "not_found", "device not found")
+		return false
+	}
+	return true
+}
+
+// authorizeSessionAccess loads a session, resolves its device, and enforces
+// device ownership. Returns the session on success (handlers avoid a second
+// fetch) or nil after writing the error.
+func (a *API) authorizeSessionAccess(w http.ResponseWriter, r *http.Request, sessionID string) (interface{}, bool) {
+	sess, err := a.captureManager.GetSession(r.Context(), sessionID)
+	if err != nil {
+		writeCaptureError(w, err)
+		return nil, false
+	}
+	view, err := a.captureManager.GetDevice(r.Context(), sess.App, sess.Did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return nil, false
+	}
+	if !ownsDevice(currentUser(r), view.Owner) {
+		writeError(w, http.StatusNotFound, "not_found", "device not found")
+		return nil, false
+	}
+	return sess, true
+}
+
+// isAdmin reports whether the caller is an admin (nil = --no-auth smoke).
+func isAdmin(u *UserCtx) bool { return u != nil && u.Role == account.RoleAdmin }

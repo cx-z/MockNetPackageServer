@@ -42,9 +42,34 @@
 
   <!-- ===== 视图：设备列表（M1.6） ===== -->
   <div id="listView">
+    <div class="toolbar">
+      <button id="addDeviceBtn" class="small ghost" type="button">＋ 注册设备</button>
+    </div>
     <div class="stats" id="stats"></div>
     <div id="list"><div class="empty">加载中…</div></div>
     <div class="updated" id="updated"></div>
+  </div>
+
+  <!-- M7.2.2：手动注册设备模态框 -->
+  <div id="addDeviceModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>注册设备</h3>
+      <div id="addDeviceError" class="auth-error hidden"></div>
+      <form id="addDeviceForm">
+        <label class="form-label">App</label>
+        <select id="addApp" class="auth-input">
+          <option value="com.example.integrating">com.example.integrating</option>
+        </select>
+        <label class="form-label">设备标识（did）</label>
+        <input id="addDid" class="auth-input" placeholder="SDK 生成的 did" required>
+        <label class="form-label">设备名称</label>
+        <input id="addName" class="auth-input" placeholder="例如：张三的 iPhone" required>
+        <div class="modal-actions">
+          <button type="button" id="addDeviceCancel" class="ghost">取消</button>
+          <button type="submit" class="auth-btn">注册</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <!-- ===== 视图：设备详情 + 请求流（M2.5） ===== -->

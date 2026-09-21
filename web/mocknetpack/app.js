@@ -108,7 +108,7 @@ function render(devices) {
   $("stats").textContent = `共 ${devices.length} 台设备 · ${online} 台在线 · 点击设备查看请求流`;
 
   if (devices.length === 0) {
-    $("list").innerHTML = '<div class="empty">暂无设备。启动接入 SDK 的 Debug App 后，设备会出现在这里。</div>';
+    $("list").innerHTML = '<div class="empty">暂无设备。点击右上角「＋ 注册设备」手动添加一台。</div>';
     return;
   }
 
@@ -128,13 +128,19 @@ function render(devices) {
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.innerHTML =
-      '<div class="app">' + esc(d.app) + "</div>" +
-      '<div class="did">' + esc(d.did) + "</div>" +
+      '<div class="app">' + esc(d.name || d.app) + ' <button class="link-btn rename-btn" type="button" title="重命名">✏️</button></div>' +
+      '<div class="did">' + esc(shortId(d.did)) + "</div>" +
       '<div class="row2">' +
         '<span class="badge ' + st.cls + '">' + st.label + "</span>" +
         '<span>最后活跃：' + relTime(d.lastSeenAt) + "</span>" +
         (d.currentSession ? '<span>会话：' + esc(shortId(d.currentSession.id)) + "</span>" : "") +
       "</div>";
+
+    // M7.2.2 rename button
+    const renameBtn = meta.querySelector(".rename-btn");
+    if (renameBtn) {
+      renameBtn.onclick = (e) => { e.stopPropagation(); renameDevice(d); };
+    }
 
     const actions = document.createElement("div");
     actions.className = "actions";
@@ -447,6 +453,68 @@ function backToList() {
   $("detailView").classList.add("hidden");
   $("listView").classList.remove("hidden");
   loadDevices();
+}
+
+async function renameDevice(d) {
+  const cur = d.name || "";
+  const next = window.prompt("设备新名称：", cur);
+  if (next === null) return;
+  const name = next.trim();
+  if (!name) { window.alert("名称不能为空"); return; }
+  try {
+    const res = await apiFetch("/devices/" + encodeURIComponent(d.app) + "/" + encodeURIComponent(d.did), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || ("HTTP " + res.status));
+    }
+    await loadDevices();
+  } catch (err) {
+    window.alert("重命名失败：" + err.message);
+  }
+}
+
+function openAddDeviceModal() {
+  $("addDeviceError").classList.add("hidden");
+  $("addDid").value = "";
+  $("addName").value = "";
+  $("addDeviceModal").classList.remove("hidden");
+  $("addDid").focus();
+}
+function closeAddDeviceModal() {
+  $("addDeviceModal").classList.add("hidden");
+}
+
+async function submitAddDevice(ev) {
+  ev.preventDefault();
+  $("addDeviceError").classList.add("hidden");
+  const app = $("addApp").value;
+  const did = $("addDid").value.trim();
+  const name = $("addName").value.trim();
+  if (!did || !name) {
+    $("addDeviceError").textContent = "did 与名称均为必填";
+    $("addDeviceError").classList.remove("hidden");
+    return;
+  }
+  try {
+    const res = await apiFetch("/devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ app, did, name }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || ("HTTP " + res.status));
+    }
+    closeAddDeviceModal();
+    await loadDevices();
+  } catch (err) {
+    $("addDeviceError").textContent = "注册失败：" + err.message;
+    $("addDeviceError").classList.remove("hidden");
+  }
 }
 
 // hash 路由：#/device/{app}/{did}
@@ -1013,4 +1081,14 @@ boot();
     trafficFilter = ev.target.value || "";
     renderTraffic(pageLog);
   });
+})();
+
+// M7.2.2: wire add-device modal buttons
+(function () {
+  const addBtn = document.getElementById("addDeviceBtn");
+  if (addBtn) addBtn.onclick = openAddDeviceModal;
+  const cancel = document.getElementById("addDeviceCancel");
+  if (cancel) cancel.onclick = closeAddDeviceModal;
+  const form = document.getElementById("addDeviceForm");
+  if (form) form.onsubmit = submitAddDevice;
 })();
