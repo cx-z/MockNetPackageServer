@@ -92,8 +92,9 @@ button.mini.active { background: var(--primary); color: #fff; }
                     white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
 .detail-panel .d-err { color: var(--danger); }
 
-/* CSP 合规视图切换：初始隐藏详情视图（不用内联 style，避免被 default-src 'self' 拦截） */
-.hidden { display: none; }
+/* CSP 合规视图切换：初始隐藏详情视图（不用内联 style，避免被 default-src 'self' 拦截）。
+   !important：.auth-wrap 等后定义的 display 规则会覆盖普通 .hidden，必须强制隐藏。 */
+.hidden { display: none !important; }
 
 /* ===== M7.1.2 登录/注册门禁 ===== */
 .auth-wrap { display: flex; justify-content: center; padding-top: 8vh; }
