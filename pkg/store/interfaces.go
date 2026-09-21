@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"time"
 
+	"github.com/getmockd/mockd/pkg/account"
 	"github.com/getmockd/mockd/pkg/capture"
 	"github.com/getmockd/mockd/pkg/config"
 	"github.com/getmockd/mockd/pkg/mock"
@@ -345,4 +347,39 @@ type MockRuleStore interface {
 	GetRuleVersion(ctx context.Context, app, did string) (int, error)
 	// BumpRuleVersion increments and returns the new version for (app, did).
 	BumpRuleVersion(ctx context.Context, app, did string) (int, error)
+}
+
+// ============================================================================
+// MockNetPack account entities (User / AuthSession, M7.1, contract v0.6.0)
+// ============================================================================
+
+// UserStore handles persistence for accounts. Username is the unique key.
+type UserStore interface {
+	// GetByUsername returns a single user by username.
+	GetByUsername(ctx context.Context, username string) (*account.User, error)
+	// List returns all users.
+	List(ctx context.Context) ([]*account.User, error)
+	// Create adds a new user. Returns store.ErrAlreadyExists if the username
+	// already exists.
+	Create(ctx context.Context, u *account.User) error
+	// Update replaces an existing user. Returns store.ErrNotFound if missing.
+	Update(ctx context.Context, u *account.User) error
+	// Delete removes a user by username.
+	Delete(ctx context.Context, username string) error
+}
+
+// AuthSessionStore handles persistence for server-issued session tokens (M7.1).
+// Sessions persist across restarts so a logged-in Web page survives a server
+// restart until its token expires or is revoked.
+type AuthSessionStore interface {
+	// Create adds a new session token. Returns store.ErrAlreadyExists if the
+	// token already exists (astronomically unlikely).
+	Create(ctx context.Context, s *account.AuthSession) error
+	// GetByToken returns a single session by token.
+	GetByToken(ctx context.Context, token string) (*account.AuthSession, error)
+	// Delete revokes a session by token. Returns store.ErrNotFound if missing.
+	Delete(ctx context.Context, token string) error
+	// DeleteExpired removes every session expired before now and returns the
+	// number of deleted sessions (janitor).
+	DeleteExpired(ctx context.Context, now time.Time) (int, error)
 }

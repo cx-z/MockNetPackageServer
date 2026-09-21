@@ -2,10 +2,16 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.5.3
+  version: 0.6.0
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
     - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
+    - 鉴权（M7.1，v0.6.0）：本契约顶层声明 Bearer 安全要求——除显式标注 `security: []` 的端点外，全部
+      /api/v1 端点要求 `Authorization: Bearer <token>`（M7.1.3 起服务端强制；未登录 401、越权 403）。
+      会话 token 由服务端在登录时签发并持久化，有效期 7 天（服务端配置项）；登出（POST /auth/logout）
+      即服务端吊销，token 立即失效。`--no-auth` 仅保留给本地冒烟（跳过鉴权），真机联调启用认证。
+    - 账号（M7.1）：开放注册仅产 dev 角色（用户名+密码，内网员工高可信）；admin 角色不走注册接口，
+      由 CLI `mockd start --create-admin <user> --admin-password <pass>` 创建。
     - 隔离强制：所有设备/流量/规则接口显式携带 (app, did) 维度（路径或 query），避免串设备。
     - 时间：一律 RFC3339（如 2026-09-18T09:00:00+08:00）。
     - Mock 匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口的所有请求均命中。
@@ -24,7 +30,14 @@ servers:
   - url: http://localhost:4290/api/v1
     description: 本地开发（mockd admin 端口）
 
+# M7.1 (v0.6.0): 顶层安全要求——除显式标注 security: [] 的端点（/auth/register、/auth/login）外，
+# 全部端点要求 Bearer token。服务端在 M7.1.3 强制执行；--no-auth 本地冒烟跳过。
+security:
+  - bearerAuth: []
+
 tags:
+  - name: auth
+    description: 账号与会话（注册/登录/登出/当前用户，M7.1）
   - name: devices
     description: 设备注册、心跳、查询
   - name: sessions
@@ -578,7 +591,131 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  # ==========================================================================
+  # 6. 账号与会话（M7.1，v0.6.0）
+  # 开放注册仅产 dev 角色；admin 由 CLI `mockd start --create-admin` 创建。
+  # 登录签发服务端持久化的会话 token（有效期 7 天，配置项）；登出即服务端吊销。
+  # ==========================================================================
+  /auth/register:
+    post:
+      tags: [auth]
+      x-milestone: m7
+      summary: 开放注册（仅 dev 角色）
+      description: |
+        用户名+密码即可注册（内网员工高可信）；角色固定为 dev，管理员不走注册接口。
+        用户名 1~64 字符（不允许空白）；密码至少 6 字符。用户名已存在返回 409。
+      operationId: registerAuthUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterAuthRequest'
+      responses:
+        '201':
+          description: 注册成功（返回用户信息，不含密码哈希）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: 用户名已存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/login:
+    post:
+      tags: [auth]
+      x-milestone: m7
+      summary: 登录（签发会话 token）
+      description: |
+        校验用户名+密码；成功签发 Bearer token（服务端持久化，有效期 7 天）并返回用户信息。
+        用户名不存在或密码错误一律 401（不区分，避免账号枚举）。
+      operationId: loginAuthUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginAuthRequest'
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginAuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: 用户名或密码错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      x-milestone: m7
+      summary: 登出（服务端吊销当前 token）
+      description: |
+        吊销请求携带的 Bearer token（服务端删除会话记录），token 立即失效。
+        无 token / 无效 token 返回 401；成功返回 204。幂等：token 已失效时同样 401。
+      operationId: logoutAuthUser
+      responses:
+        '204':
+          description: 已吊销
+        '401':
+          description: 缺少或无效的 Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/me:
+    get:
+      tags: [auth]
+      x-milestone: m7
+      summary: 当前登录用户
+      description: |
+        返回请求携带的 Bearer token 对应的用户信息（角色 admin|dev），供 Web 判断登录态与角色。
+        无 token / 无效 / 过期 token 返回 401。
+      operationId: getAuthMe
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: 缺少或无效的 Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Token
+      description: |
+        登录（POST /auth/login）签发、服务端持久化的会话 token；Web 每次请求携带
+        `Authorization: Bearer <token>`。有效期 7 天（服务端配置项）；登出即服务端吊销。
+
   parameters:
     AppPath:
       name: app
@@ -1168,6 +1305,59 @@ components:
               message:
                 type: string
                 example: "不允许同一个接口同时开启多个 Mock 规则"
+
+    # ---------------------------------------------------------------- 账号（M7.1）
+    User:
+      type: object
+      description: 用户信息（API 输出不含密码哈希）
+      required: [username, role, createdAt]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 用户名（唯一）
+        role:
+          type: string
+          enum: [admin, dev]
+          description: 角色：admin=管理员（CLI 创建，全量可见）；dev=开发者（开放注册，仅见自己名下设备）
+        createdAt:
+          type: string
+          format: date-time
+
+    RegisterAuthRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 用户名（不含空白字符）
+        password:
+          type: string
+          minLength: 6
+          maxLength: 128
+          description: 密码（明文传输，内网；服务端 PBKDF2 哈希存储）
+
+    LoginAuthRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+
+    LoginAuthResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+          description: 会话 token（服务端持久化，有效期 7 天；登出吊销）
+        user:
+          $ref: '#/components/schemas/User'
 
     # ----------------------------------------------------------------- 错误
     ErrorResponse:

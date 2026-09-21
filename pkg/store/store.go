@@ -192,6 +192,10 @@ type Store interface {
 	Devices() DeviceStore
 	CaptureSessions() CaptureSessionStore
 
+	// MockNetPack account stores (users and auth sessions, M7.1)
+	Users() UserStore
+	AuthSessions() AuthSessionStore
+
 	// Transactions (for backends that support it)
 	Begin(ctx context.Context) (Transaction, error)
 

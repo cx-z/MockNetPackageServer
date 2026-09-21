@@ -133,6 +133,10 @@ func init() {
 	startCmd.Flags().StringVar(&startServerFlags.DataDir, "data-dir", "", "Data directory for persistent storage (default: ~/.local/share/mockd)")
 	startCmd.Flags().BoolVar(&startServerFlags.NoAuth, "no-auth", false, "Disable API key authentication on admin API")
 
+	// MockNetPack account flags (M7.1): admin creation is CLI-only.
+	startCmd.Flags().StringVar(&startServerFlags.CreateAdmin, "create-admin", "", "Create an admin account (MockNetPack M7): mockd start --create-admin <user> --admin-password <pass>")
+	startCmd.Flags().StringVar(&startServerFlags.AdminPassword, "admin-password", "", "Password for --create-admin")
+
 	// Start-specific flags
 	startCmd.Flags().StringVar(&startLoadDir, "load", "", "Load mocks from directory")
 	startCmd.Flags().BoolVar(&startWatch, "watch", false, "Watch for file changes (with --load)")
@@ -278,6 +282,21 @@ func runStart(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("admin port %d is already in use — try a different port with --admin-port or check what's using it: lsof -i :%d", sf.AdminPort, sf.AdminPort)
 		}
 		return fmt.Errorf("failed to start admin API: %w", err)
+	}
+
+	// MockNetPack M7.1: --create-admin — the only admin creation path.
+	// Open registration only produces dev accounts (contract v0.6.0); admins
+	// are created via CLI. An existing username is an error (no overwrite).
+	if sf.CreateAdmin != "" {
+		if err := adminAPI.CreateAdminUser(ctx, sf.CreateAdmin, sf.AdminPassword); err != nil {
+			_ = server.Stop()
+			_ = adminAPI.Stop()
+			if errors.Is(err, store.ErrAlreadyExists) {
+				return fmt.Errorf("--create-admin: user %q already exists", sf.CreateAdmin)
+			}
+			return fmt.Errorf("--create-admin failed: %w", err)
+		}
+		log.Info("MockNetPack admin account created", "username", sf.CreateAdmin)
 	}
 
 	// Wire stream recording to WebSocket and SSE handlers

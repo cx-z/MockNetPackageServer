@@ -58,6 +58,10 @@ type API struct {
 	cancel                 context.CancelFunc
 	log                    atomic.Pointer[slog.Logger]
 
+	// MockNetPack account stores (M7.1): users and server-issued session tokens.
+	users        store.UserStore
+	authSessions store.AuthSessionStore
+
 	// engineSyncMu prevents concurrent admin-store-to-engine syncs (legacy global mutex).
 	// Used as fallback when per-engine mutex is not applicable.
 	engineSyncMu sync.Mutex
@@ -177,6 +181,11 @@ func NewAPI(port int, opts ...Option) *API {
 		dataStore.MockRules(),
 		api.captureConfig,
 	)
+
+	// Initialize the MockNetPack account stores (M7.1): users and session
+	// tokens share the same persistent FileStore.
+	api.users = dataStore.Users()
+	api.authSessions = dataStore.AuthSessions()
 
 	// Initialize rate limiter with defaults if not provided via options
 	if api.rateLimiter == nil {

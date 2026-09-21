@@ -315,6 +315,13 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.handleCreateMockRule)
 	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.handleUpdateMockRule)
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.handleDeleteMockRule)
+
+	// Account system (M7.1, contract v0.6.0): open registration (dev only),
+	// login (server-issued token), logout (server-side revocation), me.
+	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/register", a.handleAuthRegister)
+	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/login", a.handleAuthLogin)
+	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/logout", a.handleAuthLogout)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/auth/me", a.handleAuthMe)
 }
 
 // handleConvertRecordings wraps the convert handler to pass the dual-write mock creator.

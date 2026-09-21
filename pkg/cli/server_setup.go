@@ -82,6 +82,11 @@ type ServerFlags struct {
 	// Auth flags
 	NoAuth bool
 
+	// MockNetPack account flags (M7.1): --create-admin is the only admin
+	// creation path (open registration only produces dev accounts).
+	CreateAdmin   string
+	AdminPassword string
+
 	// Storage flags
 	DataDir string
 }
@@ -147,6 +152,10 @@ func RegisterServerFlags(fs *flag.FlagSet, f *ServerFlags) {
 
 	// Auth flags
 	fs.BoolVar(&f.NoAuth, "no-auth", false, "Disable API key authentication")
+
+	// MockNetPack account flags (M7.1): admin creation is CLI-only.
+	fs.StringVar(&f.CreateAdmin, "create-admin", "", "Create an admin account (MockNetPack M7): mockd start --create-admin <user> --admin-password <pass>")
+	fs.StringVar(&f.AdminPassword, "admin-password", "", "Password for --create-admin")
 
 	// Storage flags
 	fs.StringVar(&f.DataDir, "data-dir", "", "Data directory for persistent storage (default: ~/.local/share/mockd)")

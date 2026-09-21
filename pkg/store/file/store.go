@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/getmockd/mockd/pkg/account"
 	"github.com/getmockd/mockd/pkg/capture"
 	"github.com/getmockd/mockd/pkg/config"
 	"github.com/getmockd/mockd/pkg/mock"
@@ -72,6 +73,12 @@ type storeData struct {
 	// is computed by the manager and never stored.
 	MockRules    []*capture.MockRule `json:"mockRules,omitempty"`
 	RuleVersions map[string]int      `json:"ruleVersions,omitempty"`
+
+	// MockNetPack accounts (M7.1): users and server-issued session tokens.
+	// Sessions persist so a logged-in Web page survives a server restart until
+	// the token expires or is revoked.
+	Users        []*account.User        `json:"users,omitempty"`
+	AuthSessions []*account.AuthSession `json:"authSessions,omitempty"`
 }
 
 // New creates a new FileStore with the given configuration.
@@ -332,6 +339,16 @@ func (s *FileStore) CaptureSessions() store.CaptureSessionStore {
 // MockRules returns the mock rule store (MockNetPack M3).
 func (s *FileStore) MockRules() store.MockRuleStore {
 	return &mockRuleStore{fs: s}
+}
+
+// Users returns the account store (MockNetPack M7.1).
+func (s *FileStore) Users() store.UserStore {
+	return &userStore{fs: s}
+}
+
+// AuthSessions returns the auth session store (MockNetPack M7.1).
+func (s *FileStore) AuthSessions() store.AuthSessionStore {
+	return &authSessionStore{fs: s}
 }
 
 // Begin starts a transaction (snapshot-based for file store).
