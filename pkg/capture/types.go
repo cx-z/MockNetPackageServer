@@ -202,6 +202,11 @@ type TrafficEntry struct {
 	// RequestBodyBase64 carries the raw request body bytes (base64) when it is
 	// not UTF-8 text, so "Mock 此请求" can replay the exact original bytes.
 	RequestBodyBase64 string `json:"requestBodyBase64,omitempty"`
+	// RequestBodyDecoded is the UTF-8 text decoded by the app-injected protocol
+	// decoder (M8.1, same mechanism as ResponseBodyDecoded), for Web display only;
+	// never used for replay. Present when the request body is binary protocol
+	// (e.g. xcp AES+gzip) and the decoder succeeded.
+	RequestBodyDecoded string `json:"requestBodyDecoded,omitempty"`
 	// StatusCode is the response status code (zero when the request failed).
 	StatusCode int `json:"statusCode,omitempty"`
 	// ResponseHeaders are the response headers (multi-value).
@@ -270,6 +275,9 @@ type MockRuleSource struct {
 	RequestHeaders  map[string][]string `json:"requestHeaders,omitempty"`
 	RequestBody     string              `json:"requestBody,omitempty"`
 	RequestBodyBase64 string            `json:"requestBodyBase64,omitempty"`
+	// RequestBodyDecoded is the request body decoded by the app-injected protocol
+	// decoder (M8.1), frozen into the snapshot for the detail view; display only.
+	RequestBodyDecoded string           `json:"requestBodyDecoded,omitempty"`
 	StatusCode      *int                `json:"statusCode,omitempty"`
 	ResponseHeaders map[string][]string `json:"responseHeaders,omitempty"`
 	ResponseBody    *string             `json:"responseBody,omitempty"`

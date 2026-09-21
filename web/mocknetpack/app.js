@@ -420,7 +420,7 @@ function renderTrafficDetail(e) {
       (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是（M3 起标记）</span></div>' : "") +
       '<div class="d-block"><div class="d-title">请求头</div>' +
         (headRows(e.requestHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(e.requestBody) || "（空）") + "</pre></div>" +
+      '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(e.requestBodyDecoded || e.requestBody) || "（空）") + "</pre></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' +
         (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
       '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(e.responseBodyDecoded || e.responseBody) || "（空）") + "</pre></div>" +
@@ -638,7 +638,7 @@ function renderRuleDetail(r) {
             '<div class="d-kv"><span class="d-k">方法/路径</span><span class="d-v">' + esc(src.method) + " " + esc(src.path) + "</span></div>" +
             '<div class="d-kv"><span class="d-k">原始状态码</span><span class="d-v">' + (src.statusCode ?? "—") + "</span></div>" +
             '<div class="d-block"><div class="d-title">原始请求体</div><pre>' +
-              esc(src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")) + "</pre></div>" +
+              esc(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）"))) + "</pre></div>" +
             '<div class="d-block"><div class="d-title">原始响应体</div><pre>' +
               esc(src.responseBodyDecoded || (src.responseBodyBase64 ? "[二进制 " + atob(src.responseBodyBase64).length + " 字节]" : (src.responseBody || "（空）"))) + "</pre></div>" +
           "</div>"
@@ -819,6 +819,7 @@ async function mockThisRequest(e) {
       requestHeaders: e.requestHeaders,
       requestBody: e.requestBody,
       ...(e.requestBodyBase64 ? { requestBodyBase64: e.requestBodyBase64 } : {}),
+      ...(e.requestBodyDecoded ? { requestBodyDecoded: e.requestBodyDecoded } : {}),
       statusCode: e.statusCode,
       responseHeaders: e.responseHeaders,
       responseBody: e.responseBody,

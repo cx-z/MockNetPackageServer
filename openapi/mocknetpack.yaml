@@ -2,10 +2,13 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.6.0
+  version: 0.7.0
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
     - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
+    - 请求体解析（M8.1，v0.7.0）：TrafficEntry / MockRuleSource 新增 requestBodyDecoded——
+      请求体经 App 注入的协议解码器（同响应体 M4 机制）解出的可读 UTF-8 文本，仅 Web 展示、
+      不参与回放；二进制请求体（xcp AES+gzip）解码后 Web 优先展示它，无则回退 requestBody 占位。
     - 鉴权（M7.1，v0.6.0）：本契约顶层声明 Bearer 安全要求——除显式标注 `security: []` 的端点外，全部
       /api/v1 端点要求 `Authorization: Bearer <token>`（M7.1.3 起服务端强制；未登录 401、越权 403）。
       会话 token 由服务端在登录时签发并持久化，有效期 7 天（服务端配置项）；登出（POST /auth/logout）
@@ -1100,6 +1103,12 @@ components:
         requestBodyBase64:
           type: string
           description: 二进制请求体的 base64（无法 UTF-8 解码时填充），供"Mock 此请求"回放原始字节
+        requestBodyDecoded:
+          type: string
+          description: |
+            请求体经 App 注入的协议解码器解出的可读 UTF-8 文本（M8.1，与 responseBodyDecoded 同机制）。
+            仅作 Web 展示；存在时 Web 优先展示它，无则回退 requestBody 的 "[binary N bytes]" 占位。
+            不参与回放；解码失败/未注入解码器时缺省。
         statusCode:
           type: integer
           nullable: true
@@ -1272,6 +1281,11 @@ components:
         requestBodyBase64:
           type: string
           description: 二进制原始请求体 base64
+        requestBodyDecoded:
+          type: string
+          description: |
+            原始请求体经 App 协议解码器解出的可读 UTF-8 文本（M8.1），随"Mock 此请求"快照固化，
+            供规则详情页对照查看；纯展示字段，不参与回放。
         statusCode:
           type: integer
           nullable: true
