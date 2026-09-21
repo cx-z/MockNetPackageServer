@@ -775,8 +775,21 @@ async function mockThisRequest(e) {
 // viewer 租约（M1.6）
 // ============================================================================
 
+/** 生成 viewerId：优先 crypto.randomUUID（仅安全上下文可用），否则 RFC4122 v4 回退。
+ *  非安全上下文（http://局域网 IP 打开页面）下 crypto.randomUUID 不存在，
+ *  直接调用会抛 "crypto.randomUUID is not a function"（必现 bug，本会话修复）。 */
+function newUuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 async function registerViewer(session, label) {
-  const viewerId = crypto.randomUUID();
+  const viewerId = newUuid();
   try {
     const res = await fetch(API + "/sessions/" + encodeURIComponent(session.id) + "/viewers", {
       method: "POST",
