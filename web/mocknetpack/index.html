@@ -37,17 +37,24 @@
     <div class="section-title">会话</div>
     <div id="sessionList"><div class="empty">加载中…</div></div>
 
-    <div class="section-title">Mock 规则 <span class="sub" id="rulesInfo"></span></div>
-    <div id="rulesConflict" class="conflict hidden"></div>
-    <div id="rulesList"><div class="empty">加载中…</div></div>
-    <div id="ruleDetail"><div class="empty">点击一条规则查看详情。</div></div>
+    <!-- M8.2：两列布局（左=规则+请求流，右=详情/编辑） -->
+    <div class="detail-grid">
+      <div class="col-left">
+        <div class="section-title">Mock 规则 <span class="sub" id="rulesInfo"></span></div>
+        <div id="rulesConflict" class="conflict hidden"></div>
+        <div id="rulesList"><div class="empty">加载中…</div></div>
 
-    <div class="section-title">请求流 <span class="sub" id="trafficInfo"></span></div>
-    <input id="trafficFilter" class="filter-input" placeholder="过滤请求（URL/Method 关键字，仅当前页面，刷新即清空）" />
-    <div id="trafficList"><div class="empty">请选择会话查看实时请求。</div></div>
+        <div class="section-title">请求流 <span class="sub" id="trafficInfo"></span></div>
+        <input id="trafficFilter" class="filter-input" placeholder="过滤请求（URL/Method 关键字，仅当前页面，刷新即清空）" />
+        <div id="trafficList"><div class="empty">请选择会话查看实时请求。</div></div>
+      </div>
 
-    <div class="section-title">请求详情</div>
-    <div id="trafficDetail"><div class="empty">点击上方请求查看完整详情。</div></div>
+      <div class="col-right">
+        <div class="section-title">详情</div>
+        <div id="ruleDetail" class="hidden"><div class="empty">点击左侧一条规则查看详情。</div></div>
+        <div id="trafficDetail"><div class="empty">点击左侧请求或规则查看详情。</div></div>
+      </div>
+    </div>
   </div>
 </div>
 <script src="app.js"></script>

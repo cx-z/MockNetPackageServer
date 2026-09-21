@@ -6,7 +6,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font: 14px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
        background: var(--bg); color: var(--text); padding: 24px; }
-.wrap { max-width: 860px; margin: 0 auto; }
+.wrap { max-width: 1200px; margin: 0 auto; }
 header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
 h1 { font-size: 20px; font-weight: 600; }
 .sub { color: var(--muted); font-size: 12px; }
@@ -144,3 +144,18 @@ button.mini.active { background: var(--primary); color: #fff; }
 .edit-row textarea.filter-input { font-family: ui-monospace, Menlo, monospace; font-size: 12px;
   resize: vertical; }
 .edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+/* ===== M8.2 两列布局：左=规则+请求流，右=详情/编辑 ===== */
+.detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+               gap: 16px; align-items: start; margin-top: 14px; }
+.col-left > .section-title { margin-top: 18px; }
+.col-left > .section-title:first-child { margin-top: 0; }
+.col-right { position: sticky; top: 12px; }
+.col-right > .section-title { margin-top: 0; }
+#sessionList { display: flex; flex-wrap: wrap; gap: 8px; }
+#sessionList .session-card { margin-bottom: 0; flex: 1 1 300px; }
+.rule-row.active { border-color: var(--primary); background: #f4f8ff; }
+@media (max-width: 900px) {
+  .detail-grid { grid-template-columns: 1fr; }
+  .col-right { position: static; }
+}

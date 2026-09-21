@@ -289,7 +289,10 @@ function selectSession(sessionId) {
 
   const session = sessionFor(sessionId);
   $("trafficList").innerHTML = "";
-  $("trafficDetail").innerHTML = '<div class="empty">点击上方请求查看完整详情。</div>';
+  $("trafficDetail").innerHTML = '<div class="empty">点击左侧请求或规则查看详情。</div>';
+  detail._activeRule = null;
+  document.querySelectorAll(".rule-row").forEach((el) => el.classList.remove("active"));
+  showDetailPane("traffic");
 
   if (!sessionId) {
     $("trafficInfo").textContent = "";
@@ -317,6 +320,12 @@ function sessionFor(sessionId) {
 
 function stopTrafficPoll() {
   if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
+}
+
+/** M8.2：右列详情面板切换（请求详情 / 规则详情）。 */
+function showDetailPane(kind) {
+  $("ruleDetail").classList.toggle("hidden", kind !== "rule");
+  $("trafficDetail").classList.toggle("hidden", kind !== "traffic");
 }
 
 /** 请求流轮询：先拿 total，再拉最新一页（契约升序 + offset 分页），按 id 去重合并。 */
@@ -379,6 +388,9 @@ function renderTraffic(entries) {
 
 /** 请求详情面板（列表数据已含完整字段，无需再查详情接口）。 */
 function renderTrafficDetail(e) {
+  showDetailPane("traffic");
+  detail._activeRule = null;
+  document.querySelectorAll(".rule-row").forEach((el) => el.classList.remove("active"));
   const box = $("trafficDetail");
   const headRows = (h) => Object.entries(h || {})
     .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
@@ -474,7 +486,9 @@ function renderRules(data) {
   ruleStore = rules;
   for (const r of rules) {
     const el = document.createElement("div");
-    el.className = "rule-row" + (r.enabled ? "" : " disabled");
+    el.className = "rule-row" + (r.enabled ? "" : " disabled") +
+      (detail._activeRule === r.id ? " active" : "");
+    el.dataset.rid = r.id;
     const effBadge = r.enabled
       ? (r.effective ? '<span class="badge eff">生效中</span>' : '<span class="badge stopped">冲突未生效</span>')
       : '<span class="badge stopped">已停用</span>';
@@ -488,8 +502,13 @@ function renderRules(data) {
           (r.source ? " · 来自抓包" : "") + "</div>" +
       "</div>";
 
-    // 点击规则体 → 展示详情。
-    el.querySelector(".r-body").onclick = () => renderRuleDetail(r);
+    // 点击规则体 → 右列展示详情/编辑（M8.2 两列布局）。
+    el.querySelector(".r-body").onclick = () => {
+      detail._activeRule = r.id;
+      document.querySelectorAll(".rule-row").forEach((el2) =>
+        el2.classList.toggle("active", el2.dataset.rid === r.id));
+      renderRuleDetail(r);
+    };
 
     const sw = document.createElement("label");
     sw.className = "switch";
@@ -515,6 +534,9 @@ function renderRules(data) {
 
 /** 渲染单条规则详情（状态码/响应头/回包体/备注/来源快照）。 */
 function renderRuleDetail(r) {
+  showDetailPane("rule");
+  detail._activeTraffic = null;
+  document.querySelectorAll(".traffic-row").forEach((el) => el.classList.remove("active"));
   const box = $("ruleDetail");
   const headRows = (h) => Object.entries(h || {})
     .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
@@ -597,6 +619,20 @@ async function saveRuleEdit(rule) {
   const note = $("editNote").value.trim();
   if (!note) { showError("备注必填，请填写后再保存"); return; }
 
+  // M8.2：保存前 JSON 合法性校验——回包体形如 JSON（{…}/[…]）时必须可解析，
+  // 拦截全角符号/多余逗号等低级错误（M6.4 真机教训），避免坏 JSON 以"无网络"误导。
+  const bodyText = $("editBody").value;
+  const trimmedBody = bodyText.trim();
+  if (trimmedBody && (trimmedBody.startsWith("{") || trimmedBody.startsWith("["))) {
+    try {
+      JSON.parse(trimmedBody);
+    } catch (e) {
+      showError("回包体不是合法 JSON，已阻止保存：" + String(e && e.message || "").slice(0, 80) +
+        "（常见原因：全角逗号/冒号、多余逗号）");
+      return;
+    }
+  }
+
   // 解析响应头文本：每行 "Key: Value"。
   const headers = {};
   for (const line of $("editHeaders").value.split("\n")) {
@@ -614,7 +650,7 @@ async function saveRuleEdit(rule) {
       headers: { "Content-Type": "application/json" },
       // M5: 不传 method/path/source；不传 enabled（保持当前开关）。
       body: JSON.stringify({
-        response: { statusCode: statusCode, headers: headers, body: $("editBody").value },
+        response: { statusCode: statusCode, headers: headers, body: bodyText },
         note: note,
       }),
     });
@@ -642,7 +678,10 @@ async function deleteRule(rule) {
       method: "DELETE",
     });
     if (!res.ok && res.status !== 204) { showError("删除失败（HTTP " + res.status + "）"); return; }
+    detail._activeRule = null;
+    document.querySelectorAll(".rule-row").forEach((el) => el.classList.remove("active"));
     $("ruleDetail").innerHTML = '<div class="empty">已删除。</div>';
+    showDetailPane("rule");
     await loadRules();
   } catch (e) {
     showError("删除失败：" + e.message);
