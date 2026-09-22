@@ -647,15 +647,15 @@ function renderRuleDetail(r) {
         (r.note ? esc(r.note) : '<span style="color:var(--muted)">（未填写）</span>') + "</span></div>" +
       '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + "</span></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(resp.headers) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">回包体</div><pre>' + esc(bodyDisp) + "</pre></div>" +
+      '<div class="d-block"><div class="d-title">回包体</div><pre>' + esc(formatBody(bodyDisp)) + "</pre></div>" +
       (src
         ? '<div class="d-block"><div class="d-title">来源快照（原始真实请求）</div>' +
             '<div class="d-kv"><span class="d-k">方法/路径</span><span class="d-v">' + esc(src.method) + " " + esc(src.path) + "</span></div>" +
             '<div class="d-kv"><span class="d-k">原始状态码</span><span class="d-v">' + (src.statusCode ?? "—") + "</span></div>" +
             '<div class="d-block"><div class="d-title">原始请求体</div><pre>' +
-              esc(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）"))) + "</pre></div>" +
+              esc(formatBody(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")))) + "</pre></div>" +
             '<div class="d-block"><div class="d-title">原始响应体</div><pre>' +
-              esc(src.responseBodyDecoded || (src.responseBodyBase64 ? "[二进制 " + atob(src.responseBodyBase64).length + " 字节]" : (src.responseBody || "（空）"))) + "</pre></div>" +
+              esc(formatBody(src.responseBodyDecoded || (src.responseBodyBase64 ? "[二进制 " + atob(src.responseBodyBase64).length + " 字节]" : (src.responseBody || "（空）")))) + "</pre></div>" +
           "</div>"
         : "") +
     "</div>";
@@ -686,7 +686,7 @@ function openEditRuleForm(r) {
       '<div class="edit-row"><label>回包体（UTF-8 文本）' +
         (resp.bodyBase64 ? ' <span class="sub">（原回包为二进制；已载入抓包解码文本作为缺省值，保存后将以文本回包为准）</span>' : '') +
         '</label>' +
-        '<textarea id="editBody" class="filter-input" rows="8">' + esc(bodyDefault) + '</textarea></div>' +
+        '<textarea id="editBody" class="filter-input" rows="8">' + esc(formatBody(bodyDefault)) + '</textarea></div>' +
       '<div class="edit-row"><label>备注（必填）</label>' +
         '<input id="editNote" type="text" class="filter-input" placeholder="说明这条规则的用途/场景" value="' + esc(r.note || "") + '" /></div>' +
       '<div class="edit-actions">' +
