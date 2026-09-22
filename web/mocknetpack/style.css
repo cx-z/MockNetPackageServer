@@ -207,7 +207,7 @@ button.mini.active { background: var(--primary); color: #fff; }
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
 
 /* 卡片右侧红色删除按钮 */
-.list .card .card-delete-btn {
+.list .card button.card-delete-btn {
   position: absolute;
   top: 10px;
   right: 10px;
@@ -215,8 +215,9 @@ button.mini.active { background: var(--primary); color: #fff; }
   height: 24px;
   border: none;
   border-radius: 4px;
-  background: transparent;
+  background: transparent !important;
   color: #e53e3e !important;
+  padding: 0 !important;
   font-size: 14px;
   font-weight: bold;
   cursor: pointer;
@@ -226,7 +227,7 @@ button.mini.active { background: var(--primary); color: #fff; }
   opacity: 0.4;
   transition: opacity 0.15s, background 0.15s;
 }
-.list .card .card-delete-btn:hover {
+.list .card button.card-delete-btn:hover {
   opacity: 1;
-  background: rgba(229, 62, 62, 0.12);
+  background: rgba(229, 62, 62, 0.12) !important;
 }
