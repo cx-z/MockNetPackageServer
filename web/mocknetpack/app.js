@@ -513,10 +513,7 @@ async function renderShareView(shareId) {
     const expDate = new Date(snap.expiresAt);
     box.innerHTML =
       '<div class="detail-panel">' +
-        '<div style="margin-bottom:8px;color:var(--muted);font-size:12px">' +
-          'MockNetPack 请求分享 · 有效期至 ' + esc(expDate.toLocaleString()) +
-          ' · <a href="#" onclick="location.hash=''" style="color:var(--primary)">返回登录</a>' +
-        '</div>' +
+        '<div style="margin-bottom:8px;color:var(--muted);font-size:12px">MockNetPack 请求分享 · 有效期至 ' + esc(expDate.toLocaleString()) + "</div>" +
         '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
         '<div class="tabs">' +
           '<button class="tab active" data-tab="req">请求</button>' +
