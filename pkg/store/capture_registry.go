@@ -1258,9 +1258,17 @@ func (m *CaptureManager) GetShare(ctx context.Context, shareID string) (*ShareSn
 }
 
 // DeleteDevice removes a device by (App, Did) and all its associated mock
-// rules. Traffic is in-memory and cleared automatically.
+// rules and active sessions.
 func (m *CaptureManager) DeleteDevice(ctx context.Context, app, did string) error {
-	// Delete associated mock rules first
+	// End active sessions for this device (if any)
+	if sessions, err := m.sessions.List(ctx, &SessionFilter{App: &app, Did: &did}); err == nil {
+		for _, s := range sessions {
+			if s.Status == capture.SessionStatusCapturing {
+				_ = m.EndSession(ctx, s.ID)
+			}
+		}
+	}
+	// Delete associated mock rules
 	views, _, _, err := m.ListMockRules(ctx, app, did)
 	if err != nil && !errors.Is(err, ErrRuleNotFound) {
 		return err
