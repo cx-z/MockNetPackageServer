@@ -29,12 +29,12 @@ type MockRuleListResponse struct {
 func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	did := r.PathValue("did")
-	if !a.authorizeDeviceAccess(w, r, app, did) {
-		return
-	}
 
 	raw := r.URL.Query().Get("sinceVersion")
 	if raw != "" {
+		// SDK incremental pull (M7 拍板 #6): SDK channel like register/heartbeat/traffic
+		// upload — no Web Bearer auth. SDK identity is (app, did); unknown-did rejection
+		// lands in ListActiveMockRules.
 		since, err := strconv.Atoi(raw)
 		if err != nil || since < 0 {
 			writeError(w, http.StatusBadRequest, "invalid_field", "sinceVersion must be a non-negative integer")
@@ -54,6 +54,11 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 			Rules:   rules,
 		})
 		_ = changed // always true when version != since; empty array is the "no change" signal to the SDK
+		return
+	}
+
+	// Web full list: logged-in user, ownership enforced.
+	if !a.authorizeDeviceAccess(w, r, app, did) {
 		return
 	}
 
