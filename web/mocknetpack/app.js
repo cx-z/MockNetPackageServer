@@ -1162,6 +1162,9 @@ function enterApp() {
   if (clearBtn) clearBtn.onclick = clearTrafficLog;
   loadDevices();
   pollTimer = setInterval(loadDevices, POLL_MS);
+  // 刷新时若 hash 是详情页，直接进入（否则 hash 与当前相同，点击同一条目不触发 hashchange）
+  const m = location.hash.match(/^#\/device\/([^/]+)\/(.+)$/);
+  if (m) enterDetail(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
 }
 
 // 启动：有 token 先验 /auth/me（刷新保持登录）；无效/无 token 进登录门禁。
