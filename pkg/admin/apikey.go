@@ -269,6 +269,16 @@ func (a *apiKeyAuth) middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// M8: SDK incremental mock-rules pull (GET ?sinceVersion) is a device
+		// channel like heartbeat (SDK carries no API key/Bearer). The Web
+		// full-list branch enforces its own Bearer check inside the handler.
+		if r.Method == http.MethodGet &&
+			strings.HasPrefix(r.URL.Path, "/api/v1/devices/") &&
+			strings.HasSuffix(r.URL.Path, "/mock-rules") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Check localhost exemption.
 		//
 		// A request arriving over the loopback socket is NOT inherently trusted: a
