@@ -16,7 +16,7 @@ h1 { font-size: 20px; font-weight: 600; }
 #errorBar { display: none; background: #fff1f0; color: var(--danger); border: 1px solid #ffccc7;
             border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 13px; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-        padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: center; gap: 14px; }
+        padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: center; gap: 14px; position: relative; }
 .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .dot.idle { background: var(--idle); }
 .dot.capturing { background: var(--capturing); box-shadow: 0 0 0 3px rgba(47,158,68,.15); }
