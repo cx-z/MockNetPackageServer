@@ -33,7 +33,9 @@
 
 <div class="wrap hidden" id="appWrap">
   <header>
-    <h1>MockNetPack · 设备</h1>
+    <button id="backBtn" class="ghost small hidden">← 返回设备列表</button>
+    <span class="sub" id="detailApp" class="hidden"></span>
+    <h1 id="mainTitle">MockNetPack · 设备</h1>
     <span class="sub" id="apiInfo">连接中…</span>
     <span class="sub" id="userInfo"></span>
     <button id="logoutBtn" class="ghost small hidden">登出</button>
@@ -74,22 +76,20 @@
 
   <!-- ===== 视图：设备详情 + 请求流（M2.5） ===== -->
   <div id="detailView" class="hidden">
-    <button id="backBtn" class="ghost">← 返回设备列表</button>
-    <div class="detail-header">
-      <div class="app" id="dApp"></div>
-      <div class="did" id="dDid"></div>
-      <div class="row2">
-        <span class="badge idle" id="dStatus"></span>
-        <span id="dLastSeen"></span>
-        <button id="dToggleSession" class="small"></button>
-      </div>
-    </div>
-
     <!-- M9：无会话历史，只有当前会话（连接/断开按钮在设备头） -->
 
-    <!-- M8.2：两列布局（左=规则+请求流，右=详情/编辑） -->
+    <!-- M8.2：两列布局（左=设备卡+规则+请求流，右=详情/编辑，撑满高度） -->
     <div class="detail-grid">
       <div class="col-left">
+        <div class="device-card">
+          <div class="did" id="dDid"></div>
+          <div class="row2">
+            <span class="badge idle" id="dStatus"></span>
+            <span id="dLastSeen"></span>
+            <button id="dToggleSession" class="small"></button>
+          </div>
+        </div>
+
         <div class="section-title">Mock 规则 <span class="sub" id="rulesInfo"></span></div>
         <div id="rulesConflict" class="conflict hidden"></div>
         <div id="rulesList"><div class="empty">加载中…</div></div>

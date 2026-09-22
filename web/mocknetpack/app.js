@@ -219,8 +219,12 @@ async function enterDetail(app, did) {
   pageLog = [];   // M9.4：进入设备详情（含跨设备跳转）即重新开始页面日志
   $("listView").classList.add("hidden");
   $("detailView").classList.remove("hidden");
-  $("dApp").textContent = app;
   $("dDid").textContent = did;
+  // header 动态：显示返回按钮 + app 名，隐藏主标题
+  $("backBtn").classList.remove("hidden");
+  $("detailApp").textContent = app;
+  $("detailApp").classList.remove("hidden");
+  $("mainTitle").classList.add("hidden");
   await loadDetail();
 }
 
@@ -478,6 +482,10 @@ function backToList() {
   location.hash = "";
   $("detailView").classList.add("hidden");
   $("listView").classList.remove("hidden");
+  // header 恢复
+  $("backBtn").classList.add("hidden");
+  $("detailApp").classList.add("hidden");
+  $("mainTitle").classList.remove("hidden");
   loadDevices();
 }
 
@@ -658,11 +666,15 @@ function renderRuleDetail(r) {
   }
   const src = r.source;
 
-  // 请求页签：来源快照的方法/路径 + 原始请求体
+  // 请求页签：来源快照的方法/路径 + 原始请求头 + 原始请求体
+  const reqHeadersRows = (src && src.requestHeaders) ? Object.entries(src.requestHeaders)
+    .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
+      '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("") : "";
   const reqTab =
       '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc(r.path) + "</span></div>" +
       (src
-        ? '<div class="d-block"><div class="d-title">原始请求体</div><pre>' +
+        ? '<div class="d-block"><div class="d-title">原始请求头</div>' + (reqHeadersRows || '<div class="d-v">—</div>') + "</div>" +
+          '<div class="d-block"><div class="d-title">原始请求体</div><pre>' +
             esc(formatBody(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")))) + "</pre></div>"
         : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
 
@@ -715,11 +727,15 @@ function openEditRuleForm(r) {
   const src = r.source;
   const hasOriginal = !!(src && src.responseBodyDecoded);
 
-  // 请求页签：只读展示原始请求体
+  // 请求页签：只读展示原始请求头 + 请求体
+  const editReqHeadersRows = (src && src.requestHeaders) ? Object.entries(src.requestHeaders)
+    .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
+      '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("") : "";
   const reqTab =
       '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc(r.path) + "</span></div>" +
       (src
-        ? '<div class="d-block"><div class="d-title">原始请求体（只读）</div><pre>' +
+        ? '<div class="d-block"><div class="d-title">原始请求头（只读）</div>' + (editReqHeadersRows || '<div class="d-v">—</div>') + "</div>" +
+          '<div class="d-block"><div class="d-title">原始请求体（只读）</div><pre>' +
             esc(formatBody(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")))) + "</pre></div>"
         : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
 

@@ -7,7 +7,9 @@
 body { font: 14px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
        background: var(--bg); color: var(--text); padding: 24px; }
 .wrap { max-width: 1200px; margin: 0 auto; }
-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+#detailApp { color: var(--text); font-weight: 600; font-size: 15px; }
+#detailApp.hidden { display: none !important; }
 h1 { font-size: 20px; font-weight: 600; }
 .sub { color: var(--muted); font-size: 12px; }
 .stats { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
@@ -44,9 +46,9 @@ button.mini { padding: 2px 8px; font-size: 11px; background: #eef3ff; color: var
 button.mini:hover { background: #dbe7ff; }
 button.mini.active { background: var(--primary); color: #fff; }
 
-.detail-header { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-                 padding: 14px 16px; margin-bottom: 14px; }
-#backBtn { margin-bottom: 12px; }
+.device-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+              padding: 10px 14px; margin-bottom: 4px; }
+.device-card .did { font-size: 11px; }
 
 .section-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
                  color: var(--text); margin: 16px 0 8px; }
@@ -89,7 +91,7 @@ button.mini.active { background: var(--primary); color: #fff; }
 .detail-panel .d-block .d-title { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .detail-panel pre { background: #f6f7f9; border: 1px solid var(--border); border-radius: 6px;
                     padding: 8px 10px; font-size: 12px; font-family: ui-monospace, Menlo, monospace;
-                    white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
+                    white-space: pre-wrap; word-break: break-all; overflow: auto; flex: 1; min-height: 120px; }
 .detail-panel .d-err { color: var(--danger); }
 
 /* M8.4 详情页签（请求/响应） */
@@ -169,12 +171,17 @@ button.mini.active { background: var(--primary); color: #fff; }
 .edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
 /* ===== M8.2 两列布局：左=规则+请求流，右=详情/编辑 ===== */
-.detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-               gap: 16px; align-items: start; margin-top: 14px; }
-.col-left > .section-title { margin-top: 18px; }
+.detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+               gap: 16px; align-items: stretch; margin-top: 0; height: calc(100vh - 110px); }
+.col-left { overflow-y: auto; padding-right: 4px; }
+.col-left > .section-title { margin-top: 14px; }
 .col-left > .section-title:first-child { margin-top: 0; }
-.col-right { position: sticky; top: 12px; }
-.col-right > .section-title { margin-top: 0; }
+.col-right { display: flex; flex-direction: column; overflow: hidden; }
+.col-right > .section-title { margin-top: 0; flex: none; }
+#ruleDetail, #trafficDetail { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.detail-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.detail-panel .d-block { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.detail-panel .d-block pre { flex: 1; }
 .rule-row.active { border-color: var(--primary); background: #f4f8ff; }
 @media (max-width: 900px) {
   .detail-grid { grid-template-columns: 1fr; }
