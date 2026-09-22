@@ -421,25 +421,45 @@ function renderTrafficDetail(e) {
     .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
       '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("");
 
-  box.innerHTML =
-    '<div class="detail-panel">' +
-      '<div class="d-actions">' +
-        '<button id="mockThisBtn" class="small">Mock 此请求</button>' +
-      "</div>" +
-      '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
+  const reqTab =
+      '<div class="d-block"><div class="d-title">请求头</div>' +
+        (headRows(e.requestHeaders) || '<div class="d-v">—</div>') + "</div>" +
+      '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(formatBody(e.requestBodyDecoded || e.requestBody)) || "（空）") + "</pre></div>";
+  const respTab =
       '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
         (e.statusCode != null ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "") : "请求失败： " + esc(e.error || "")) +
       "</span></div>" +
       '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + e.durationMs + " ms</span></div>" +
       '<div class="d-kv"><span class="d-k">时间</span><span class="d-v">' + esc(e.timestamp || "—") + "</span></div>" +
       (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是（M3 起标记）</span></div>' : "") +
-      '<div class="d-block"><div class="d-title">请求头</div>' +
-        (headRows(e.requestHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(formatBody(e.requestBodyDecoded || e.requestBody)) || "（空）") + "</pre></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' +
         (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(formatBody(e.responseBodyDecoded || e.responseBody)) || "（空）") + "</pre></div>" +
+      '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(formatBody(e.responseBodyDecoded || e.responseBody)) || "（空）") + "</pre></div>";
+
+  box.innerHTML =
+    '<div class="detail-panel">' +
+      '<div class="d-actions">' +
+        '<button id="mockThisBtn" class="small">Mock 此请求</button>' +
+      "</div>" +
+      '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
+      '<div class="tabs">' +
+        '<button class="tab active" data-tab="req">请求</button>' +
+        '<button class="tab" data-tab="resp">响应</button>' +
+      "</div>" +
+      '<div class="tab-pane" data-pane="req">' + reqTab + "</div>" +
+      '<div class="tab-pane hidden" data-pane="resp">' + respTab + "</div>" +
     "</div>";
+
+  // 页签切换
+  box.querySelectorAll(".tab").forEach((btn) => {
+    btn.onclick = () => {
+      box.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      box.querySelectorAll(".tab-pane").forEach((p) => {
+        p.classList.toggle("hidden", p.dataset.pane !== btn.dataset.tab);
+      });
+    };
+  });
 
   const btn = box.querySelector("#mockThisBtn");
   if (btn) {
@@ -637,28 +657,47 @@ function renderRuleDetail(r) {
     bodyDisp = "[二进制 " + atob(resp.bodyBase64).length + " 字节，base64 已用于回放]";
   }
   const src = r.source;
-  box.innerHTML =
-    '<div class="detail-panel">' +
-      '<div class="d-actions"><button id="ruleEditBtn" class="small">编辑</button></div>' +
+
+  // 请求页签：来源快照的方法/路径 + 原始请求体
+  const reqTab =
       '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc(r.path) + "</span></div>" +
+      (src
+        ? '<div class="d-block"><div class="d-title">原始请求体</div><pre>' +
+            esc(formatBody(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")))) + "</pre></div>"
+        : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
+
+  // 响应页签：状态/备注/回包状态码 + 响应头 + 回包体（不展示原始响应体）
+  const respTab =
       '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
         (r.enabled ? (r.effective ? "生效中" : "冲突未生效") : "已停用") + "</span></div>" +
       '<div class="d-kv"><span class="d-k">备注</span><span class="d-v">' +
         (r.note ? esc(r.note) : '<span style="color:var(--muted)">（未填写）</span>') + "</span></div>" +
       '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + "</span></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(resp.headers) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">回包体</div><pre>' + esc(formatBody(bodyDisp)) + "</pre></div>" +
-      (src
-        ? '<div class="d-block"><div class="d-title">来源快照（原始真实请求）</div>' +
-            '<div class="d-kv"><span class="d-k">方法/路径</span><span class="d-v">' + esc(src.method) + " " + esc(src.path) + "</span></div>" +
-            '<div class="d-kv"><span class="d-k">原始状态码</span><span class="d-v">' + (src.statusCode ?? "—") + "</span></div>" +
-            '<div class="d-block"><div class="d-title">原始请求体</div><pre>' +
-              esc(formatBody(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")))) + "</pre></div>" +
-            '<div class="d-block"><div class="d-title">原始响应体</div><pre>' +
-              esc(formatBody(src.responseBodyDecoded || (src.responseBodyBase64 ? "[二进制 " + atob(src.responseBodyBase64).length + " 字节]" : (src.responseBody || "（空）")))) + "</pre></div>" +
-          "</div>"
-        : "") +
+      '<div class="d-block"><div class="d-title">回包体</div><pre>' + esc(formatBody(bodyDisp)) + "</pre></div>";
+
+  box.innerHTML =
+    '<div class="detail-panel">' +
+      '<div class="d-actions"><button id="ruleEditBtn" class="small">编辑</button></div>' +
+      '<div class="tabs">' +
+        '<button class="tab active" data-tab="req">请求</button>' +
+        '<button class="tab" data-tab="resp">响应</button>' +
+      "</div>" +
+      '<div class="tab-pane" data-pane="req">' + reqTab + "</div>" +
+      '<div class="tab-pane hidden" data-pane="resp">' + respTab + "</div>" +
     "</div>";
+
+  // 页签切换
+  box.querySelectorAll(".tab").forEach((btn) => {
+    btn.onclick = () => {
+      box.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      box.querySelectorAll(".tab-pane").forEach((p) => {
+        p.classList.toggle("hidden", p.dataset.pane !== btn.dataset.tab);
+      });
+    };
+  });
+
   const editBtn = box.querySelector("#ruleEditBtn");
   if (editBtn) editBtn.onclick = () => openEditRuleForm(r);
 }
@@ -669,16 +708,23 @@ function openEditRuleForm(r) {
   const resp = r.response || {};
   const headersText = Object.entries(resp.headers || {})
     .map(([k, v]) => k + ": " + v).join("\n");
-  // 回包体缺省值：文本规则直接用 response.body；二进制规则的 response.body 是
-  // "[binary N bytes]" 占位符，改用抓包快照里解码器解出的可读文本（M4）作为缺省值。
   let bodyDefault = resp.body || "";
   if ((!bodyDefault || bodyDefault.startsWith("[binary")) && r.source && r.source.responseBodyDecoded) {
     bodyDefault = r.source.responseBodyDecoded;
   }
-  box.innerHTML =
-    '<div class="detail-panel">' +
-      '<div class="d-title">编辑规则 · ' + esc(r.method) + " " + esc(r.path) +
-      ' <span class="sub">（接口与匹配键不可改）</span></div>' +
+  const src = r.source;
+  const hasOriginal = !!(src && src.responseBodyDecoded);
+
+  // 请求页签：只读展示原始请求体
+  const reqTab =
+      '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc(r.path) + "</span></div>" +
+      (src
+        ? '<div class="d-block"><div class="d-title">原始请求体（只读）</div><pre>' +
+            esc(formatBody(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")))) + "</pre></div>"
+        : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
+
+  // 响应页签：状态码/响应头/回包体编辑区 + 一键回退按钮
+  const respTab =
       '<div class="edit-row"><label>回包状态码</label>' +
         '<input id="editStatusCode" type="number" class="filter-input" value="' + esc(resp.statusCode ?? 200) + '" /></div>' +
       '<div class="edit-row"><label>响应头（每行一个「Key: Value」）</label>' +
@@ -689,11 +735,66 @@ function openEditRuleForm(r) {
         '<textarea id="editBody" class="filter-input" rows="8">' + esc(formatBody(bodyDefault)) + '</textarea></div>' +
       '<div class="edit-row"><label>备注（必填）</label>' +
         '<input id="editNote" type="text" class="filter-input" placeholder="说明这条规则的用途/场景" value="' + esc(r.note || "") + '" /></div>' +
+      (hasOriginal
+        ? '<div class="edit-row" style="margin-top:12px">' +
+            '<button id="revertOriginalBtn" class="ghost small" type="button">一键回退为原始响应体</button>' +
+            '<span class="sub" style="margin-left:8px">（回退后所有修改丢弃，直接生效）</span>' +
+          '</div>'
+        : '');
+
+  box.innerHTML =
+    '<div class="detail-panel">' +
+      '<div class="d-title">编辑规则 · ' + esc(r.method) + " " + esc(r.path) +
+      ' <span class="sub">（接口与匹配键不可改）</span></div>' +
+      '<div class="tabs">' +
+        '<button class="tab" data-tab="req">请求</button>' +
+        '<button class="tab active" data-tab="resp">响应</button>' +
+      '</div>' +
+      '<div class="tab-pane hidden" data-pane="req">' + reqTab + '</div>' +
+      '<div class="tab-pane" data-pane="resp">' + respTab + '</div>' +
       '<div class="edit-actions">' +
         '<button id="editCancelBtn" class="ghost small">取消</button>' +
         '<button id="editSaveBtn" class="small">保存</button>' +
       '</div>' +
     "</div>";
+
+  // 页签切换
+  box.querySelectorAll(".tab").forEach((btn) => {
+    btn.onclick = () => {
+      box.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      box.querySelectorAll(".tab-pane").forEach((p) => {
+        p.classList.toggle("hidden", p.dataset.pane !== btn.dataset.tab);
+      });
+    };
+  });
+
+  // 一键回退：把回包体重置为原始响应体，直接保存生效
+  const revertBtn = box.querySelector("#revertOriginalBtn");
+  if (revertBtn) {
+    revertBtn.onclick = async () => {
+      if (!src || !src.responseBodyDecoded) return;
+      try {
+        const newResp = {
+          statusCode: src.statusCode ?? 200,
+          headers: src.responseHeaders || {},
+          body: src.responseBodyDecoded,
+        };
+        await apiFetch("/mock-rules/" + encodeURIComponent(r.id), {
+          method: "PUT",
+          body: JSON.stringify({ response: newResp }),
+        });
+        await loadRules();
+        if (detail._activeRuleId) {
+          const updated = rulesList.find((x) => x.id === detail._activeRuleId);
+          if (updated) renderRuleDetail(updated);
+        }
+      } catch (e) {
+        alert("回退失败：" + e.message);
+      }
+    };
+  }
+
   $("editCancelBtn").onclick = () => renderRuleDetail(r);
   $("editSaveBtn").onclick = () => saveRuleEdit(r);
   $("editNote").focus();

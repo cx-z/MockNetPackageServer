@@ -92,6 +92,13 @@ button.mini.active { background: var(--primary); color: #fff; }
                     white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
 .detail-panel .d-err { color: var(--danger); }
 
+/* M8.4 详情页签（请求/响应） */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.tabs .tab { padding: 6px 16px; font-size: 13px; cursor: pointer; border: 0; background: transparent;
+             color: var(--muted); border-bottom: 2px solid transparent; border-radius: 0; }
+.tabs .tab:hover { background: transparent; color: var(--text); }
+.tabs .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+
 /* CSP 合规视图切换：初始隐藏详情视图（不用内联 style，避免被 default-src 'self' 拦截）。
    !important：.auth-wrap 等后定义的 display 规则会覆盖普通 .hidden，必须强制隐藏。 */
 .hidden { display: none !important; }
