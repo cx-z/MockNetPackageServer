@@ -321,7 +321,9 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}/traffic", a.requireAuth(a.handleClearSessionTraffic))
 
 	// Mock rules (M3): Web CRUD/toggle + SDK incremental snapshot pull.
-	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.requireAuth(a.handleListMockRules))
+	// GET is OPEN (SDK ?sinceVersion pull carries no token); the handler itself
+	// enforces auth on the Web full-list branch (no sinceVersion).
+	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.handleListMockRules)
 	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.requireAuth(a.handleCreateMockRule))
 	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.requireAuth(a.handleUpdateMockRule))
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.requireAuth(a.handleDeleteMockRule))

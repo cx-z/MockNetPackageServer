@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -57,7 +58,17 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Web full list: logged-in user, ownership enforced.
+	// Web full list: require a logged-in Bearer token (route is open for the SDK
+// incremental pull, so auth is enforced here, per-branch), then ownership.
+	// --no-auth smoke mode skips the token requirement, matching requireAuth.
+	if a.apiKeyConfig.Enabled {
+		u := a.authenticate(r)
+		if u == nil {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), userCtxKey{}, u))
+	}
 	if !a.authorizeDeviceAccess(w, r, app, did) {
 		return
 	}

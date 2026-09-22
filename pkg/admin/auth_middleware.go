@@ -86,6 +86,30 @@ func (a *API) requireRole(role account.Role, next http.HandlerFunc) http.Handler
 	})
 }
 
+// authenticate resolves the Bearer token to a *UserCtx without writing an
+// error response. Returns nil under --no-auth or when the token is
+// missing/invalid/expired. Used by handlers that mix an open SDK consumer and
+// an authenticated Web consumer on one route (e.g. GET mock-rules): the caller
+// decides which branch needs auth and writes the 401 itself.
+func (a *API) authenticate(r *http.Request) *UserCtx {
+	if !a.apiKeyConfig.Enabled {
+		return nil
+	}
+	token, ok := bearerToken(r)
+	if !ok {
+		return nil
+	}
+	sess, err := a.authSessions.GetByToken(r.Context(), token)
+	if err != nil || !sess.Valid(time.Now()) {
+		return nil
+	}
+	u, err := a.users.GetByUsername(r.Context(), sess.Username)
+	if err != nil {
+		return nil
+	}
+	return &UserCtx{Username: u.Username, Role: u.Role}
+}
+
 // ============================================================================
 // Ownership enforcement (M7.2.2): developers see only devices they registered;
 // admins see everything. Cross-owner access is reported as 404 (not 403) so
