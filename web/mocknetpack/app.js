@@ -73,6 +73,21 @@ function esc(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
 }
+// M8.4：请求体/响应体 JSON 美化。能 parse 成 JSON 就分行缩进；纯文本/二进制占位原样返回。
+// 仅用于详情页只读展示，不影响 Mock 规则编辑区的 textarea（那里用户要编辑原始文本）。
+function formatBody(text) {
+  if (text == null || text === "") return "";
+  const s = String(text).trim();
+  if (s === "") return "";
+  const first = s[0];
+  if (first !== "{" && first !== "[") return s;
+  try {
+    const parsed = JSON.parse(s);
+    return JSON.stringify(parsed, null, 2);
+  } catch (e) {
+    return s;
+  }
+}
 function shortId(id) { return id ? id.slice(0, 8) + "…" : ""; }
 function methodCls(m) {
   const u = (m || "").toUpperCase();
@@ -420,10 +435,10 @@ function renderTrafficDetail(e) {
       (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是（M3 起标记）</span></div>' : "") +
       '<div class="d-block"><div class="d-title">请求头</div>' +
         (headRows(e.requestHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(e.requestBodyDecoded || e.requestBody) || "（空）") + "</pre></div>" +
+      '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(formatBody(e.requestBodyDecoded || e.requestBody)) || "（空）") + "</pre></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' +
         (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(e.responseBodyDecoded || e.responseBody) || "（空）") + "</pre></div>" +
+      '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(formatBody(e.responseBodyDecoded || e.responseBody)) || "（空）") + "</pre></div>" +
     "</div>";
 
   const btn = box.querySelector("#mockThisBtn");
