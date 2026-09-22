@@ -87,7 +87,7 @@ button.mini.active { background: var(--primary); color: #fff; }
 .detail-panel .d-k { color: var(--muted); flex: none; min-width: 72px; }
 .detail-panel .d-v { font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; }
 .detail-panel .d-block { margin-top: 10px; }
-.detail-panel .d-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.detail-panel .d-actions { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }
 .detail-panel .d-block .d-title { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .detail-panel pre { background: #f6f7f9; border: 1px solid var(--border); border-radius: 6px;
                     padding: 8px 10px; font-size: 12px; font-family: ui-monospace, Menlo, monospace;
