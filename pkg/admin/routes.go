@@ -308,6 +308,7 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}", a.requireAuth(a.handleGetDevice))
 	mux.HandleFunc("POST "+captureAPIPrefix+"/devices", a.requireAuth(a.handleCreateDevice))
 	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}", a.requireAuth(a.handleUpdateDeviceName))
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}", a.requireAuth(a.handleDeleteDevice))
 	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions", a.requireAuth(a.handleActivateSession))
 	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions", a.requireAuth(a.handleListSessions))
 	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions/{id}", a.requireAuth(a.handleGetSession))

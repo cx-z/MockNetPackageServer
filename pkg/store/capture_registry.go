@@ -1256,3 +1256,17 @@ func (m *CaptureManager) GetShare(ctx context.Context, shareID string) (*ShareSn
 	c := *snap
 	return &c, nil
 }
+
+// DeleteDevice removes a device by (App, Did) and all its associated mock
+// rules. Traffic is in-memory and cleared automatically.
+func (m *CaptureManager) DeleteDevice(ctx context.Context, app, did string) error {
+	// Delete associated mock rules first
+	views, _, _, err := m.ListMockRules(ctx, app, did)
+	if err != nil && !errors.Is(err, ErrRuleNotFound) {
+		return err
+	}
+	for _, v := range views {
+		_, _ = m.DeleteMockRule(ctx, app, did, v.ID)
+	}
+	return m.devices.Delete(ctx, app, did)
+}

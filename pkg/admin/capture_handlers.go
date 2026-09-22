@@ -674,3 +674,18 @@ func (a *API) handleGetShare(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, snap)
 }
+
+// handleDeleteDevice handles DELETE /api/v1/devices/{app}/{did}.
+// Removes the device and all its mock rules. Requires auth + ownership.
+func (a *API) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	did := r.PathValue("did")
+	if !a.authorizeDeviceAccess(w, r, app, did) {
+		return
+	}
+	if err := a.captureManager.DeleteDevice(r.Context(), app, did); err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -145,7 +145,10 @@ function render(devices) {
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.innerHTML =
-      '<div class="app">' + esc(d.name || d.app) + ' <button class="link-btn rename-btn" type="button" title="重命名">✏️</button></div>' +
+      '<div class="app">' + esc(d.name || d.app) +
+        ' <button class="link-btn rename-btn" type="button" title="重命名">✏️</button>' +
+        ' <button class="link-btn delete-device-btn" type="button" title="删除设备">🗑</button>' +
+      '</div>' +
       '<div class="did">' + esc(shortId(d.did)) + "</div>" +
       '<div class="row2">' +
         '<span class="badge ' + st.cls + '">' + st.label + "</span>" +
@@ -157,6 +160,11 @@ function render(devices) {
     const renameBtn = meta.querySelector(".rename-btn");
     if (renameBtn) {
       renameBtn.onclick = (e) => { e.stopPropagation(); renameDevice(d); };
+    }
+    // M8.5 delete device button
+    const delBtn = meta.querySelector(".delete-device-btn");
+    if (delBtn) {
+      delBtn.onclick = (e) => { e.stopPropagation(); deleteDevice(d); };
     }
 
     card.appendChild(dot);
@@ -582,6 +590,20 @@ function backToList() {
   $("detailApp").classList.add("hidden");
   $("mainTitle").classList.remove("hidden");
   loadDevices();
+}
+
+// M8.5: 删除设备（含其 mock rules）
+async function deleteDevice(d) {
+  if (!confirm("确定删除设备 " + (d.name || d.app) + "？\n\n将同时删除该设备的所有 Mock 规则。此操作不可撤销。")) return;
+  try {
+    const res = await apiFetch("/devices/" + encodeURIComponent(d.app) + "/" + encodeURIComponent(d.did), {
+      method: "DELETE",
+    });
+    if (!res.ok && res.status !== 204) throw new Error("HTTP " + res.status);
+    await loadDevices();
+  } catch (err) {
+    alert("删除失败：" + err.message);
+  }
 }
 
 async function renameDevice(d) {
