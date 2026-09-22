@@ -205,3 +205,28 @@ button.mini.active { background: var(--primary); color: #fff; }
 .rename-btn { background: none; border: none; cursor: pointer; font-size: 12px; padding: 0 2px; }
 .stats { display: flex; align-items: center; justify-content: space-between; }
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+
+/* 卡片右侧红色删除按钮 */
+.list .card .card-delete-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--danger, #e53e3e);
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.4;
+  transition: opacity 0.15s, background 0.15s;
+}
+.list .card .card-delete-btn:hover {
+  opacity: 1;
+  background: rgba(229, 62, 62, 0.1);
+}

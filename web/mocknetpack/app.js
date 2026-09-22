@@ -147,7 +147,6 @@ function render(devices) {
     meta.innerHTML =
       '<div class="app">' + esc(d.name || d.app) +
         ' <button class="link-btn rename-btn" type="button" title="重命名">✏️</button>' +
-        ' <button class="link-btn delete-device-btn" type="button" title="删除设备">🗑</button>' +
       '</div>' +
       '<div class="did">' + esc(shortId(d.did)) + "</div>" +
       '<div class="row2">' +
@@ -161,14 +160,16 @@ function render(devices) {
     if (renameBtn) {
       renameBtn.onclick = (e) => { e.stopPropagation(); renameDevice(d); };
     }
-    // M8.5 delete device button
-    const delBtn = meta.querySelector(".delete-device-btn");
-    if (delBtn) {
-      delBtn.onclick = (e) => { e.stopPropagation(); deleteDevice(d); };
-    }
+
 
     card.appendChild(dot);
     card.appendChild(meta);
+    const delBtn = document.createElement("button");
+    delBtn.className = "card-delete-btn";
+    delBtn.textContent = "✕";
+    delBtn.title = "删除设备";
+    delBtn.onclick = (e) => { e.stopPropagation(); deleteDevice(d); };
+    card.appendChild(delBtn);
     $("list").appendChild(card);
   }
   $("updated").textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN");
