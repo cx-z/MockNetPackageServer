@@ -547,9 +547,21 @@ async function shareRequest(e) {
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     const shareUrl = location.origin + location.pathname + "#/share/" + data.shareId;
-    // 复制到剪贴板并提示
-    try { await navigator.clipboard.writeText(shareUrl); } catch (_) {}
-    alert("分享链接已复制到剪贴板：\n" + shareUrl + "\n\n（7 天有效，任何人打开即可查看只读快照）");
+    // 复制到剪贴板（clipboard API 在非 HTTPS 下不可用，用 execCommand fallback）
+    let copied = false;
+    try { await navigator.clipboard.writeText(shareUrl); copied = true; } catch (_) {}
+    if (!copied) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = shareUrl;
+        ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch (_) {}
+    }
+    alert((copied ? "分享链接已复制到剪贴板：\n" : "分享链接（请手动复制）：\n") + shareUrl + "\n\n（7 天有效，任何人打开即可查看只读快照）");
   } catch (err) {
     alert("分享失败：" + err.message);
   }
