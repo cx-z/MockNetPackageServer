@@ -168,9 +168,9 @@ function render(devices) {
     delBtn.className = "card-delete-btn";
     delBtn.textContent = "✕";
     delBtn.title = "删除设备";
-    delBtn.style.cssText = "position:absolute;top:10px;right:10px;width:24px;height:24px;border:none;border-radius:4px;background:transparent;color:#e53e3e;padding:0;font-size:14px;font-weight:bold;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0.4;transition:opacity 0.15s;";
+    delBtn.style.cssText = "position:absolute;top:10px;right:10px;width:24px;height:24px;border:none;border-radius:4px;background:transparent;color:#e53e3e;padding:0;font-size:14px;font-weight:bold;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0.7;transition:opacity 0.15s;";
     delBtn.onmouseenter = () => delBtn.style.opacity = "1";
-    delBtn.onmouseleave = () => delBtn.style.opacity = "0.4";
+    delBtn.onmouseleave = () => delBtn.style.opacity = "0.7";
     delBtn.onclick = (e) => { e.stopPropagation(); deleteDevice(d); };
     card.appendChild(delBtn);
     $("list").appendChild(card);
