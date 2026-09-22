@@ -27,6 +27,7 @@ function apiFetch(path, options = {}) {
 // sessionId -> { viewerId, timer }
 const viewers = new Map();
 let pollTimer = null;
+let shareViewActive = false;
 let detailPollTimer = null;        // 列表轮询
 let trafficTimer = null;     // 请求流轮询
 let detail = null;           // { app, did, sessionId }
@@ -444,6 +445,7 @@ function renderTrafficDetail(e) {
     '<div class="detail-panel">' +
       '<div class="d-actions">' +
         '<button id="mockThisBtn" class="small">Mock 此请求</button>' +
+        '<button id="shareBtn" class="small ghost">分享</button>' +
       "</div>" +
       '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
       '<div class="tabs">' +
@@ -469,6 +471,87 @@ function renderTrafficDetail(e) {
   if (btn) {
     btn.disabled = e.statusCode == null;  // 失败请求无回包可固化
     btn.onclick = () => mockThisRequest(e);
+  }
+  const shareBtn = box.querySelector("#shareBtn");
+  if (shareBtn) {
+    shareBtn.onclick = () => shareRequest(e);
+  }
+}
+
+// M8.5: 渲染分享只读视图（免登录）
+async function renderShareView(shareId) {
+  $("authView").classList.add("hidden");
+  $("appWrap").classList.add("hidden");
+  $("shareView").classList.remove("hidden");
+  const box = $("shareContent");
+
+  try {
+    const res = await fetch(API + "/shares/" + encodeURIComponent(shareId));
+    if (res.status === 404) {
+      box.innerHTML = '<div class="empty">分享链接已过期或不存在（有效期 7 天）</div>';
+      return;
+    }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const snap = await res.json();
+    const e = snap.entry;
+    const headRows = (h) => Object.entries(h || {})
+      .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
+        '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("");
+
+    const reqTab =
+        '<div class="d-block"><div class="d-title">请求头</div>' + (headRows(e.requestHeaders) || '<div class="d-v">—</div>') + "</div>" +
+      '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(formatBody(e.requestBodyDecoded || e.requestBody)) || "（空）") + "</pre></div>";
+    const respTab =
+        '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
+          (e.statusCode != null ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "") : "请求失败： " + esc(e.error || "")) +
+        "</span></div>" +
+        '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + (e.durationMs || 0) + " ms</span></div>" +
+        '<div class="d-kv"><span class="d-k">时间</span><span class="d-v">' + esc(e.timestamp || "—") + "</span></div>" +
+      '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
+      '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(formatBody(e.responseBodyDecoded || e.responseBody)) || "（空）") + "</pre></div>";
+
+    const expDate = new Date(snap.expiresAt);
+    box.innerHTML =
+      '<div class="detail-panel">' +
+        '<div style="margin-bottom:8px;color:var(--muted);font-size:12px">MockNetPack 请求分享 · 有效期至 ' + esc(expDate.toLocaleString()) + "</div>" +
+        '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
+        '<div class="tabs">' +
+          '<button class="tab active" data-tab="req">请求</button>' +
+          '<button class="tab" data-tab="resp">响应</button>' +
+        "</div>" +
+        '<div class="tab-pane" data-pane="req">' + reqTab + "</div>" +
+        '<div class="tab-pane hidden" data-pane="resp">' + respTab + "</div>" +
+      "</div>";
+
+    box.querySelectorAll(".tab").forEach((btn) => {
+      btn.onclick = () => {
+        box.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        box.querySelectorAll(".tab-pane").forEach((p) => {
+          p.classList.toggle("hidden", p.dataset.pane !== btn.dataset.tab);
+        });
+      };
+    });
+  } catch (err) {
+    box.innerHTML = '<div class="empty">加载失败：' + esc(err.message) + "</div>";
+  }
+}
+
+// M8.5: 创建分享链接
+async function shareRequest(e) {
+  try {
+    const res = await apiFetch("/shares", {
+      method: "POST",
+      body: JSON.stringify({ trafficId: e.id }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const shareUrl = location.origin + location.pathname + "#/share/" + data.shareId;
+    // 复制到剪贴板并提示
+    try { await navigator.clipboard.writeText(shareUrl); } catch (_) {}
+    alert("分享链接已复制到剪贴板：\n" + shareUrl + "\n\n（7 天有效，任何人打开即可查看只读快照）");
+  } catch (err) {
+    alert("分享失败：" + err.message);
   }
 }
 
@@ -551,14 +634,21 @@ async function submitAddDevice(ev) {
   }
 }
 
-// hash 路由：#/device/{app}/{did}
+// hash 路由：#/device/{app}/{did} 或 #/share/{id}
 window.addEventListener("hashchange", () => {
   const m = location.hash.match(/^#\/device\/([^/]+)\/(.+)$/);
   if (m) {
     enterDetail(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
-  } else if (detail) {
-    backToList();
+    return;
   }
+  const sm = location.hash.match(/^#\/share\/(.+)$/);
+  if (sm) {
+    renderShareView(sm[1]);
+    return;
+  }
+  if (detail) backToList();
+  else if (shareViewActive) showAuth();
+  shareViewActive = false;
 });
 
 // ============================================================================
@@ -1186,6 +1276,14 @@ async function boot() {
     $("switchToLogin").classList.add("hidden");
     $("switchToRegister").classList.remove("hidden");
   });
+
+  // M8.5: share 链接免登录直接渲染
+  const sm = location.hash.match(/^#\/share\/(.+)$/);
+  if (sm) {
+    shareViewActive = true;
+    await renderShareView(sm[1]);
+    return;
+  }
 
   const token = getToken();
   if (token) {

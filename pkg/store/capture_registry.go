@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -93,6 +95,12 @@ type CaptureManager struct {
 	trafficMu sync.RWMutex
 	traffic   map[string][]*capture.TrafficEntry
 
+	// sharesMu guards the share snapshots (M8.5). Shares are independent copies
+	// of a single traffic entry, decoupled from the owning session/traffic —
+	// clearing the session does not invalidate the share. TTL 7 days.
+	sharesMu sync.RWMutex
+	shares   map[string]*ShareSnapshot
+
 	ctx      context.Context
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -121,6 +129,7 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules 
 		log:      slog.Default(),
 		viewers:  make(map[string]map[string]capture.ViewerLease),
 		traffic:  make(map[string][]*capture.TrafficEntry),
+		shares:   make(map[string]*ShareSnapshot),
 		stopCh:   make(chan struct{}),
 	}
 }
@@ -1172,4 +1181,78 @@ func (m *CaptureManager) disableDeviceRules(ctx context.Context, app, did string
 			m.log.Warn("session end: bump rule version failed", "app", app, "did", did, "error", err)
 		}
 	}
+}
+
+// ============================================================================
+// M8.5: Request share snapshots
+// ============================================================================
+
+// ShareTTL is how long a share link stays valid (7 days, per product decision).
+const ShareTTL = 7 * 24 * time.Hour
+
+// ShareSnapshot is an independent, read-only copy of a single traffic entry
+// published via a share link. It is decoupled from the owning session/traffic
+// — clearing or deleting the session does not affect the share. The shareId
+// is an unguessable UUID; no signature is needed because the link contains
+// only the opaque ID and all data lives server-side.
+type ShareSnapshot struct {
+	ShareID   string                 `json:"shareId"`
+	CreatedAt time.Time              `json:"createdAt"`
+	ExpiresAt time.Time              `json:"expiresAt"`
+	Entry     *capture.TrafficEntry  `json:"entry"`
+}
+
+// CreateShare copies the traffic entry identified by trafficID into a new
+// independent share snapshot and returns it. Returns ErrNotFound if the traffic
+// entry does not exist (e.g. session already ended and traffic cleared).
+func (m *CaptureManager) CreateShare(ctx context.Context, trafficID string) (*ShareSnapshot, error) {
+	entry, err := m.GetTraffic(ctx, trafficID)
+	if err != nil {
+		return nil, err
+	}
+	// Deep-copy the entry so later mutations to the original traffic do not
+	// leak into the share. TrafficEntry contains maps, so a shallow copy is
+	// not enough; JSON round-trip is simple and sufficient for a snapshot.
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return nil, fmt.Errorf("marshal share snapshot: %w", err)
+	}
+	var copy capture.TrafficEntry
+	if err := json.Unmarshal(data, &copy); err != nil {
+		return nil, fmt.Errorf("unmarshal share snapshot: %w", err)
+	}
+	copy.SessionID = "" // share must not expose internal session linkage
+
+	now := time.Now()
+	snap := &ShareSnapshot{
+		ShareID:   id.UUID(),
+		CreatedAt: now,
+		ExpiresAt: now.Add(ShareTTL),
+		Entry:     &copy,
+	}
+
+	m.sharesMu.Lock()
+	m.shares[snap.ShareID] = snap
+	m.sharesMu.Unlock()
+
+	return snap, nil
+}
+
+// GetShare returns a share snapshot by ID, or ErrNotFound if it does not
+// exist or has expired. Expired shares are lazily purged on access.
+func (m *CaptureManager) GetShare(ctx context.Context, shareID string) (*ShareSnapshot, error) {
+	m.sharesMu.RLock()
+	snap, ok := m.shares[shareID]
+	m.sharesMu.RUnlock()
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if time.Now().After(snap.ExpiresAt) {
+		m.sharesMu.Lock()
+		delete(m.shares, shareID)
+		m.sharesMu.Unlock()
+		return nil, ErrNotFound
+	}
+	c := *snap
+	return &c, nil
 }

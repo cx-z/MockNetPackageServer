@@ -334,6 +334,11 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/login", a.handleAuthLogin)
 	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/logout", a.handleAuthLogout)
 	mux.HandleFunc("GET "+captureAPIPrefix+"/auth/me", a.handleAuthMe)
+
+	// M8.5: request share links. POST creates a snapshot (auth required);
+	// GET is public (no auth) — anyone with the link can view the read-only snapshot.
+	mux.HandleFunc("POST "+captureAPIPrefix+"/shares", a.requireAuth(a.handleCreateShare))
+	mux.HandleFunc("GET "+captureAPIPrefix+"/shares/{id}", a.handleGetShare)
 }
 
 // handleConvertRecordings wraps the convert handler to pass the dual-write mock creator.

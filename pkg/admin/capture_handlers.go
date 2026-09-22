@@ -613,3 +613,64 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusInternalServerError, "internal_error", ErrMsgInternalError)
 	}
 }
+
+// ============================================================================
+// M8.5: Request share links
+// ============================================================================
+
+// shareRequest is the POST /shares body: which traffic entry to snapshot.
+type shareRequest struct {
+	TrafficID string `json:"trafficId"`
+}
+
+// shareResponse is the POST /shares reply: the opaque shareId and public URL.
+type shareResponse struct {
+	ShareID   string `json:"shareId"`
+	URL       string `json:"url"`
+	ExpiresAt string `json:"expiresAt"`
+}
+
+// handleCreateShare handles POST /api/v1/shares (authenticated). It snapshots
+// a single traffic entry into an independent share store so the share survives
+// session/traffic deletion.
+func (a *API) handleCreateShare(w http.ResponseWriter, r *http.Request) {
+	var req shareRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_field", "request body must be JSON")
+		return
+	}
+	if req.TrafficID == "" {
+		writeError(w, http.StatusBadRequest, "missing_field", "trafficId is required")
+		return
+	}
+	// Verify the caller owns the session that contains this traffic entry.
+	entry, err := a.captureManager.GetTraffic(r.Context(), req.TrafficID)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	if _, ok := a.authorizeSessionAccess(w, r, entry.SessionID); !ok {
+		return
+	}
+	snap, err := a.captureManager.CreateShare(r.Context(), req.TrafficID)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, shareResponse{
+		ShareID:   snap.ShareID,
+		URL:       "/mocknetpack/#/share/" + snap.ShareID,
+		ExpiresAt: snap.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// handleGetShare handles GET /api/v1/shares/{id} (public, no auth). Returns the
+// read-only snapshot. Expired or unknown shares return 404.
+func (a *API) handleGetShare(w http.ResponseWriter, r *http.Request) {
+	snap, err := a.captureManager.GetShare(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
+}
