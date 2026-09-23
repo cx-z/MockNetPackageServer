@@ -32,6 +32,7 @@ let detailPollTimer = null;        // 列表轮询
 let trafficTimer = null;     // 请求流轮询
 let detail = null;           // { app, did, sessionId }
 let ruleStore = [];          // 当前规则列表（供详情/删除使用）
+let ruleBodyEditor = null;   // M8.6 编辑表单回包体 CodeMirror 实例（保存前 save() 回写 textarea）
 let trafficFilter = "";      // 展示规则：页面级字符串过滤（刷新即清空，F3.6/决策16）
 let pageLog = [];            // M9.4 页面级日志缓冲（详情页停留期间跨会话累积，离开页面清空）
 const LOG_CAP = 300;         // 页面日志上限（防止长时间抓包内存/DOM 过大）
@@ -860,6 +861,7 @@ function renderRules(data) {
 
 /** 渲染单条规则详情（状态码/响应头/回包体/备注/来源快照）。 */
 function renderRuleDetail(r) {
+  ruleBodyEditor = null;   // M8.6 离开编辑表单即释放 CM 引用（DOM 由 innerHTML 整体替换）
   showDetailPane("rule");
   detail._activeTraffic = null;
   document.querySelectorAll(".traffic-row").forEach((el) => el.classList.remove("active"));
@@ -923,12 +925,10 @@ function renderRuleDetail(r) {
   bindJsonTree(box);
 }
 
-/** 编辑规则表单（M5）：回包状态码/响应头/回包体/备注可改；method/path 只读不可改。 */
+/** 编辑规则表单（M5）：回包体/备注可改；method/path 与回包状态码/响应头只读不可改。 */
 function openEditRuleForm(r) {
   const box = $("ruleDetail");
   const resp = r.response || {};
-  const headersText = Object.entries(resp.headers || {})
-    .map(([k, v]) => k + ": " + v).join("\n");
   let bodyDefault = resp.body || "";
   if ((!bodyDefault || bodyDefault.startsWith("[binary")) && r.source && r.source.responseBodyDecoded) {
     bodyDefault = r.source.responseBodyDecoded;
@@ -948,16 +948,15 @@ function openEditRuleForm(r) {
             bodyHtml(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || ""))) + "</div>"
         : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
 
-  // 响应页签：状态码/响应头/回包体编辑区 + 一键回退按钮
+  // 响应页签：回包状态码/响应头只读展示（与请求日志一致，不可修改），
+  // 备注/回退按钮在上，回包体 JSON 折叠编辑器在下并撑满剩余高度。
+  const respHeadersRows = (resp.headers) ? Object.entries(resp.headers)
+    .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
+      '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("") : "";
   const respTab =
-      '<div class="edit-row"><label>回包状态码</label>' +
-        '<input id="editStatusCode" type="number" class="filter-input" value="' + esc(resp.statusCode ?? 200) + '" /></div>' +
-      '<div class="edit-row"><label>响应头（每行一个「Key: Value」）</label>' +
-        '<textarea id="editHeaders" class="filter-input" rows="4">' + esc(headersText) + '</textarea></div>' +
-      '<div class="edit-row"><label>回包体（UTF-8 文本）' +
-        (resp.bodyBase64 ? ' <span class="sub">（原回包为二进制；已载入抓包解码文本作为缺省值，保存后将以文本回包为准）</span>' : '') +
-        '</label>' +
-        '<textarea id="editBody" class="filter-input" rows="8">' + esc(formatBody(bodyDefault)) + '</textarea></div>' +
+      '<div class="edit-pane">' +
+      '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + "</span></div>" +
+      '<div class="d-block"><div class="d-title">响应头</div>' + (respHeadersRows || '<div class="d-v">—</div>') + "</div>" +
       '<div class="edit-row"><label>备注（必填）</label>' +
         '<input id="editNote" type="text" class="filter-input" placeholder="说明这条规则的用途/场景" value="' + esc(r.note || "") + '" /></div>' +
       (hasOriginal
@@ -965,7 +964,14 @@ function openEditRuleForm(r) {
             '<button id="revertOriginalBtn" class="ghost small" type="button">一键回退为原始响应体</button>' +
             '<span class="sub" style="margin-left:8px">（回退后所有修改丢弃，直接生效）</span>' +
           '</div>'
-        : '');
+        : '') +
+      '<div class="edit-row edit-body-row"><label>回包体（UTF-8 文本）' +
+        (resp.bodyBase64 ? ' <span class="sub">（原回包为二进制；已载入抓包解码文本作为缺省值，保存后将以文本回包为准）</span>' : '') +
+        ' <span class="sub">（点击行号左侧箭头按花括号折叠/展开）</span>' +
+        '</label>' +
+        '<div class="edit-body-wrap"><textarea id="editBody" class="filter-input">' + esc(formatBody(bodyDefault)) + '</textarea></div>' +
+      '</div>' +
+      '</div>';
 
   box.innerHTML =
     '<div class="detail-panel">' +
@@ -991,8 +997,30 @@ function openEditRuleForm(r) {
       box.querySelectorAll(".tab-pane").forEach((p) => {
         p.classList.toggle("hidden", p.dataset.pane !== btn.dataset.tab);
       });
+      // M8.6：从隐藏页签切回响应页时 CM 需重算尺寸，否则空白/错位
+      if (btn.dataset.tab === "resp" && ruleBodyEditor) {
+        setTimeout(() => ruleBodyEditor.refresh(), 0);
+      }
     };
   });
+
+  // M8.6：回包体 JSON 折叠编辑器（vendored CodeMirror，同源加载见 lib/codemirror/README.md）。
+  // fromTextArea 会把 textarea 隐藏并替换为编辑器；保存前 cm.save() 回写 textarea 统一取值。
+  ruleBodyEditor = CodeMirror.fromTextArea($("editBody"), {
+    mode: { name: "javascript", json: true },
+    lineNumbers: true,
+    lineWrapping: true,
+    indentUnit: 2,
+    tabSize: 2,
+    foldGutter: true,
+    gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"],
+    matchBrackets: true,
+    autoCloseBrackets: true,
+    extraKeys: {
+      "Ctrl-Q": (cm) => cm.foldCode(cm.getCursor()),
+    },
+  });
+  ruleBodyEditor.refresh();
 
   // 一键回退：把回包体重置为原始响应体，直接保存生效
   const revertBtn = box.querySelector("#revertOriginalBtn");
@@ -1010,10 +1038,10 @@ function openEditRuleForm(r) {
           body: JSON.stringify({ response: newResp }),
         });
         await loadRules();
-        if (detail._activeRuleId) {
-          const updated = rulesList.find((x) => x.id === detail._activeRuleId);
-          if (updated) renderRuleDetail(updated);
-        }
+        // M8.6 修正：按当前规则 id 从刷新后的列表取最新数据重渲染详情
+        //（此前误用不存在的 detail._activeRuleId/rulesList，回退后表单不刷新）。
+        const updated = (ruleStore || []).find((x) => x.id === r.id);
+        if (updated) renderRuleDetail(updated);
       } catch (e) {
         alert("回退失败：" + e.message);
       }
@@ -1029,13 +1057,18 @@ function openEditRuleForm(r) {
 /** 收集编辑表单 → PUT /mock-rules/{id} → 刷新。前端先做 note 非空拦截。 */
 async function saveRuleEdit(rule) {
   if (!detail) return;
-  const statusCode = parseInt($("editStatusCode").value, 10);
+  // M8.8：回包状态码/响应头为只读（与抓包一致），保存时原样回传，不再从表单输入读取。
+  const storedResp = (rule && rule.response) || {};
+  const statusCode = Number(storedResp.statusCode) || 200;
   if (!Number.isFinite(statusCode) || statusCode <= 0) {
     showError("回包状态码必须是正整数"); return;
   }
+  const headers = storedResp.headers || {};
   const note = $("editNote").value.trim();
   if (!note) { showError("备注必填，请填写后再保存"); return; }
 
+  // M8.6：CodeMirror 内容先回写隐藏 textarea，再统一按 textarea 取值/校验。
+  if (ruleBodyEditor) ruleBodyEditor.save();
   // M8.2：保存前 JSON 合法性校验——回包体形如 JSON（{…}/[…]）时必须可解析，
   // 拦截全角符号/多余逗号等低级错误（M6.4 真机教训），避免坏 JSON 以"无网络"误导。
   const bodyText = $("editBody").value;
@@ -1048,16 +1081,6 @@ async function saveRuleEdit(rule) {
         "（常见原因：全角逗号/冒号、多余逗号）");
       return;
     }
-  }
-
-  // 解析响应头文本：每行 "Key: Value"。
-  const headers = {};
-  for (const line of $("editHeaders").value.split("\n")) {
-    const idx = line.indexOf(":");
-    if (idx <= 0) continue;
-    const k = line.slice(0, idx).trim();
-    const v = line.slice(idx + 1).trim();
-    if (k) headers[k] = v;
   }
 
   try {

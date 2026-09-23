@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MockNetPack · 设备</title>
 <link rel="stylesheet" href="style.css">
+<!-- M8.6 编辑表单 JSON 折叠编辑器（vendored CodeMirror 5.65.18，同源加载，见 lib/codemirror/README.md） -->
+<link rel="stylesheet" href="lib/codemirror/lib/codemirror.min.css">
+<link rel="stylesheet" href="lib/codemirror/addon/fold/foldgutter.min.css">
 </head>
 <body>
 <!-- M7.1.2 登录门禁：未登录仅显示登录/注册视图，主界面登录后显示 -->
@@ -114,6 +117,13 @@
     </div>
   </div>
 </div>
+<script src="lib/codemirror/lib/codemirror.min.js"></script>
+<script src="lib/codemirror/mode/javascript/javascript.min.js"></script>
+<script src="lib/codemirror/addon/fold/foldcode.min.js"></script>
+<script src="lib/codemirror/addon/fold/foldgutter.min.js"></script>
+<script src="lib/codemirror/addon/fold/brace-fold.min.js"></script>
+<script src="lib/codemirror/addon/edit/matchbrackets.min.js"></script>
+<script src="lib/codemirror/addon/edit/closebrackets.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

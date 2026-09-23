@@ -89,7 +89,10 @@ button.mini.active { background: var(--primary); color: #fff; }
 .detail-panel .d-block { margin-top: 10px; }
 .detail-panel .d-actions { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }
 .detail-panel .d-block .d-title { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-.detail-panel pre { background: #f6f7f9; border: 1px solid var(--border); border-radius: 6px;
+/* M8.7 收窄作用域：只读 JSON 预览的 <pre> 仅在 .d-block 内；
+   此前 `.detail-panel pre` 会命中编辑表单 CodeMirror 内部的 pre.CodeMirror-line，
+   把 min-height:120px / padding / border 泄漏到每一行，导致行高暴涨到 120px+。 */
+.detail-panel .d-block pre { background: #f6f7f9; border: 1px solid var(--border); border-radius: 6px;
                     padding: 8px 10px; font-size: 12px; font-family: ui-monospace, Menlo, monospace;
                     white-space: pre-wrap; word-break: break-all; overflow: auto; flex: 1; min-height: 120px; }
 .detail-panel .d-err { color: var(--danger); }
@@ -194,8 +197,49 @@ button.mini.active { background: var(--primary); color: #fff; }
   resize: vertical; }
 .edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
+/* M8.6 编辑表单：回包体 JSON 折叠编辑器
+   响应页签内容纵向铺满剩余高度，编辑器底部贴近页面底部（取消/保存仍在最下方）。 */
+.edit-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.edit-pane .edit-row { flex: none; }
+.edit-pane > .d-kv, .edit-pane > .d-block { flex: none; }  /* M8.8 只读状态码/响应头不参与 flex 拉伸 */
+.edit-pane .edit-body-row {
+  flex: 1; min-height: 160px; margin-bottom: 0;   /* min-height 兜底：窗口过矮时编辑器不塌缩为 0 */
+  display: flex; flex-direction: column;
+}
+.edit-body-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* M8.9 修复"编辑器无法获得焦点"：此前 `.edit-body-wrap textarea { display:none }` 会把
+   CodeMirror 内部的输入 textarea（.CodeMirror-textarea，键盘输入载体）也隐藏掉，
+   导致点击编辑器后焦点仍留在其它输入框、输入文字跑偏。原 textarea（#editBody）
+   由 CM fromTextArea 自行隐藏并仅作值载体，这里只需兜底隐藏 #editBody 本身。 */
+.edit-body-wrap textarea#editBody { display: none; }
+.edit-body-wrap .CodeMirror {
+  /* M8.7 修复行高异常：fromTextArea 没有中间包装 div，.CodeMirror 就是 .edit-body-wrap 的直接子元素；
+     此前 `.edit-body-wrap > div { display:flex; flex-direction:column }` 直接套到 CM 上，
+     破坏其内部行高测量/渲染，导致每行被拉伸到 120px+。CM 自身必须保持块级布局，
+     仅作为 edit-body-wrap（flex 列）的 flex 项撑满剩余高度。 */
+  flex: 1; min-height: 0; display: block;
+  height: 100%; width: 100%;
+  font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.6;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+/* M8.7 兜底：编辑区内任何 pre 规则都不允许命中 CM 行元素（行高由 CM 自身计算） */
+.edit-body-wrap pre.CodeMirror-line,
+.edit-body-wrap pre.CodeMirror-line-like {
+  min-height: 0; padding: 0 4px; margin: 0; background: transparent; border: 0;
+  white-space: pre-wrap; word-break: normal; overflow: visible; flex: none; }
+.edit-body-wrap .CodeMirror-scroll, .edit-body-wrap .CodeMirror-sizer, .edit-body-wrap .CodeMirror-lines,
+.edit-body-wrap .CodeMirror-code { flex: none; }
+.edit-body-wrap .CodeMirror-focused { outline: none; border-color: var(--primary); }
+.edit-body-wrap .CodeMirror-gutters { border-right: 1px solid var(--border); background: #fafbfc; }
+.edit-body-wrap .CodeMirror-foldgutter-folded:after,
+.edit-body-wrap .CodeMirror-foldgutter-open:after { color: var(--muted); }
+.edit-body-wrap .CodeMirror-foldmarker { color: #1f5eff; background: #eef3ff; border-radius: 3px;
+  padding: 0 3px; text-shadow: none; font-family: ui-monospace, Menlo, monospace; line-height: 1.4; }
+
 /* ===== M8.2 两列布局：左=规则+请求流，右=详情/编辑 ===== */
+/* M8.6：grid 行必须填满容器（minmax(0,1fr)），否则列只按内容高度（输入框"贴不到页面底部"的根因）。 */
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+               grid-template-rows: minmax(0, 1fr);
                gap: 16px; align-items: stretch; margin-top: 0; height: calc(100vh - 110px); }
 .col-left { overflow-y: auto; padding-right: 4px; }
 .col-left > .section-title { margin-top: 14px; }
@@ -209,8 +253,12 @@ button.mini.active { background: var(--primary); color: #fff; }
 .detail-panel .d-block pre { flex: 1; }
 .rule-row.active { border-color: var(--primary); background: #f4f8ff; }
 @media (max-width: 900px) {
-  .detail-grid { grid-template-columns: 1fr; }
+  .detail-grid { grid-template-columns: 1fr; grid-template-rows: auto; }  /* M8.6 窄布局恢复内容自适应，避免 1fr 行把左列挤没 */
   .col-right { position: static; }
+  /* M8.6 窄布局（整页滚动）：解除右列/面板的 overflow 裁剪，让编辑表单自然撑高；
+     编辑器固定一个舒适高度，替代双列下"贴底"的弹性高度。 */
+  .col-right, #ruleDetail, #trafficDetail, .detail-panel, .tab-pane, .edit-pane { overflow: visible; }
+  .edit-pane .edit-body-row { flex: none; height: min(60vh, 520px); min-height: 240px; }
 }
 
 /* M7.2.2 modal */
