@@ -89,6 +89,84 @@ function formatBody(text) {
     return s;
   }
 }
+// ============================================================================
+// JSON 树查看器：请求体/响应体按花括号展开/折叠（默认展开，折叠显示 { … }）。
+// 仅用于只读展示；编辑区 textarea 仍为原始文本。节点数超限回退纯文本 <pre>。
+// ============================================================================
+const JSON_TREE_MAX_NODES = 5000; // 超过该节点数回退 pre，防大 JSON 渲染卡死
+
+/** 生成可折叠 JSON 树 HTML；非 JSON / 空 / 超节点数 → 返回 null（调用方回退 <pre>）。 */
+function jsonTreeHtml(text) {
+  if (text == null || text === "") return null;
+  const s = String(text).trim();
+  if (s === "" || (s[0] !== "{" && s[0] !== "[")) return null;
+  let parsed;
+  try { parsed = JSON.parse(s); } catch (e) { return null; }
+  const stat = { nodes: 0 };
+  jvCount(parsed, stat);
+  if (stat.nodes > JSON_TREE_MAX_NODES) return null;
+  return '<div class="jv-tree">' + jvNode(parsed) + "</div>";
+}
+
+/** 节点计数（纯遍历不生成字符串），超限即停。 */
+function jvCount(v, stat) {
+  if (++stat.nodes > JSON_TREE_MAX_NODES) return;
+  if (v === null || typeof v !== "object") return;
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length; i++) jvCount(v[i], stat);
+  } else {
+    for (const k in v) if (Object.prototype.hasOwnProperty.call(v, k)) jvCount(v[k], stat);
+  }
+}
+
+/** 渲染一个 JSON 值：叶子直接输出，对象/数组输出可折叠节点。 */
+function jvNode(v) {
+  if (v === null) return '<span class="jv-null">null</span>';
+  const t = typeof v;
+  if (t === "string") return '<span class="jv-str">' + esc(JSON.stringify(v)) + "</span>";
+  if (t === "number") return '<span class="jv-num">' + v + "</span>";
+  if (t === "boolean") return '<span class="jv-bool">' + v + "</span>";
+  const isArr = Array.isArray(v);
+  const open = isArr ? "[" : "{";
+  const close = isArr ? "]" : "}";
+  const keys = isArr ? null : Object.keys(v);
+  if ((isArr && v.length === 0) || (!isArr && keys.length === 0)) {
+    return '<span class="jv-brace">' + open + close + "</span>";
+  }
+  const rows = isArr
+    ? v.map((x, i) => '<div class="jv-row">' + jvNode(x) +
+        (i < v.length - 1 ? '<span class="jv-comma">,</span>' : "") + "</div>").join("")
+    : keys.map((k, i) =>
+        '<div class="jv-row"><span class="jv-key">' + esc(JSON.stringify(k)) +
+        '</span><span class="jv-colon">: </span>' + jvNode(v[k]) +
+        (i < keys.length - 1 ? '<span class="jv-comma">,</span>' : "") + "</div>").join("");
+  return '<div class="jv-node">' +
+    '<span class="jv-arrow" data-jv-toggle title="展开/折叠"></span>' +
+    '<span class="jv-brace" data-jv-toggle>' + open + "</span>" +
+    '<div class="jv-children">' + rows +
+      '<span class="jv-ellipsis">…</span>' +
+      '<span class="jv-brace" data-jv-toggle>' + close + "</span>" +
+    "</div>" +
+  "</div>";
+}
+
+/** 请求/响应体展示入口：能生成 JSON 树用树，否则美化文本 <pre>（空态显示「（空）」）。 */
+function bodyHtml(text) {
+  const tree = jsonTreeHtml(text);
+  if (tree) return tree;
+  return "<pre>" + (esc(formatBody(text)) || "（空）") + "</pre>";
+}
+
+/** 事件委托：点击箭头/花括号切换节点折叠。绑定在渲染容器（赋值覆盖，不累积监听器）。 */
+function bindJsonTree(root) {
+  if (!root) return;
+  root.onclick = (ev) => {
+    const t = ev.target && ev.target.closest ? ev.target.closest("[data-jv-toggle]") : null;
+    if (!t) return;
+    const node = t.closest(".jv-node");
+    if (node) { ev.preventDefault(); node.classList.toggle("jv-collapsed"); }
+  };
+}
 function shortId(id) { return id ? id.slice(0, 8) + "…" : ""; }
 function methodCls(m) {
   const u = (m || "").toUpperCase();
@@ -441,7 +519,7 @@ function renderTrafficDetail(e) {
   const reqTab =
       '<div class="d-block"><div class="d-title">请求头</div>' +
         (headRows(e.requestHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(formatBody(e.requestBodyDecoded || e.requestBody)) || "（空）") + "</pre></div>";
+      '<div class="d-block"><div class="d-title">请求体</div>' + bodyHtml(e.requestBodyDecoded || e.requestBody) + "</div>";
   const respTab =
       '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
         (e.statusCode != null ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "") : "请求失败： " + esc(e.error || "")) +
@@ -451,7 +529,7 @@ function renderTrafficDetail(e) {
       (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是（M3 起标记）</span></div>' : "") +
       '<div class="d-block"><div class="d-title">响应头</div>' +
         (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(formatBody(e.responseBodyDecoded || e.responseBody)) || "（空）") + "</pre></div>";
+      '<div class="d-block"><div class="d-title">响应体</div>' + bodyHtml(e.responseBodyDecoded || e.responseBody) + "</div>";
 
   box.innerHTML =
     '<div class="detail-panel">' +
@@ -488,6 +566,7 @@ function renderTrafficDetail(e) {
   if (shareBtn) {
     shareBtn.onclick = () => shareRequest(e);
   }
+  bindJsonTree(box);
 }
 
 // M8.5: 渲染分享只读视图（免登录）
@@ -512,7 +591,7 @@ async function renderShareView(shareId) {
 
     const reqTab =
         '<div class="d-block"><div class="d-title">请求头</div>' + (headRows(e.requestHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">请求体</div><pre>' + (esc(formatBody(e.requestBodyDecoded || e.requestBody)) || "（空）") + "</pre></div>";
+      '<div class="d-block"><div class="d-title">请求体</div>' + bodyHtml(e.requestBodyDecoded || e.requestBody) + "</div>";
     const respTab =
         '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
           (e.statusCode != null ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "") : "请求失败： " + esc(e.error || "")) +
@@ -520,7 +599,7 @@ async function renderShareView(shareId) {
         '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + (e.durationMs || 0) + " ms</span></div>" +
         '<div class="d-kv"><span class="d-k">时间</span><span class="d-v">' + esc(e.timestamp || "—") + "</span></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">响应体</div><pre>' + (esc(formatBody(e.responseBodyDecoded || e.responseBody)) || "（空）") + "</pre></div>";
+      '<div class="d-block"><div class="d-title">响应体</div>' + bodyHtml(e.responseBodyDecoded || e.responseBody) + "</div>";
 
     const expDate = new Date(snap.expiresAt);
     box.innerHTML =
@@ -544,6 +623,7 @@ async function renderShareView(shareId) {
         });
       };
     });
+    bindJsonTree(box);
   } catch (err) {
     box.innerHTML = '<div class="empty">加载失败：' + esc(err.message) + "</div>";
   }
@@ -802,8 +882,8 @@ function renderRuleDetail(r) {
       '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc(r.path) + "</span></div>" +
       (src
         ? '<div class="d-block"><div class="d-title">原始请求头</div>' + (reqHeadersRows || '<div class="d-v">—</div>') + "</div>" +
-          '<div class="d-block"><div class="d-title">原始请求体</div><pre>' +
-            esc(formatBody(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")))) + "</pre></div>"
+          '<div class="d-block"><div class="d-title">原始请求体</div>' +
+            bodyHtml(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || ""))) + "</div>"
         : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
 
   // 响应页签：状态/备注/回包状态码 + 响应头 + 回包体（不展示原始响应体）
@@ -814,7 +894,7 @@ function renderRuleDetail(r) {
         (r.note ? esc(r.note) : '<span style="color:var(--muted)">（未填写）</span>') + "</span></div>" +
       '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + "</span></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(resp.headers) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">回包体</div><pre>' + esc(formatBody(bodyDisp)) + "</pre></div>";
+      '<div class="d-block"><div class="d-title">回包体</div>' + bodyHtml(bodyDisp) + "</div>";
 
   box.innerHTML =
     '<div class="detail-panel">' +
@@ -840,6 +920,7 @@ function renderRuleDetail(r) {
 
   const editBtn = box.querySelector("#ruleEditBtn");
   if (editBtn) editBtn.onclick = () => openEditRuleForm(r);
+  bindJsonTree(box);
 }
 
 /** 编辑规则表单（M5）：回包状态码/响应头/回包体/备注可改；method/path 只读不可改。 */
@@ -863,8 +944,8 @@ function openEditRuleForm(r) {
       '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc(r.path) + "</span></div>" +
       (src
         ? '<div class="d-block"><div class="d-title">原始请求头（只读）</div>' + (editReqHeadersRows || '<div class="d-v">—</div>') + "</div>" +
-          '<div class="d-block"><div class="d-title">原始请求体（只读）</div><pre>' +
-            esc(formatBody(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "（空）")))) + "</pre></div>"
+          '<div class="d-block"><div class="d-title">原始请求体（只读）</div>' +
+            bodyHtml(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || ""))) + "</div>"
         : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
 
   // 响应页签：状态码/响应头/回包体编辑区 + 一键回退按钮
@@ -942,6 +1023,7 @@ function openEditRuleForm(r) {
   $("editCancelBtn").onclick = () => renderRuleDetail(r);
   $("editSaveBtn").onclick = () => saveRuleEdit(r);
   $("editNote").focus();
+  bindJsonTree(box);
 }
 
 /** 收集编辑表单 → PUT /mock-rules/{id} → 刷新。前端先做 note 非空拦截。 */
