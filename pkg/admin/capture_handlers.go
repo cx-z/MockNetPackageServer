@@ -488,13 +488,20 @@ func (a *API) handleUploadTraffic(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetTraffic handles GET /api/v1/traffic/{id} (single request detail).
+// The entry may live in an active session or in the retained store of an ended
+// session (M8.6); ownership is checked against the owning device either way.
 func (a *API) handleGetTraffic(w http.ResponseWriter, r *http.Request) {
-	entry, err := a.captureManager.GetTraffic(r.Context(), r.PathValue("id"))
+	app, did, err := a.captureManager.GetTrafficWithOwner(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeCaptureError(w, err)
 		return
 	}
-	if _, ok := a.authorizeSessionAccess(w, r, entry.SessionID); !ok {
+	if !a.authorizeDeviceAccess(w, r, app, did) {
+		return
+	}
+	entry, err := a.captureManager.GetTraffic(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeCaptureError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, entry)
@@ -632,7 +639,9 @@ type shareResponse struct {
 
 // handleCreateShare handles POST /api/v1/shares (authenticated). It snapshots
 // a single traffic entry into an independent share store so the share survives
-// session/traffic deletion.
+// session/traffic deletion. The entry may live in an active session or in the
+// retained store of an ended session (M8.6 断开后可分享); in both cases the
+// caller must own the entry's device.
 func (a *API) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	var req shareRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -643,13 +652,15 @@ func (a *API) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_field", "trafficId is required")
 		return
 	}
-	// Verify the caller owns the session that contains this traffic entry.
-	entry, err := a.captureManager.GetTraffic(r.Context(), req.TrafficID)
+	// Resolve the owning device: for an ended session the session record is
+	// gone (M9), so ownership must come from the retained store instead of
+	// authorizeSessionAccess.
+	app, did, err := a.captureManager.GetTrafficWithOwner(r.Context(), req.TrafficID)
 	if err != nil {
 		writeCaptureError(w, err)
 		return
 	}
-	if _, ok := a.authorizeSessionAccess(w, r, entry.SessionID); !ok {
+	if !a.authorizeDeviceAccess(w, r, app, did) {
 		return
 	}
 	snap, err := a.captureManager.CreateShare(r.Context(), req.TrafficID)

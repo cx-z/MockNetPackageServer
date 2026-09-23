@@ -58,16 +58,22 @@ type CaptureConfig struct {
 	// snapshots) are kept since their last use before being purged (M4,
 	// F8.3/决策15, sliding window).
 	MockRuleRetention time.Duration
+	// RetainedTrafficTTL is how long traffic of an ended session stays
+	// resolvable by ID for share-link creation (M8.6 断开后可分享). It bounds
+	// the in-memory retained store; 0 means the default (7d, same as ShareTTL).
+	RetainedTrafficTTL time.Duration
 }
 
 // DefaultCaptureConfig returns the default capture configuration
-// (heartbeat 20s advised / 60s timeout, viewer lease 120s, rule retention 7d).
+// (heartbeat 20s advised / 60s timeout, viewer lease 120s, rule retention 7d,
+// retained-traffic window 7d aligned with share-link TTL).
 func DefaultCaptureConfig() CaptureConfig {
 	return CaptureConfig{
 		HeartbeatInterval: 20 * time.Second,
 		HeartbeatTimeout:  60 * time.Second,
 		ViewerTTL:         120 * time.Second,
 		MockRuleRetention: 7 * 24 * time.Hour,
+		RetainedTrafficTTL: ShareTTL,
 	}
 }
 
@@ -90,10 +96,18 @@ type CaptureManager struct {
 
 	// trafficMu guards the runtime traffic entries, keyed by session ID.
 	// Traffic is session-scoped temporary data (全量抓包、会话内可见): it lives
-	// in memory only, is cleared when the session ends, and is never persisted
-	// in M2 (mocked-request persistence lands in M3).
+	// in memory only, is never persisted, and moves to the retained store when
+	// the session ends (M8.6 keeps ended-session records shareable).
 	trafficMu sync.RWMutex
 	traffic   map[string][]*capture.TrafficEntry
+
+	// retainedMu guards retainedTraffic: the traffic of ended sessions, kept
+	// for RetainedTrafficTTL so records the user saw on the page can still be
+	// shared after disconnect. M9 list semantics are unchanged — ended sessions
+	// are deleted and never listed again; retained entries are reachable only
+	// by ID (GetTraffic / share creation).
+	retainedMu sync.RWMutex
+	retained   map[string]*retainedSession
 
 	// sharesMu guards the share snapshots (M8.5). Shares are independent copies
 	// of a single traffic entry, decoupled from the owning session/traffic —
@@ -121,6 +135,9 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules 
 	if cfg.MockRuleRetention <= 0 {
 		cfg.MockRuleRetention = DefaultCaptureConfig().MockRuleRetention
 	}
+	if cfg.RetainedTrafficTTL <= 0 {
+		cfg.RetainedTrafficTTL = DefaultCaptureConfig().RetainedTrafficTTL
+	}
 	return &CaptureManager{
 		devices:  devices,
 		sessions: sessions,
@@ -129,6 +146,7 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules 
 		log:      slog.Default(),
 		viewers:  make(map[string]map[string]capture.ViewerLease),
 		traffic:  make(map[string][]*capture.TrafficEntry),
+		retained: make(map[string]*retainedSession),
 		shares:   make(map[string]*ShareSnapshot),
 		stopCh:   make(chan struct{}),
 	}
@@ -378,6 +396,11 @@ func (m *CaptureManager) ActivateSession(ctx context.Context, app, did string) (
 // keeps only the current session, no history. Mock rules are NOT deleted:
 // they persist per device and are disabled on session end (M4/F4.5 决策13),
 // re-enabled manually on the next session.
+//
+// M8.6 (断开后可分享): the session's traffic is NOT discarded — it moves to
+// the retained store so records already shown on the page stay resolvable by
+// ID (share creation) for RetainedTrafficTTL. The list contract is unchanged:
+// an ended session is deleted and never listed again.
 func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	s, err := m.sessions.Get(ctx, id)
 	if err != nil {
@@ -394,11 +417,25 @@ func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	delete(m.viewers, id)
 	m.viewerMu.Unlock()
 
-	// Clear the session's temporary traffic: an ended session no longer
-	// exposes its traffic (contract: ended session => empty list).
+	// M8.6: move the session's traffic to the retained store instead of
+	// deleting it, keeping the entries resolvable by ID for share creation
+	// after disconnect (bounded by RetainedTrafficTTL, purged by the health
+	// check). The owning device is recorded because the session record is
+	// about to be deleted and ownership must stay verifiable.
 	m.trafficMu.Lock()
+	entries := m.traffic[id]
 	delete(m.traffic, id)
 	m.trafficMu.Unlock()
+	if len(entries) > 0 {
+		m.retainedMu.Lock()
+		m.retained[id] = &retainedSession{
+			App:     s.App,
+			Did:     s.Did,
+			EndedAt: time.Now(),
+			Entries: entries,
+		}
+		m.retainedMu.Unlock()
+	}
 
 	// M9: 结束即删 — delete the session record instead of keeping an
 	// "ended" entry. The device and rule stores are untouched.
@@ -431,6 +468,19 @@ func (m *CaptureManager) GetSession(ctx context.Context, id string) (*capture.Ca
 // ============================================================================
 // Traffic (session-scoped, runtime-only)
 // ============================================================================
+
+// retainedSession holds the traffic of an ended capture session for a bounded
+// window (RetainedTrafficTTL) so records the user saw on the page can still be
+// shared after disconnect (M8.6). M9 list semantics are preserved: ended
+// sessions are deleted and never listed again; retained entries are reachable
+// only by ID. App/Did is kept because the session record is gone, and share
+// creation must still verify device ownership.
+type retainedSession struct {
+	App     string
+	Did     string
+	EndedAt time.Time
+	Entries []*capture.TrafficEntry
+}
 
 // UploadTraffic appends a batch of traffic entries to a capturing session
 // (全量抓包, contract POST /traffic). Only traffic for an active session is
@@ -569,13 +619,27 @@ func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID strin
 }
 
 // GetTraffic returns a single traffic entry by its server-generated ID. The
-// traffic of an ended session has been cleared, so such entries are reported
-// as not found (contract: 404 not_found).
+// entry may live in an active session or in the retained store of an ended
+// session (M8.6 断开后可分享, bounded by RetainedTrafficTTL). Entries that
+// never existed or whose retention window has passed are reported as not
+// found (contract: 404 not_found).
 func (m *CaptureManager) GetTraffic(ctx context.Context, id string) (*capture.TrafficEntry, error) {
 	m.trafficMu.RLock()
-	defer m.trafficMu.RUnlock()
 	for _, entries := range m.traffic {
 		for _, e := range entries {
+			if e.ID == id {
+				c := *e
+				m.trafficMu.RUnlock()
+				return &c, nil
+			}
+		}
+	}
+	m.trafficMu.RUnlock()
+
+	m.retainedMu.RLock()
+	defer m.retainedMu.RUnlock()
+	for _, rs := range m.retained {
+		for _, e := range rs.Entries {
 			if e.ID == id {
 				c := *e
 				return &c, nil
@@ -583,6 +647,39 @@ func (m *CaptureManager) GetTraffic(ctx context.Context, id string) (*capture.Tr
 		}
 	}
 	return nil, ErrNotFound
+}
+
+// GetTrafficWithOwner returns the owning device (app, did) of a traffic entry,
+// whether the entry lives in an active session or in the retained store of an
+// ended session. It is used to authorize share creation after the owning
+// session record is gone (M9 deletes it on end). Returns ErrNotFound when the
+// entry does not exist.
+func (m *CaptureManager) GetTrafficWithOwner(ctx context.Context, id string) (app, did string, err error) {
+	m.trafficMu.RLock()
+	for sid, entries := range m.traffic {
+		for _, e := range entries {
+			if e.ID == id {
+				m.trafficMu.RUnlock()
+				s, err := m.sessions.Get(ctx, sid)
+				if err != nil {
+					return "", "", ErrNotFound
+				}
+				return s.App, s.Did, nil
+			}
+		}
+	}
+	m.trafficMu.RUnlock()
+
+	m.retainedMu.RLock()
+	defer m.retainedMu.RUnlock()
+	for _, rs := range m.retained {
+		for _, e := range rs.Entries {
+			if e.ID == id {
+				return rs.App, rs.Did, nil
+			}
+		}
+	}
+	return "", "", ErrNotFound
 }
 
 // DeleteTraffic deletes a single traffic entry by its server-generated ID
@@ -745,6 +842,8 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 		defer ticker.Stop()
 		ruleTicker := time.NewTicker(time.Hour)
 		defer ruleTicker.Stop()
+		retainedTicker := time.NewTicker(time.Hour)
+		defer retainedTicker.Stop()
 
 		for {
 			select {
@@ -757,6 +856,8 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 				m.checkViewerLeases(ctx)
 			case <-ruleTicker.C:
 				m.PurgeExpiredRules(ctx)
+			case <-retainedTicker.C:
+				m.PurgeExpiredRetainedTraffic(ctx)
 			}
 		}
 	}()
@@ -1184,6 +1285,29 @@ func (m *CaptureManager) disableDeviceRules(ctx context.Context, app, did string
 }
 
 // ============================================================================
+// Retained traffic janitor (M8.6 断开后可分享)
+// ============================================================================
+
+// PurgeExpiredRetainedTraffic drops retained traffic of ended sessions older
+// than RetainedTrafficTTL. Retained traffic exists only to keep page records
+// shareable after disconnect, so it is bounded by the same window as the
+// share-link TTL. Best-effort; called hourly by the health check.
+func (m *CaptureManager) PurgeExpiredRetainedTraffic(ctx context.Context) {
+	m.purgeRetainedBefore(ctx, time.Now().Add(-m.cfg.RetainedTrafficTTL))
+}
+
+// purgeRetainedBefore removes every retained session ended before cutoff.
+func (m *CaptureManager) purgeRetainedBefore(ctx context.Context, cutoff time.Time) {
+	m.retainedMu.Lock()
+	defer m.retainedMu.Unlock()
+	for sid, rs := range m.retained {
+		if rs.EndedAt.Before(cutoff) {
+			delete(m.retained, sid)
+		}
+	}
+}
+
+// ============================================================================
 // M8.5: Request share snapshots
 // ============================================================================
 
@@ -1203,8 +1327,10 @@ type ShareSnapshot struct {
 }
 
 // CreateShare copies the traffic entry identified by trafficID into a new
-// independent share snapshot and returns it. Returns ErrNotFound if the traffic
-// entry does not exist (e.g. session already ended and traffic cleared).
+// independent share snapshot and returns it. The entry may come from an
+// active session or from the retained store of an ended session (M8.6).
+// Returns ErrNotFound if the entry does not exist (e.g. never existed, or its
+// retention window has passed).
 func (m *CaptureManager) CreateShare(ctx context.Context, trafficID string) (*ShareSnapshot, error) {
 	entry, err := m.GetTraffic(ctx, trafficID)
 	if err != nil {

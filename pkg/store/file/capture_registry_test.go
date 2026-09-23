@@ -578,9 +578,114 @@ func TestCaptureManager_HeartbeatTimeout_ClearsTraffic(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); errors.Is(err, store.ErrSessionNotFound) {
-			return // session ended (M9: record + traffic deleted)
+			return // session ended (M9: record deleted; ended sessions are never listed)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("traffic not cleared after heartbeat-timeout session end")
+}
+
+func TestCaptureManager_ShareAfterSessionEnd(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); err != nil {
+		t.Fatalf("UploadTraffic() = %v", err)
+	}
+	list, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListSessionTraffic() = %d, %v; want 1 entry", len(list), err)
+	}
+	id := list[0].ID
+
+	// M9: ending the session deletes its record...
+	if err := m.EndSession(ctx, s.ID); err != nil {
+		t.Fatalf("EndSession() = %v", err)
+	}
+	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Fatalf("GetSession(after end) = %v, want ErrSessionNotFound (M9: 结束即删)", err)
+	}
+
+	// M8.6: retained traffic is still resolvable by ID with its owning device.
+	e, err := m.GetTraffic(ctx, id)
+	if err != nil || e.ID != id || e.URL != "http://x/a" {
+		t.Fatalf("GetTraffic(retained) = %+v, %v; want entry %q", e, err, id)
+	}
+	app, did, err := m.GetTrafficWithOwner(ctx, id)
+	if err != nil || app != "app" || did != "d1" {
+		t.Errorf("GetTrafficWithOwner(retained) = %q/%q, %v; want app/d1", app, did, err)
+	}
+	if _, _, err := m.GetTrafficWithOwner(ctx, "no-such-id"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetTrafficWithOwner(unknown) = %v, want ErrNotFound", err)
+	}
+
+	// Share creation now succeeds after disconnect (previously 404).
+	snap, err := m.CreateShare(ctx, id)
+	if err != nil {
+		t.Fatalf("CreateShare(after end) = %v", err)
+	}
+	if snap.Entry == nil || snap.Entry.ID != id || snap.Entry.URL != "http://x/a" {
+		t.Errorf("share entry = %+v, want deep copy of %q", snap.Entry, id)
+	}
+	if snap.Entry.SessionID != "" {
+		t.Errorf("share entry SessionID = %q, want empty (no internal session linkage)", snap.Entry.SessionID)
+	}
+	got, err := m.GetShare(ctx, snap.ShareID)
+	if err != nil || got.Entry.URL != "http://x/a" {
+		t.Errorf("GetShare() = %+v, %v", got, err)
+	}
+
+	// M9 list semantics unchanged: the ended session is not listable.
+	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("ListSessionTraffic(ended) = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestCaptureManager_RetainedTraffic_Expires(t *testing.T) {
+	fs := newTestStore(t)
+	cfg := store.DefaultCaptureConfig()
+	cfg.RetainedTrafficTTL = 50 * time.Millisecond
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), cfg)
+	t.Cleanup(m.Stop)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); err != nil {
+		t.Fatalf("UploadTraffic() = %v", err)
+	}
+	list, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	id := list[0].ID
+	if err := m.EndSession(ctx, s.ID); err != nil {
+		t.Fatalf("EndSession() = %v", err)
+	}
+
+	// Within the retention window the entry stays shareable.
+	if _, err := m.GetTraffic(ctx, id); err != nil {
+		t.Fatalf("GetTraffic(within TTL) = %v", err)
+	}
+
+	// After the window passes, the janitor purges it and sharing fails again.
+	time.Sleep(200 * time.Millisecond)
+	m.PurgeExpiredRetainedTraffic(ctx)
+	if _, err := m.GetTraffic(ctx, id); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetTraffic(after purge) = %v, want ErrNotFound", err)
+	}
+	if _, err := m.CreateShare(ctx, id); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("CreateShare(after purge) = %v, want ErrNotFound", err)
+	}
 }

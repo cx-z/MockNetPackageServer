@@ -18,14 +18,18 @@ info:
     - 隔离强制：所有设备/流量/规则接口显式携带 (app, did) 维度（路径或 query），避免串设备。
     - 时间：一律 RFC3339（如 2026-09-18T09:00:00+08:00）。
     - Mock 匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口的所有请求均命中。
-    - 流量语义：全量抓包、会话内临时可见、会话结束清空（被 Mock 的请求持久化，M3 起）。
+    - 流量语义：全量抓包、会话内临时可见；会话结束后流量转入保留区（M8.6 断开后可分享），
+      默认 7 天内仍可按 ID 生成分享链接，但不再可列表访问（被 Mock 的请求持久化，M3 起）。
     - 推送通道：Web 请求流按 2s 轮询 GET /sessions/{id}/traffic 实现秒级可见（已定，不新增推送端点）。
     - Mock 规则语义（M3）：规则=接口回包，Method+URL 路径匹配；同一接口运行时仅一条 effective=true（异常态多条 enabled 则该接口全部 effective=false、不回包，并在 MockRuleList.conflicts 上报前端弹窗）；规则持久化但 SDK 仅在抓包会话 capturing 期间应用；"Mock 此请求"固化的真实请求快照（原始值+Mock 值）随规则持久化。
     - 会话结束规则失效（M4，需求 6.6/F4.5/决策13）：抓包会话一旦结束（页面关闭/最后一个查看者释放/心跳超时/手动断开），服务端把该设备所有 enabled=true 的 Mock 规则批量置为 enabled=false 并 Bump 规则版本；规则不删除、仍在 Web 规则列表中，下次建立会话后由用户从历史规则手动一键重新启用。SDK 拉到的新规则集全为 disabled，不再自动生效。
     - 7 天滑动清理（M4，F8.3/决策15）：Mock 规则及其 source 快照持久化保留，默认 7 天（服务端配置项），滑动窗口起点为 lastUsedAt。命中回包、Web 编辑保存、Web toggle 启停三类操作刷新 lastUsedAt；心跳/规则版本轮询/Web 纯浏览不刷新。过期规则连同其 source 快照自动删除。
     - 协议解码器增强（M4）：SDK 暴露 setBodyDecoder 注入点，由各 App 把二进制私有协议（如 xcp）解成可读 UTF-8 文本；解码结果以 TrafficEntry.responseBodyDecoded / MockRuleSource.responseBodyDecoded 独立通道上传展示，原始 base64 仍只用于回放。
     - 日志删除（M9.5）：Web 可单条删除（DELETE /traffic/{id}）或清空（DELETE /sessions/{id}/traffic）会话内临时流量；只作用于日志展示，不触碰已持久化的 Mock 规则（日志与规则互相独立）。
-    - 会话结束即删（M9）：用户视角只有当前会话。会话结束（同 M4 的四条结束路径）时服务端删除该会话记录及其临时流量；GET /sessions 仅返回激活中的会话；对已结束（已删除）会话的 GET /sessions/{id} 与会话流量访问返回 404 session_not_found。规则不受影响——保留并自动禁用（见 M4）。
+    - 会话结束即删（M9）+ 断开后可分享（M8.6）：用户视角只有当前会话。会话结束（同 M4 的四条
+      结束路径）时服务端删除该会话记录，其临时流量转入保留区（默认 7 天，服务端配置项），仅供按
+      ID 创建分享链接，不可再列表访问；GET /sessions 仅返回激活中的会话；对已结束（已删除）会话的
+      GET /sessions/{id} 与会话流量访问返回 404 session_not_found。规则不受影响——保留并自动禁用（见 M4）。
     - 规则备注与编辑语义（M5，M7 收窄）：MockRule 新增 note（字符串，可空，单条覆盖式更新，不做编辑历史）。创建（POST）时 note 可空；编辑（PUT）时 note 必须非空——仅当请求体实际改动 response 内容（statusCode/headers/body 与现值不一致）时校验（空或纯空白返回 400）；纯开关操作（response 原样回传、仅 enabled 变化）note 可空，未编辑的"Mock 此请求"规则可直接启用。匹配键 method/path 不可改——PUT 请求体改用独立的 UpdateMockRuleInput（不含 method/path），编辑只允许改 response（statusCode/headers/body）与 note、enabled。编辑成功刷新 lastUsedAt（与 M4 既有口径一致）。note 为纯管理面字段，不参与匹配、不下发给 SDK。
     - 实现状态：每个 path 用 x-milestone 标注实现阶段（m1/m2/m3/m4/m5/m6），当前阶段之外的仅契约定义、未实现。
 
@@ -204,10 +208,10 @@ paths:
       x-milestone: m1
       summary: 强制结束会话（Web「断开」）
       description: |
-        结束会话：SDK 停止采集与 Mock；清空会话临时流量记录；设备回到待命。
+        结束会话：SDK 停止采集与 Mock；会话临时流量转入保留区（M8.6，7 天内仍可按 ID 分享）；设备回到待命。
         与"最后一个查看者释放"、"心跳超时"同为会话结束路径。
-        M9（会话结束即删）：会话记录连同其临时流量一并删除，用户视角无历史会话；后续
-        访问该会话（GET /sessions/{id}、流量、上传）一律 404 session_not_found。
+        M9（会话结束即删）：会话记录删除，用户视角无历史会话；后续访问该会话（GET /sessions/{id}、
+        流量列表、上传）一律 404 session_not_found。
         会话结束（任意路径）统一副作用：该设备所有 enabled=true 的 Mock 规则批量置为
         enabled=false 并 Bump 规则版本（需求 6.6/F4.5/决策13），规则不删除、仍在规则列表，
         下次建立会话后由用户手动一键重新启用。
@@ -278,8 +282,9 @@ paths:
         服务端请求体上限 10MB（mockd Admin BodyLimit），SDK 应控制批次大小避免整批被拒。
         部分接受：entries 中字段不合法的条目被丢弃、合法条目正常入库，响应 count = 实际接受数；
         全部条目不合法返回 400。
-        临时语义：本会话流量仅会话存续期间可见，会话结束（页面关闭 / 心跳超时 / 强制断开）即清空；
-        命中 Mock 的请求仍按临时流量上传（mocked=true，其响应即 Mock 回包），随会话结束一并清空；
+        临时语义：本会话流量仅会话存续期间可列表访问；会话结束（页面关闭 / 心跳超时 / 强制断开）
+        后转入保留区（M8.6，默认 7 天），期间仅可按 ID 创建分享链接，不可再列表访问；
+        命中 Mock 的请求仍按临时流量上传（mocked=true，其响应即 Mock 回包），随会话结束一并转保留区；
         持久化保留的是规则及其 source 快照（原始值+Mock 值），不是每条命中流量。
         仅接受激活会话内的流量：sessionId 不存在或会话已结束（M9 结束即删）→ 404 session_not_found。
       operationId: uploadTraffic
@@ -315,7 +320,8 @@ paths:
       x-milestone: m2
       summary: 请求详情
       description: |
-        返回单条请求完整信息。会话结束后临时流量清空，本接口对已清空或不存在记录返回 404（not_found）。
+        返回单条请求完整信息。会话结束后流量转入保留区（M8.6，默认 7 天内仍可按 ID 解析，供创建分享
+        链接）；超过保留窗口或不存在的记录返回 404（not_found）。
       operationId: getTraffic
       parameters:
         - $ref: '#/components/parameters/TrafficIdPath'
