@@ -1,0 +1,253 @@
+// MockNetPack device API handlers (pure move from capture_handlers.go):
+// manual registration, SDK register/heartbeat with dynamic heartbeat config,
+// device list/get/rename/delete.
+package admin
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/getmockd/mockd/pkg/capture"
+	"github.com/getmockd/mockd/pkg/store"
+)
+
+// handleCreateDevice handles POST /api/v1/devices — Web manual device
+// registration. The logged-in user becomes the owner; an existing (App, Did)
+// conflicts. SDK auto-registration is removed in M7.2.3, making this the only
+// creation path afterwards.
+func (a *API) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
+	var req CreateDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+	req.App = strings.TrimSpace(req.App)
+	req.Did = strings.TrimSpace(req.Did)
+	req.Name = strings.TrimSpace(req.Name)
+	if req.App == "" || req.Did == "" || req.Name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_field", "app, did and name are required")
+		return
+	}
+	if !allowedApps[req.App] {
+		writeError(w, http.StatusBadRequest, "invalid_app", "app is not in the allowed catalog")
+		return
+	}
+	if len(req.Did) > 128 || len(req.Name) > 64 {
+		writeError(w, http.StatusBadRequest, "invalid_field", "did must be <=128 chars, name <=64 chars")
+		return
+	}
+	owner := ""
+	if u := currentUser(r); u != nil {
+		owner = u.Username
+	}
+	d := &capture.Device{
+		App:      req.App,
+		Did:      req.Did,
+		Name:     req.Name,
+		Owner:    owner,
+		Platform: capture.PlatformIOS,
+	}
+	if _, err := a.captureManager.CreateManualDevice(r.Context(), d); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			writeError(w, http.StatusConflict, "device_taken", "device already registered")
+			return
+		}
+		writeCaptureError(w, err)
+		return
+	}
+	view, err := a.captureManager.GetDevice(r.Context(), req.App, req.Did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, view)
+}
+
+// handleRegisterDevice handles POST /api/v1/devices/register.
+func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
+	var req RegisterDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+	if req.App == "" {
+		writeError(w, http.StatusBadRequest, "missing_app", "app is required")
+		return
+	}
+	if req.Did == "" {
+		writeError(w, http.StatusBadRequest, "missing_did", "did is required")
+		return
+	}
+	if len(req.App) > 128 || len(req.Did) > 128 {
+		writeError(w, http.StatusBadRequest, "invalid_field", "app and did must be at most 128 characters")
+		return
+	}
+
+	// M7.2.3: SDK auto-registration is retired. A device must already exist
+	// (created manually in the Web UI). An unknown did gets a technical 404 —
+	// no user-facing "please register in Web" copy here; that guidance belongs
+	// to the Web UI, not the debug SDK channel.
+	if _, err := a.captureManager.GetDevice(r.Context(), req.App, req.Did); err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	d := &capture.Device{
+		App:        req.App,
+		Did:        req.Did,
+		Platform:   req.Platform,
+		OSVersion:  req.OSVersion,
+		SDKVersion: req.SDKVersion,
+		AppVersion: req.AppVersion,
+	}
+	if _, err := a.captureManager.RegisterDevice(r.Context(), d); err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+
+	view, err := a.captureManager.GetDevice(r.Context(), req.App, req.Did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, RegisterDeviceResponse{
+		Device:       view,
+		ServerConfig: idleHeartbeatConfig(a.captureManager.ServerConfig()),
+	})
+}
+
+// idleHeartbeatConfig 返回 idle（未抓包）状态的心跳间隔（M8.2：5s，快速感知会话激活）。
+func idleHeartbeatConfig(cfg capture.ServerConfig) capture.ServerConfig {
+	cfg.HeartbeatIntervalSeconds = 5
+	return cfg
+}
+
+// capturingHeartbeatConfig 返回 capturing（抓包中）状态的心跳间隔（M8.3：3s，快速感知规则变更）。
+func capturingHeartbeatConfig(cfg capture.ServerConfig) capture.ServerConfig {
+	cfg.HeartbeatIntervalSeconds = 3
+	return cfg
+}
+
+// handleDeviceHeartbeat handles POST /api/v1/devices/{app}/{did}/heartbeat.
+func (a *API) handleDeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	did := r.PathValue("did")
+
+	var req CaptureHeartbeatRequest
+	if err := decodeOptionalJSONBody(r, &req); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+
+	_, session, err := a.captureManager.Heartbeat(r.Context(), app, did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	rulesVersion, err := a.captureManager.RuleVersion(r.Context(), app, did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, HeartbeatResponse{
+		OK:         true,
+		ServerTime: time.Now(),
+		// M8.2/M8.3：心跳间隔按会话状态动态下发——capturing 3s（快速感知规则变更）、
+		// idle 5s（快速感知会话激活）；SDK 按响应间隔调度下一次心跳。
+		ServerConfig: heartbeatConfigForSession(a.captureManager.ServerConfig(), session),
+		Session:      session,
+		RulesVersion: rulesVersion,
+	})
+}
+
+// heartbeatConfigForSession 根据会话是否激活返回对应心跳间隔配置。
+func heartbeatConfigForSession(base capture.ServerConfig, session *capture.CaptureSession) capture.ServerConfig {
+	if session != nil {
+		return capturingHeartbeatConfig(base)
+	}
+	return idleHeartbeatConfig(base)
+}
+
+// handleListDevices handles GET /api/v1/devices (Web device list).
+func (a *API) handleListDevices(w http.ResponseWriter, r *http.Request) {
+	devices, err := a.captureManager.ListDevices(r.Context(), nil)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	// M7.2.2 ownership filtering: admin sees all; a dev sees only its own devices.
+	if u := currentUser(r); u != nil && !isAdmin(u) {
+		filtered := make([]*capture.DeviceView, 0, len(devices))
+		for _, d := range devices {
+			if d.Owner == u.Username {
+				filtered = append(filtered, d)
+			}
+		}
+		devices = filtered
+	}
+	writeJSON(w, http.StatusOK, DeviceListResponse{Devices: devices, Total: len(devices)})
+}
+
+// handleGetDevice handles GET /api/v1/devices/{app}/{did}.
+func (a *API) handleGetDevice(w http.ResponseWriter, r *http.Request) {
+	app, did := r.PathValue("app"), r.PathValue("did")
+	if !a.authorizeDeviceAccess(w, r, app, did) {
+		return
+	}
+	view, err := a.captureManager.GetDevice(r.Context(), app, did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+// handleUpdateDeviceName handles PUT /api/v1/devices/{app}/{did} — rename a
+// device. Ownership is enforced (owner or admin only; others see 404).
+func (a *API) handleUpdateDeviceName(w http.ResponseWriter, r *http.Request) {
+	app, did := r.PathValue("app"), r.PathValue("did")
+	if !a.authorizeDeviceAccess(w, r, app, did) {
+		return
+	}
+	var req UpdateDeviceNameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONDecodeError(w, err, a.logger())
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_field", "name is required")
+		return
+	}
+	if len(req.Name) > 64 {
+		writeError(w, http.StatusBadRequest, "invalid_field", "name must be <=64 characters")
+		return
+	}
+	if _, err := a.captureManager.UpdateDeviceName(r.Context(), app, did, req.Name); err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	view, err := a.captureManager.GetDevice(r.Context(), app, did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+// handleDeleteDevice handles DELETE /api/v1/devices/{app}/{did}.
+// Removes the device and all its mock rules. Requires auth + ownership.
+func (a *API) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	did := r.PathValue("did")
+	if !a.authorizeDeviceAccess(w, r, app, did) {
+		return
+	}
+	if err := a.captureManager.DeleteDevice(r.Context(), app, did); err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
