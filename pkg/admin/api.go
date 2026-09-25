@@ -173,12 +173,13 @@ func NewAPI(port int, opts ...Option) *API {
 	api.dataStore = dataStore
 
 	// Initialize the MockNetPack capture manager (devices / capture sessions /
-	// viewer leases / mock rules). Uses defaults unless overridden via
-	// WithCaptureConfig.
+	// viewer leases / mock rules / QR pairing tokens). Uses defaults unless
+	// overridden via WithCaptureConfig.
 	api.captureManager = store.NewCaptureManager(
 		dataStore.Devices(),
 		dataStore.CaptureSessions(),
 		dataStore.MockRules(),
+		dataStore.PairingTokens(),
 		api.captureConfig,
 	)
 

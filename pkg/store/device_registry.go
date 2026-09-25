@@ -77,6 +77,9 @@ func (m *CaptureManager) RegisterDevice(ctx context.Context, d *capture.Device) 
 	existing.OSVersion = d.OSVersion
 	existing.SDKVersion = d.SDKVersion
 	existing.AppVersion = d.AppVersion
+	// v0.9.0: app display name is metadata — refreshed on re-registration
+	// (Web falls back to the bundle id when empty).
+	existing.AppName = d.AppName
 	existing.Platform = d.Platform
 	existing.LastSeenAt = now
 	if err := m.devices.Update(ctx, existing); err != nil {
@@ -84,6 +87,71 @@ func (m *CaptureManager) RegisterDevice(ctx context.Context, d *capture.Device) 
 	}
 	out := *existing
 	return &out, nil
+}
+
+// RegisterDeviceWithPairing registers a device via a validated QR pairing
+// token (M9, D7 idempotency). This is the auto-registration path the QR scan
+// unlocks:
+//   - (app, did) unknown → create with owner = the token's user and
+//     name = deviceName (or a platform+did fallback).
+//   - (app, did) known → reuse the existing record: owner is kept (filled with
+//     the token's user only when empty), name is never overwritten, metadata
+//     is refreshed. No duplicate is ever created.
+//
+// The caller (handler) validates the token before calling; owner is the
+// token's User.
+func (m *CaptureManager) RegisterDeviceWithPairing(ctx context.Context, d *capture.Device, owner string) (*capture.Device, error) {
+	now := time.Now()
+	d.LastSeenAt = now
+
+	existing, err := m.devices.Get(ctx, d.App, d.Did)
+	if errors.Is(err, ErrNotFound) {
+		d.RegisteredAt = now
+		d.Owner = owner
+		if d.Name == "" {
+			d.Name = defaultDeviceName(d)
+		}
+		if err := m.devices.Create(ctx, d); err != nil {
+			return nil, err
+		}
+		out := *d
+		return &out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Reuse (D7): never reset owner/name; only fill owner when it was empty.
+	if existing.Owner == "" && owner != "" {
+		existing.Owner = owner
+	}
+	existing.OSVersion = d.OSVersion
+	existing.SDKVersion = d.SDKVersion
+	existing.AppVersion = d.AppVersion
+	// v0.9.0: app display name is metadata — refreshed on reuse (D7: name/
+	// owner untouched, only metadata + LastSeenAt).
+	existing.AppName = d.AppName
+	existing.Platform = d.Platform
+	existing.LastSeenAt = now
+	if err := m.devices.Update(ctx, existing); err != nil {
+		return nil, err
+	}
+	out := *existing
+	return &out, nil
+}
+
+// defaultDeviceName builds the fallback display name for a device
+// auto-registered through the pairing flow when the SDK did not supply one
+// (plan: platform + did prefix).
+func defaultDeviceName(d *capture.Device) string {
+	prefix := string(d.Platform)
+	if prefix == "" {
+		prefix = "device"
+	}
+	if len(d.Did) > 12 {
+		return prefix + "·" + d.Did[:12]
+	}
+	return prefix + "·" + d.Did
 }
 
 // Heartbeat refreshes the device's last-seen time and returns the device plus

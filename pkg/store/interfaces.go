@@ -383,3 +383,23 @@ type AuthSessionStore interface {
 	// number of deleted sessions (janitor).
 	DeleteExpired(ctx context.Context, now time.Time) (int, error)
 }
+
+// PairingTokenStore handles persistence for QR pairing tokens (M9, contract
+// v0.8.0). Tokens persist across restarts so a just-scanned QR survives a
+// server restart until its TTL expires (10 minutes).
+type PairingTokenStore interface {
+	// Create adds a new pairing token. Returns store.ErrAlreadyExists if the
+	// token already exists (astronomically unlikely).
+	Create(ctx context.Context, p *account.PairingToken) error
+	// GetByToken returns a single pairing token by token.
+	GetByToken(ctx context.Context, token string) (*account.PairingToken, error)
+	// RecordPairingUse appends a did to a token's paired-device list
+	// (M9.3-fix, idempotent per did) so the Web can detect scan completion.
+	// Unknown token is store.ErrNotFound; expiry is not enforced here
+	// (validation already rejected the register request before this call).
+	RecordPairingUse(ctx context.Context, token, did string, at time.Time) error
+	// DeleteExpired removes every token expired before now and returns the
+	// number of deleted tokens (hourly janitor; expired tokens are also
+	// rejected at validation time, so this is housekeeping only).
+	DeleteExpired(ctx context.Context, now time.Time) (int, error)
+}

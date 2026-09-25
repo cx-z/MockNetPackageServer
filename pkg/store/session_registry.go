@@ -237,6 +237,8 @@ func (m *CaptureManager) ReleaseViewer(ctx context.Context, sessionID, viewerID 
 //     (device offline => session ended, 僵尸清理兜底), and
 //  2. garbage-collects expired viewer leases, ending a session when its last
 //     lease expires without a page-close event (beforeunload is unreliable).
+//  Hourly janitors also purge expired mock rules, retained traffic and QR
+//  pairing tokens (M9).
 func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 	m.wg.Add(1)
 	go func() {
@@ -248,6 +250,8 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 		defer ruleTicker.Stop()
 		retainedTicker := time.NewTicker(time.Hour)
 		defer retainedTicker.Stop()
+		pairingTicker := time.NewTicker(time.Hour)
+		defer pairingTicker.Stop()
 
 		for {
 			select {
@@ -262,6 +266,8 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 				m.PurgeExpiredRules(ctx)
 			case <-retainedTicker.C:
 				m.PurgeExpiredRetainedTraffic(ctx)
+			case <-pairingTicker.C:
+				m.PurgeExpiredPairingTokens(ctx)
 			}
 		}
 	}()

@@ -19,7 +19,7 @@ func newCaptureManager(t *testing.T, timeout time.Duration) (*store.CaptureManag
 	if timeout > 0 {
 		cfg.HeartbeatTimeout = timeout
 	}
-	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), cfg)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), cfg)
 	t.Cleanup(m.Stop)
 	return m, fs
 }
@@ -265,7 +265,7 @@ func TestCaptureManager_ViewerLeaseExpiry_EndsSession(t *testing.T) {
 	cfg.HeartbeatTimeout = 5 * time.Second
 	cfg.ViewerTTL = 200 * time.Millisecond
 	fs := newTestStore(t)
-	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), cfg)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), cfg)
 	t.Cleanup(m.Stop)
 	ctx := context.Background()
 
@@ -653,7 +653,7 @@ func TestCaptureManager_RetainedTraffic_Expires(t *testing.T) {
 	fs := newTestStore(t)
 	cfg := store.DefaultCaptureConfig()
 	cfg.RetainedTrafficTTL = 50 * time.Millisecond
-	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), cfg)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), cfg)
 	t.Cleanup(m.Stop)
 	ctx := context.Background()
 

@@ -53,32 +53,45 @@
   <!-- ===== 视图：设备列表（M1.6） ===== -->
   <div id="listView">
     <div class="toolbar">
-      <button id="addDeviceBtn" class="small ghost" type="button">＋ 注册设备</button>
+      <button id="scanConnectBtn" class="small ghost" type="button" title="生成配对二维码，手机 App 扫码免写死服务器地址">扫码连接</button>
     </div>
     <div class="stats" id="stats"></div>
     <div id="list"><div class="empty">加载中…</div></div>
     <div class="updated" id="updated"></div>
   </div>
 
-  <!-- M7.2.2：手动注册设备模态框 -->
-  <div id="addDeviceModal" class="modal-overlay hidden">
+  <!-- M9.3：扫码连接模态框（签发配对令牌 + 渲染二维码） -->
+  <div id="scanConnectModal" class="modal-overlay hidden">
     <div class="modal-card">
-      <h3>注册设备</h3>
-      <div id="addDeviceError" class="auth-error hidden"></div>
-      <form id="addDeviceForm">
-        <label class="form-label">App</label>
-        <select id="addApp" class="auth-input">
-          <option value="com.example.integrating">com.example.integrating</option>
-        </select>
-        <label class="form-label">设备标识（did）</label>
-        <input id="addDid" class="auth-input" placeholder="SDK 生成的 did" required>
-        <label class="form-label">设备名称</label>
-        <input id="addName" class="auth-input" placeholder="例如：张三的 iPhone" required>
-        <div class="modal-actions">
-          <button type="button" id="addDeviceCancel" class="ghost">取消</button>
-          <button type="submit" class="auth-btn">注册</button>
-        </div>
-      </form>
+      <h3>扫码连接</h3>
+      <label class="form-label">App</label>
+      <select id="addApp" class="auth-input">
+        <option value="com.example.integrating">com.example.integrating</option>
+      </select>
+      <div class="sub" id="scanConnectApp"></div>
+      <div class="sub">手机 App「Debug 页 → 扫码连接」扫描下方二维码，即可自动配置服务器地址并注册本设备（10 分钟内有效）。</div>
+      <div id="scanConnectError" class="auth-error hidden"></div>
+      <div id="scanConnectQR" class="scan-qr-box"><div class="empty">加载中…</div></div>
+      <div class="sub" id="scanConnectCountdown"></div>
+      <div class="modal-actions">
+        <button type="button" id="scanConnectRefresh" class="ghost">刷新二维码</button>
+        <button type="button" id="scanConnectCancel" class="ghost">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- M9.3-fix (v0.8.2)：扫码完成 → 设备命名（二维码弹窗自动关闭后弹出） -->
+  <div id="deviceNameModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>设备已连接</h3>
+      <div class="sub">扫码成功：服务器地址已配置、设备已注册并连接。为设备命名后进入请求列表查看抓包。</div>
+      <div class="sub" id="deviceNameDid"></div>
+      <div id="deviceNameError" class="auth-error hidden"></div>
+      <label class="form-label" for="deviceNameInput">设备名称</label>
+      <input id="deviceNameInput" class="auth-input" placeholder="例如：张三的 iPhone 15" maxlength="64" autocomplete="off">
+      <div class="modal-actions">
+        <button type="button" id="deviceNameSubmit" class="primary">保存并进入抓包</button>
+      </div>
     </div>
   </div>
 
@@ -124,10 +137,12 @@
 <script src="lib/codemirror/addon/fold/brace-fold.min.js"></script>
 <script src="lib/codemirror/addon/edit/matchbrackets.min.js"></script>
 <script src="lib/codemirror/addon/edit/closebrackets.min.js"></script>
+<script src="lib/qrcode/qrcode.min.js"></script>
 <script src="utils.js"></script>
 <script src="api.js"></script>
 <script src="json-tree.js"></script>
 <script src="devices.js"></script>
+<script src="scan-connect.js"></script>
 <script src="traffic.js"></script>
 <script src="rules.js"></script>
 <script src="viewer.js"></script>

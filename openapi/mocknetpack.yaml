@@ -2,10 +2,15 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.7.0
+  version: 0.9.0
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
     - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
+    - 扫码连接（M9，v0.8.0；localhost 修复 v0.8.1；扫码完成轮询 v0.8.2）：Web 设备页为已登录用户签发短时配对令牌（POST /pairing-tokens，
+      requireAuth；10 分钟有效、可复用——同一令牌可注册多台设备）；SDK 扫码后携带 pairingToken
+      调用 /devices/register，令牌有效则未知 (app, did) 自动注册（owner=签发用户，D1 扫码即注册），
+      已存在则复用原记录不新建、不改名不换 owner（D7 幂等复用）；无效/过期/错 app 令牌返回
+      403 pairing_token_invalid（SDK 提示"二维码已过期，请刷新"）。
     - 请求体解析（M8.1，v0.7.0）：TrafficEntry / MockRuleSource 新增 requestBodyDecoded——
       请求体经 App 注入的协议解码器（同响应体 M4 机制）解出的可读 UTF-8 文本，仅 Web 展示、
       不参与回放；二进制请求体（xcp AES+gzip）解码后 Web 优先展示它，无则回退 requestBody 占位。
@@ -62,11 +67,14 @@ paths:
     post:
       tags: [devices]
       x-milestone: m1
-      summary: 设备注册（幂等 upsert）
+      summary: 设备注册（幂等 upsert；M9 起支持配对令牌自动注册）
       description: |
         SDK 启动时调用。did 由 SDK 生成：App 作用域内唯一、App 内持久化（重启不变）、不依赖设备硬件标识。
         相同 (app, did) 重复注册视为同一设备，更新元信息并置为在线（幂等）。
         响应下发服务端心跳配置（间隔/超时为服务端配置项）。
+        M9（v0.8.0）扫码即注册：请求体可携带 pairingToken（Web 二维码中的配对令牌）。令牌有效时，
+        未知 (app, did) 直接自动注册（owner=签发令牌的用户，D1），已存在则复用原记录（D7：不新建、
+        不改名、owner 为空才补签发用户）；令牌缺失时保持 M7.2.3 语义——未知 did 返回 404 device_not_registered。
       operationId: registerDevice
       requestBody:
         required: true
@@ -83,6 +91,18 @@ paths:
                 $ref: '#/components/schemas/RegisterDeviceResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          description: 配对令牌无效/过期/不匹配该 app（pairing_token_invalid，M9）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 设备未注册（device_not_registered；无配对令牌且 (app, did) 未知）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -645,6 +665,121 @@ paths:
           $ref: '#/components/responses/NotFound'
 
   # ==========================================================================
+  # 7. 配对令牌（M9，v0.8.0）：扫码连接的基础
+  # 设备页为已登录用户签发短时令牌；二维码携带该令牌 + 服务器地址 + appID，
+  # SDK 扫码后凭令牌自动注册设备。令牌 10 分钟有效、可复用（同一令牌可注册多台设备）。
+  # ==========================================================================
+  /pairing-tokens:
+    post:
+      tags: [devices]
+      x-milestone: m9
+      summary: 签发配对令牌（Web 设备页，requireAuth）
+      description: |
+        为当前登录用户、指定 app 签发配对令牌（10 分钟有效，D5 可复用：有效期内同一令牌可
+        注册多台设备，签发不会使旧令牌失效）。响应 expiresAt 供 Web 展示二维码倒计时与过期提示。
+        令牌绑定 (user, app)：SDK 凭它注册设备时 owner=签发用户（D1 扫码即注册）；app 不在
+        固定清单返回 400 invalid_app。
+      operationId: createPairingToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PairingTokenRequest'
+      responses:
+        '201':
+          description: 签发成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PairingTokenResponse'
+        '400':
+          description: app 缺失或不在固定清单（invalid_app）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /pairing-tokens/{token}:
+    get:
+      tags: [devices]
+      x-milestone: m9
+      summary: 查询配对令牌状态与已配对设备（requireAuth，扫码完成轮询）
+      description: |
+        Web 在二维码弹窗打开期间轮询本端点（v0.8.2）：一旦有设备用该令牌完成注册
+        （pairedDevices 新增 did），Web 自动关闭二维码弹窗 → 弹出设备命名框 → 提交后
+        跳转该设备请求列表页。令牌可复用（D5）：usedDevices 可含多台设备，Web 以
+        「自弹窗打开以来新增」为准。过期令牌仍返回（Web 以自身倒计时为准，仅弹窗
+        打开期间需要状态）。
+      operationId: getPairingTokenStatus
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 令牌状态与已配对设备
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PairingTokenStatusResponse'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 令牌不存在（not_found）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
+  # 7b. 服务器局域网地址（M9.1-fix，v0.8.1）：localhost 场景二维码修复
+  # 浏览器用 localhost 打开 Web 时，location.origin 对手机不可达（手机连自己的
+  # localhost 被拒）。Web 先查此端点拿服务端局域网可达 origin，替换二维码 u 字段。
+  # 非 localhost 部署（域名/局域网 IP 访问）不调用本端点。
+  # ==========================================================================
+  /local-address:
+    get:
+      tags: [devices]
+      x-milestone: m9
+      summary: 查询服务端局域网可达地址（requireAuth）
+      description: |
+        返回服务端局域网可达 origin（scheme://LAN-IPv4:port，port 沿用请求 Host 的端口），
+        供 Web 在 localhost 场景组装手机可连接的二维码。无 LAN 接口返回 503 lan_unavailable。
+      operationId: getLocalAddress
+      responses:
+        '200':
+          description: 局域网可达 origin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocalAddressResponse'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 服务端无局域网接口（lan_unavailable）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
   # 6. 账号与会话（M7.1，v0.6.0）
   # 开放注册仅产 dev 角色；admin 由 CLI `mockd start --create-admin` 创建。
   # 登录签发服务端持久化的会话 token（有效期 7 天，配置项）；登出即服务端吊销。
@@ -864,7 +999,13 @@ components:
       properties:
         app:
           type: string
-          description: App 标识
+          description: App 标识（bundle id）
+        appName:
+          type: string
+          maxLength: 64
+          description: |
+            App 显示名（SDK 上报 CFBundleDisplayName，如 IntegratingApp；v0.9.0）。
+            旧设备/手动注册为空；Web 显示时回退到 app（bundle id）。
         did:
           type: string
           description: 设备标识（SDK 生成）
@@ -875,7 +1016,7 @@ components:
         owner:
           type: string
           nullable: true
-          description: 手动注册该设备的账号用户名（M7.2）；SDK 自动注册的遗留设备为空
+          description: 注册该设备的账号用户名（M7.2 Web 手动注册 / M9 扫码自动注册）；SDK 直接注册的遗留设备为空
         platform:
           type: string
           enum: [ios]
@@ -940,6 +1081,93 @@ components:
           type: string
         appVersion:
           type: string
+        appName:
+          type: string
+          maxLength: 64
+          description: App 显示名（SDK 上报 CFBundleDisplayName，如 IntegratingApp；v0.9.0）。可选；Web 回退到 app。
+        pairingToken:
+          type: string
+          maxLength: 128
+          description: |
+            配对令牌（M9，v0.8.0）：Web 二维码中的短时令牌。提供且有效时未知 (app, did)
+            自动注册（owner=签发用户，D1），已存在则复用原记录（D7）；缺失时保持 M7.2.3 语义
+            （未知 did 404）。
+        deviceName:
+          type: string
+          maxLength: 64
+          description: |
+            扫码自动注册时使用的设备显示名（可选）；不提供时服务端回退为
+            platform + did 前缀（如 ios·abcdef123456）。已存在设备复用时不生效（不改名，D7）。
+
+    PairingTokenRequest:
+      type: object
+      required: [app]
+      properties:
+        app:
+          type: string
+          maxLength: 128
+          description: 固定 app 清单（当前仅 com.example.integrating）
+
+    PairingTokenResponse:
+      type: object
+      required: [token, app, expiresAt]
+      properties:
+        token:
+          type: string
+          description: 配对令牌（32 字节随机数 hex）；SDK 注册时放 register 请求体 pairingToken
+        app:
+          type: string
+          description: 令牌绑定的 app
+        expiresAt:
+          type: string
+          format: date-time
+          description: 过期时间（签发后 10 分钟）；Web 用其渲染二维码有效期倒计时
+
+    PairingTokenStatusResponse:
+      type: object
+      required: [token, app, expiresAt, used, pairedDevices]
+      properties:
+        token:
+          type: string
+          description: 配对令牌
+        app:
+          type: string
+          description: 令牌绑定的 app
+        expiresAt:
+          type: string
+          format: date-time
+          description: 过期时间
+        used:
+          type: boolean
+          description: 是否已有设备用该令牌注册
+        pairedDevices:
+          type: array
+          description: 已用该令牌注册的设备（D5 可复用，可多条）
+          items:
+            $ref: '#/components/schemas/PairingUseView'
+
+    PairingUseView:
+      type: object
+      required: [did, registeredAt]
+      properties:
+        did:
+          type: string
+          description: 设备 did
+        name:
+          type: string
+          description: 设备当前名称（可能为空，等待 Web 命名）
+        registeredAt:
+          type: string
+          format: date-time
+          description: 该设备用令牌完成注册的时间
+
+    LocalAddressResponse:
+      type: object
+      required: [origin]
+      properties:
+        origin:
+          type: string
+          description: 服务端局域网可达 origin（如 http://192.168.1.3:4290，无路径）；Web 拼接 /api/v1 作二维码 u
 
     RegisterDeviceResponse:
       type: object

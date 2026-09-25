@@ -309,6 +309,18 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+captureAPIPrefix+"/devices", a.requireAuth(a.handleCreateDevice))
 	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}", a.requireAuth(a.handleUpdateDeviceName))
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}", a.requireAuth(a.handleDeleteDevice))
+
+	// M9 (contract v0.8.0): QR pairing tokens — a logged-in user issues a
+	// short-lived token that lets the SDK auto-register a scanned device.
+	mux.HandleFunc("POST "+captureAPIPrefix+"/pairing-tokens", a.requireAuth(a.handleCreatePairingToken))
+	// M9.1-fix (contract v0.8.1): LAN-reachable origin for the scan QR when
+	// the Web is opened via localhost (a phone cannot reach its own localhost).
+	mux.HandleFunc("GET "+captureAPIPrefix+"/local-address", a.requireAuth(a.handleLocalAddress))
+	// M9.3-fix (contract v0.8.2): pairing-token status — the Web polls this
+	// while the QR modal is open to detect scan completion (a device
+	// registered with the token), then auto-closes the modal.
+	mux.HandleFunc("GET "+captureAPIPrefix+"/pairing-tokens/{token}", a.requireAuth(a.handleGetPairingToken))
+
 	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions", a.requireAuth(a.handleActivateSession))
 	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions", a.requireAuth(a.handleListSessions))
 	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions/{id}", a.requireAuth(a.handleGetSession))

@@ -15,7 +15,7 @@
 | `pkg/account/` | Account/auth model & primitives (M7) | **custom** |
 | `pkg/engine/`, `pkg/matching/`, `pkg/mcp/`, `pkg/proxy/`, `pkg/recording/`, `pkg/requestlog/`, `pkg/graphql/`, `pkg/mqtt/`, `pkg/websocket/`, `pkg/sse/`, `pkg/chaos/`, `pkg/stateful/`, `pkg/tunnel/`, `pkg/soap/`, `pkg/portability/`, `internal/*` … | mockd features (matching, store, engine, protocols) | upstream |
 | `web/mocknetpack/` | Web UI (see [web KB](../web/knowledgebase/overview.md)) | **custom** |
-| `openapi/mocknetpack.yaml` | `/api/v1` contract v0.7.0 | **custom** |
+| `openapi/mocknetpack.yaml` | `/api/v1` contract v0.8.0 (M9: `/pairing-tokens`, register `pairingToken`/`deviceName`, `403 pairing_token_invalid`) | **custom** |
 | `docs/` | Upstream mockd docs site (Astro) | upstream |
 | `tests/`, `benchmarks/`, `charts/`, `observability/`, `schema/`, `contrib/`, `bin/` | Upstream auxiliary material | upstream |
 | `README.md`, `ARCHITECTURE.md`, `CLAUDE.md`, `CHANGELOG.md`, `LICENSE`, `NOTICE`, `SECURITY.md`, `MAINTAINERS.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md` | Upstream docs/license | upstream (README head documents the fork) |
@@ -34,13 +34,13 @@
 
 | File | Contents |
 |---|---|
-| `capture_registry.go` | Core shell: `CaptureConfig` + `DefaultCaptureConfig`, `CaptureManager` struct + `NewCaptureManager`, `SetLogger`/`Config`/`ServerConfig`, store error vars, `MockRuleConflictMessage` |
-| `device_registry.go` | Device lifecycle: `CreateManualDevice`, `RegisterDevice`, `Heartbeat`, `ListDevices`, `GetDevice`, `UpdateDeviceName`, `DeleteDevice` |
-| `session_registry.go` | Session lifecycle + viewer leases + health check: `ActivateSession`, `EndSession`, `ListSessions`, `GetSession`, `RegisterViewer`/`ReleaseViewer`, `StartHealthCheck`/`Stop`, `activeSessionFor`, `activeStatus` |
+| `capture_registry.go` | Core shell: `CaptureConfig` + `DefaultCaptureConfig`, `CaptureManager` struct + `NewCaptureManager` (+ `pairingTokens` store, M9), `SetLogger`/`Config`/`ServerConfig`, store error vars (`ErrPairingTokenInvalid` M9), `MockRuleConflictMessage`, `CreatePairingToken`/`ValidatePairingToken`/`PurgeExpiredPairingTokens` |
+| `device_registry.go` | Device lifecycle: `CreateManualDevice`, `RegisterDevice`, `RegisterDeviceWithPairing` (M9/D7: token auto-create, idempotent reuse, owner fill-if-empty, name never overwritten, `defaultDeviceName`), `Heartbeat`, `ListDevices`, `GetDevice`, `UpdateDeviceName`, `DeleteDevice` |
+| `session_registry.go` | Session lifecycle + viewer leases + health check: `ActivateSession`, `EndSession`, `ListSessions`, `GetSession`, `RegisterViewer`/`ReleaseViewer`, `StartHealthCheck`/`Stop` (hourly janitor includes pairing-token purge, M9), `activeSessionFor`, `activeStatus` |
 | `traffic_registry.go` | Session-scoped traffic + retained store: `UploadTraffic`, `ListSessionTraffic`, `GetTraffic(WithOwner)`, `DeleteTraffic`, `ClearSessionTraffic`, `PurgeExpiredRetainedTraffic`, `retainedSession` |
 | `rule_registry.go` | Mock rules: CRUD, `evaluateRules` (Effective/conflict), `RuleVersion`, `ListActiveMockRules`, `PurgeExpiredRules`, `disableDeviceRules`, `interfaceKey` |
 | `share_registry.go` | Request share snapshots (M8.5): `ShareTTL`, `ShareSnapshot`, `CreateShare`, `GetShare` |
-| `interfaces.go` | `DeviceStore`, `CaptureSessionStore`, `MockRuleStore`, `UserStore`, `AuthSessionStore` (+ upstream interfaces) |
+| `interfaces.go` | `DeviceStore`, `CaptureSessionStore`, `MockRuleStore`, `UserStore`, `AuthSessionStore`, `PairingTokenStore` (M9) (+ upstream interfaces) |
 | `store.go` | Upstream store plumbing (errors, helpers) — shared with upstream |
 | `engine_registry.go` | Upstream engine registry (baseline, rarely touched) |
 
@@ -51,6 +51,7 @@
 | `store.go` | File-backed `Store` core (data dir, file layout) |
 | `capture_store.go` | `CaptureFileStore`: devices + capture sessions persistence |
 | `mock_rule_store.go` | `MockRuleFileStore`: rules + rule version (per app/did) |
+| `pairing_token_store.go` | `PairingTokenFileStore`: pairing tokens (M9, file persistence, aligned with auth sessions) |
 | `account_store.go` | `AccountFileStore`: users + auth sessions |
 | `mock_store.go`, `other.go`, `workspaces.go`, `stateful_resource_store.go`, `custom_operation_store.go` | Upstream stores |
 
@@ -59,6 +60,7 @@
 | File | Contents |
 |---|---|
 | `account.go` | `Role` (admin/dev), `User`, `AuthSession`, `HashPassword`/`VerifyPassword` (PBKDF2-SHA256), `NewToken` |
+| `pairing.go` | `PairingToken{Token,User,App,CreatedAt,ExpiresAt}` + `Valid(now)` (M9) |
 | `account_test.go` | Tests |
 
 ### `pkg/admin/` — MockNetPack files
@@ -66,10 +68,16 @@
 | File | Contents |
 |---|---|
 | `capture_handlers.go` | Shared contract schemas + helpers: `captureAPIPrefix = "/api/v1"`, all request/response types, `allowedApps`, `queryInt`, `writeCaptureError` |
-| `device_handlers.go` | Device API: `handleCreateDevice`, `handleRegisterDevice`, `handleDeviceHeartbeat` (+ `idleHeartbeatConfig`/`capturingHeartbeatConfig`/`heartbeatConfigForSession`), `handleListDevices`, `handleGetDevice`, `handleUpdateDeviceName`, `handleDeleteDevice` |
+| `device_handlers.go` | Device API: `handleCreateDevice`, `handleRegisterDevice` (+ M9 pairingToken/deviceName branch → `RegisterDeviceWithPairing`), `handleDeviceHeartbeat` (+ `idleHeartbeatConfig`/`capturingHeartbeatConfig`/`heartbeatConfigForSession`), `handleListDevices`, `handleGetDevice`, `handleUpdateDeviceName`, `handleDeleteDevice` |
 | `traffic_handlers.go` | Session/traffic/share API: `handleActivateSession`, `handleListSessions`, `handleGetSession`, `handleEndSession`, `handleRegisterViewer`/`handleReleaseViewer`, `handleUploadTraffic`, `handleGetTraffic`, `handleListSessionTraffic`, `handleDeleteTraffic`, `handleClearSessionTraffic`, `handleCreateShare`/`handleGetShare` |
 | `mock_rule_handlers.go` | Rule CRUD handlers + `validateMockRuleInput` |
 | `auth_handlers.go` | `handleAuthRegister/Login/Logout/Me`, `CreateAdminUser`, `bearerToken`, `validateCredentials` |
+| `pairing_handlers.go` | M9 pairing-token API: `handleCreatePairingToken` (POST /pairing-tokens, requireAuth, `CreatePairingTokenRequest/Response`) |
+- `pkg/admin/local_address.go`（M9.1-fix v0.8.1）：`GET /api/v1/local-address`——局域网可达 origin（lanIPv4 RFC1918 优先 + requestOrigin 保留请求 Host 端口，503 lan_unavailable）；Web localhost 场景组装二维码用
+- `pkg/account/pairing.go`（v0.8.2）：`PairingToken` 增 `PairedDevices`（配对注册登记 did，D5 可复用累加）；`PairingUse` 类型
+- `pkg/admin/pairing_handlers.go`（v0.8.2）：`GET /api/v1/pairing-tokens/{token}`（requireAuth）——令牌状态 + 已配对设备（name 实时从设备表读）；Web 扫码完成轮询用
+- `pkg/store/file/pairing_token_store.go`（v0.8.2）：`RecordPairingUse`（追加 did、去重、锁 + markDirty）
+- `pkg/capture/types.go` / `pkg/admin/capture_handlers.go` / `pkg/admin/device_handlers.go` / `pkg/store/device_registry.go`（v0.9.0）：设备注册与模型增 `AppName`（SDK 上报 CFBundleDisplayName，如 IntegratingApp；≤64；两个 upsert 均按元数据刷新，D7 不改名不换 owner）
 | `auth_middleware.go` | `requireAuth`, `requireRole`, `currentUser`, `ownsDevice`, `authorizeDeviceAccess`, `authorizeSessionAccess`, `isAdmin` |
 | `mocknetpack_web.go` | Static serving of `web/mocknetpack` under `/mocknetpack/` |
 | `routes.go` | `registerRoutes` — full route table (capture section at the bottom) |

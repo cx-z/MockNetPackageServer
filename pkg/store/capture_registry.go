@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getmockd/mockd/pkg/account"
 	"github.com/getmockd/mockd/pkg/capture"
 )
 
@@ -32,6 +33,10 @@ var (
 	// created from a capture ("Mock 此请求") have no note and must be enableable
 	// without forcing an edit (M7).
 	ErrNoteRequired = errors.New("mock rule note is required when editing the canned response")
+	// ErrPairingTokenInvalid means the presented QR pairing token does not
+	// exist, has expired, or is bound to a different app (M9; maps to HTTP 403
+	// pairing_token_invalid — the SDK surfaces "二维码已过期，请刷新").
+	ErrPairingTokenInvalid = errors.New("pairing token invalid or expired")
 )
 
 // MockRuleConflictMessage is the fixed popup message Web shows when an interface
@@ -82,8 +87,11 @@ type CaptureManager struct {
 	devices  DeviceStore
 	sessions CaptureSessionStore
 	rules    MockRuleStore
-	cfg      CaptureConfig
-	log      *slog.Logger
+	// pairingTokens persists QR pairing tokens (M9): short-lived credentials
+	// that let a scanned SDK register a device under the issuing user.
+	pairingTokens PairingTokenStore
+	cfg           CaptureConfig
+	log           *slog.Logger
 
 	// viewerMu guards the runtime viewer leases, keyed by session ID.
 	viewerMu sync.RWMutex
@@ -117,7 +125,7 @@ type CaptureManager struct {
 }
 
 // NewCaptureManager creates a capture manager backed by the given stores.
-func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules MockRuleStore, cfg CaptureConfig) *CaptureManager {
+func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules MockRuleStore, pairingTokens PairingTokenStore, cfg CaptureConfig) *CaptureManager {
 	if cfg.HeartbeatTimeout <= 0 {
 		cfg.HeartbeatTimeout = DefaultCaptureConfig().HeartbeatTimeout
 	}
@@ -134,16 +142,17 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules 
 		cfg.RetainedTrafficTTL = DefaultCaptureConfig().RetainedTrafficTTL
 	}
 	return &CaptureManager{
-		devices:  devices,
-		sessions: sessions,
-		rules:    rules,
-		cfg:      cfg,
-		log:      slog.Default(),
-		viewers:  make(map[string]map[string]capture.ViewerLease),
-		traffic:  make(map[string][]*capture.TrafficEntry),
-		retained: make(map[string]*retainedSession),
-		shares:   make(map[string]*ShareSnapshot),
-		stopCh:   make(chan struct{}),
+		devices:       devices,
+		sessions:      sessions,
+		rules:         rules,
+		pairingTokens: pairingTokens,
+		cfg:           cfg,
+		log:           slog.Default(),
+		viewers:       make(map[string]map[string]capture.ViewerLease),
+		traffic:       make(map[string][]*capture.TrafficEntry),
+		retained:      make(map[string]*retainedSession),
+		shares:        make(map[string]*ShareSnapshot),
+		stopCh:        make(chan struct{}),
 	}
 }
 
@@ -165,5 +174,81 @@ func (m *CaptureManager) ServerConfig() capture.ServerConfig {
 	return capture.ServerConfig{
 		HeartbeatIntervalSeconds: int(m.cfg.HeartbeatInterval.Seconds()),
 		HeartbeatTimeoutSeconds:  int(m.cfg.HeartbeatTimeout.Seconds()),
+	}
+}
+
+// ============================================================================
+// QR pairing tokens (M9, contract v0.8.0)
+// ============================================================================
+
+// pairingTokenTTL is how long a QR pairing token stays valid (10 minutes,
+// D5): one QR can onboard several devices within the window.
+const pairingTokenTTL = 10 * time.Minute
+
+// CreatePairingToken issues a new pairing token for the given user and app.
+// The same (user, app) may be issued repeatedly; earlier tokens remain valid
+// until their TTL (reusable, D5 — validation never consumes a token).
+func (m *CaptureManager) CreatePairingToken(ctx context.Context, user, app string) (*account.PairingToken, error) {
+	token, err := account.NewToken()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	p := &account.PairingToken{
+		Token:     token,
+		User:      user,
+		App:       app,
+		CreatedAt: now,
+		ExpiresAt: now.Add(pairingTokenTTL),
+	}
+	if err := m.pairingTokens.Create(ctx, p); err != nil {
+		return nil, err
+	}
+	out := *p
+	return &out, nil
+}
+
+// ValidatePairingToken resolves a pairing token and checks it is still valid
+// and bound to the given app. Unknown, expired, or app-mismatched tokens map
+// to ErrPairingTokenInvalid (handler surfaces 403 pairing_token_invalid, so
+// the SDK can tell the user the QR code has expired).
+func (m *CaptureManager) ValidatePairingToken(ctx context.Context, token, app string) (*account.PairingToken, error) {
+	p, err := m.pairingTokens.GetByToken(ctx, token)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrPairingTokenInvalid
+		}
+		return nil, err
+	}
+	if !p.Valid(time.Now()) || p.App != app {
+		return nil, ErrPairingTokenInvalid
+	}
+	out := *p
+	return &out, nil
+}
+
+// PurgeExpiredPairingTokens deletes every pairing token expired before now
+// (hourly janitor; expired tokens are also rejected at validation time, so
+// this is housekeeping only).
+func (m *CaptureManager) PurgeExpiredPairingTokens(ctx context.Context) {
+	if _, err := m.pairingTokens.DeleteExpired(ctx, time.Now()); err != nil {
+		m.log.Warn("capture health check: purge expired pairing tokens failed", "error", err)
+	}
+}
+
+// GetPairingToken returns a token by value without validating expiry/app
+// (used by the Web status poll: expired tokens must still report their
+// paired devices so the UI can finish the naming flow).
+func (m *CaptureManager) GetPairingToken(ctx context.Context, token string) (*account.PairingToken, error) {
+	return m.pairingTokens.GetByToken(ctx, token)
+}
+
+// RecordPairingUse appends a did to a token's paired-device list so the Web
+// can detect that the QR was scanned (M9.3-fix). The register handler calls
+// this after a successful pairing registration; failures are logged and do
+// not fail the registration (status tracking is best-effort).
+func (m *CaptureManager) RecordPairingUse(ctx context.Context, token, did string) {
+	if err := m.pairingTokens.RecordPairingUse(ctx, token, did, time.Now()); err != nil {
+		m.log.Warn("capture: record pairing use failed", "error", err, "token_prefix", token[:min(8, len(token))])
 	}
 }

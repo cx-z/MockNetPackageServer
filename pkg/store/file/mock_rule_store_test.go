@@ -317,7 +317,7 @@ func TestMockRule_Janitor_PurgesExpired(t *testing.T) {
 	fs := newTestStore(t)
 	cfg := store.DefaultCaptureConfig()
 	cfg.MockRuleRetention = 50 * time.Millisecond
-	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), cfg)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), cfg)
 	t.Cleanup(m.Stop)
 	ctx := context.Background()
 

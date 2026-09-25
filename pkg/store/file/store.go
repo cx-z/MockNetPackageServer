@@ -79,6 +79,10 @@ type storeData struct {
 	// the token expires or is revoked.
 	Users        []*account.User        `json:"users,omitempty"`
 	AuthSessions []*account.AuthSession `json:"authSessions,omitempty"`
+
+	// MockNetPack QR pairing tokens (M9, contract v0.8.0). Tokens persist so a
+	// just-scanned QR survives a server restart until its 10-minute TTL expires.
+	PairingTokens []*account.PairingToken `json:"pairingTokens,omitempty"`
 }
 
 // New creates a new FileStore with the given configuration.
@@ -349,6 +353,11 @@ func (s *FileStore) Users() store.UserStore {
 // AuthSessions returns the auth session store (MockNetPack M7.1).
 func (s *FileStore) AuthSessions() store.AuthSessionStore {
 	return &authSessionStore{fs: s}
+}
+
+// PairingTokens returns the QR pairing token store (MockNetPack M9).
+func (s *FileStore) PairingTokens() store.PairingTokenStore {
+	return &pairingTokenStore{fs: s}
 }
 
 // Begin starts a transaction (snapshot-based for file store).

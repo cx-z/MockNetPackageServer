@@ -22,8 +22,11 @@ h1 { font-size: 20px; font-weight: 600; }
 .dot.capturing { background: var(--capturing); box-shadow: 0 0 0 3px rgba(47,158,68,.15); }
 .dot.offline { background: var(--offline); }
 .meta { flex: 1; min-width: 0; }
-.app { font-weight: 600; font-size: 15px; }
+.name { font-weight: 600; font-size: 15px; }
 .did { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+.did .k { color: var(--text); background: #eef1f7; border-radius: 4px; padding: 0 5px; margin-right: 6px; font-size: 10px; font-weight: 600; letter-spacing: .5px; vertical-align: 1px; }
+.app-badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
+             font-family: ui-monospace, Menlo, monospace; background: #eef1f7; color: #4a5568; }
 .row2 { margin-top: 4px; font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
 .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
 .badge.idle { background: #f0f1f3; color: var(--idle); }
@@ -273,6 +276,9 @@ button.mini.active { background: var(--primary); color: #fff; }
 .modal-card h3 { margin: 0 0 12px; font-size: 16px; }
 .form-label { display: block; font-size: 12px; color: #666; margin: 10px 0 4px; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+/* M9.3 扫码连接二维码容器 */
+.scan-qr-box { display: flex; justify-content: center; align-items: center; min-height: 232px; margin: 14px 0 6px; }
+.scan-qr-box canvas { display: block; }
 .rename-btn { background: none; border: none; cursor: pointer; font-size: 12px; padding: 0 2px; }
 .stats { display: flex; align-items: center; justify-content: space-between; }
 .toolbar { display: flex; justify-content: flex-end; margin-bottom: 6px; }

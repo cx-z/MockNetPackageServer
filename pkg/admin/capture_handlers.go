@@ -21,7 +21,8 @@ const captureAPIPrefix = "/api/v1"
 // Request / response types (contract schemas)
 // ============================================================================
 
-// RegisterDeviceRequest is the SDK registration payload (contract schema).
+// RegisterDeviceRequest is the SDK registration payload (contract schema,
+// M9/v0.8.0 adds optional pairingToken + deviceName for QR auto-registration).
 type RegisterDeviceRequest struct {
 	App        string           `json:"app"`
 	Did        string           `json:"did"`
@@ -29,6 +30,16 @@ type RegisterDeviceRequest struct {
 	OSVersion  string           `json:"osVersion,omitempty"`
 	SDKVersion string           `json:"sdkVersion,omitempty"`
 	AppVersion string           `json:"appVersion,omitempty"`
+	// AppName is the app display name reported by the SDK (CFBundleDisplayName,
+	// e.g. "IntegratingApp"; v0.9.0). Optional; Web falls back to app (bundle id).
+	AppName string `json:"appName,omitempty"`
+	// PairingToken is the QR pairing token from the scanned code (M9): when
+	// present and valid, an unknown (app, did) is auto-registered under the
+	// token's user instead of rejected with 404.
+	PairingToken string `json:"pairingToken,omitempty"`
+	// DeviceName is the optional display name for a device created via the
+	// pairing flow (fallback: platform + did prefix).
+	DeviceName string `json:"deviceName,omitempty"`
 }
 
 // CreateDeviceRequest is the Web manual-registration payload (M7.2.1): pick an
@@ -148,6 +159,8 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "rule_conflict", store.MockRuleConflictMessage)
 	case errors.Is(err, store.ErrNoteRequired):
 		writeError(w, http.StatusBadRequest, "missing_field", "note is required when editing the canned response")
+	case errors.Is(err, store.ErrPairingTokenInvalid):
+		writeError(w, http.StatusForbidden, "pairing_token_invalid", "Pairing token is invalid or expired")
 	case errors.Is(err, store.ErrAlreadyExists):
 		writeError(w, http.StatusConflict, "already_exists", "Resource already exists")
 	case errors.Is(err, store.ErrReadOnly):

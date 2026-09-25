@@ -6,7 +6,7 @@
 
 ```
 index.html loads → app.js boot()
-  → wire auth forms + logout + add-device modal
+  → wire auth forms + logout + add-device modal + scan-connect modal (M9.3)
   → hash route?
       #/share/{id}  → shareViewActive = true; renderShareView(id); return   (no auth)
       else          → token in localStorage?

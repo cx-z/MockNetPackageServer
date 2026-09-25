@@ -135,12 +135,25 @@ boot();
   });
 })();
 
-// M7.2.2: wire add-device modal buttons
+// M9.3: wire scan-connect modal buttons（签发/刷新/关闭）
 (function () {
-  const addBtn = document.getElementById("addDeviceBtn");
-  if (addBtn) addBtn.onclick = openAddDeviceModal;
-  const cancel = document.getElementById("addDeviceCancel");
-  if (cancel) cancel.onclick = closeAddDeviceModal;
-  const form = document.getElementById("addDeviceForm");
-  if (form) form.onsubmit = submitAddDevice;
+  const openBtn = document.getElementById("scanConnectBtn");
+  if (openBtn) openBtn.onclick = openScanConnectModal;
+  const refresh = document.getElementById("scanConnectRefresh");
+  if (refresh) refresh.onclick = () => {
+    const app = $("addApp").value || "com.example.integrating";
+    issueScanToken(app);
+  };
+  const cancel = document.getElementById("scanConnectCancel");
+  if (cancel) cancel.onclick = closeScanConnectModal;
+})();
+
+// M9.3-fix (v0.8.2): wire device-naming modal（保存 + 回车提交）
+(function () {
+  const submit = document.getElementById("deviceNameSubmit");
+  if (submit) submit.onclick = submitDeviceName;
+  const input = document.getElementById("deviceNameInput");
+  if (input) input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") submitDeviceName();
+  });
 })();

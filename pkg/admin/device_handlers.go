@@ -73,6 +73,11 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 		writeJSONDecodeError(w, err, a.logger())
 		return
 	}
+	req.App = strings.TrimSpace(req.App)
+	req.Did = strings.TrimSpace(req.Did)
+	req.PairingToken = strings.TrimSpace(req.PairingToken)
+	req.DeviceName = strings.TrimSpace(req.DeviceName)
+	req.AppName = strings.TrimSpace(req.AppName)
 	if req.App == "" {
 		writeError(w, http.StatusBadRequest, "missing_app", "app is required")
 		return
@@ -81,30 +86,51 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_did", "did is required")
 		return
 	}
-	if len(req.App) > 128 || len(req.Did) > 128 {
-		writeError(w, http.StatusBadRequest, "invalid_field", "app and did must be at most 128 characters")
+	if len(req.App) > 128 || len(req.Did) > 128 || len(req.PairingToken) > 128 || len(req.DeviceName) > 64 || len(req.AppName) > 64 {
+		writeError(w, http.StatusBadRequest, "invalid_field", "app/did/pairingToken <=128 chars, deviceName/appName <=64 chars")
 		return
 	}
 
-	// M7.2.3: SDK auto-registration is retired. A device must already exist
-	// (created manually in the Web UI). An unknown did gets a technical 404 —
-	// no user-facing "please register in Web" copy here; that guidance belongs
-	// to the Web UI, not the debug SDK channel.
-	if _, err := a.captureManager.GetDevice(r.Context(), req.App, req.Did); err != nil {
-		writeCaptureError(w, err)
-		return
-	}
 	d := &capture.Device{
 		App:        req.App,
+		AppName:    req.AppName,
 		Did:        req.Did,
+		Name:       req.DeviceName,
 		Platform:   req.Platform,
 		OSVersion:  req.OSVersion,
 		SDKVersion: req.SDKVersion,
 		AppVersion: req.AppVersion,
 	}
-	if _, err := a.captureManager.RegisterDevice(r.Context(), d); err != nil {
-		writeCaptureError(w, err)
-		return
+
+	if req.PairingToken != "" {
+		// M9 (v0.8.0): QR pairing flow. A valid token unlocks auto-registration:
+		// unknown (app, did) is created under the token's user (D1), and an
+		// existing record is reused without duplication (D7).
+		tok, err := a.captureManager.ValidatePairingToken(r.Context(), req.PairingToken, req.App)
+		if err != nil {
+			writeCaptureError(w, err)
+			return
+		}
+		if _, err := a.captureManager.RegisterDeviceWithPairing(r.Context(), d, tok.User); err != nil {
+			writeCaptureError(w, err)
+			return
+		}
+		// M9.3-fix (v0.8.2): record the registration on the token so the Web
+		// can detect scan completion and auto-close the QR modal. Best-effort.
+		a.captureManager.RecordPairingUse(r.Context(), req.PairingToken, req.Did)
+	} else {
+		// M7.2.3: SDK auto-registration is retired. A device must already exist
+		// (created manually in the Web UI). An unknown did gets a technical 404 —
+		// no user-facing "please register in Web" copy here; that guidance belongs
+		// to the Web UI, not the debug SDK channel.
+		if _, err := a.captureManager.GetDevice(r.Context(), req.App, req.Did); err != nil {
+			writeCaptureError(w, err)
+			return
+		}
+		if _, err := a.captureManager.RegisterDevice(r.Context(), d); err != nil {
+			writeCaptureError(w, err)
+			return
+		}
 	}
 
 	view, err := a.captureManager.GetDevice(r.Context(), req.App, req.Did)

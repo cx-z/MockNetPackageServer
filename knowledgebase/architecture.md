@@ -54,7 +54,7 @@ pkg/capture (models) ◄── pkg/store.CaptureManager ◄── pkg/store inte
 | Account | `pkg/account/account.go` | `User`, `Role`, `AuthSession`, PBKDF2-SHA256 hashing, `NewToken` |
 | HTTP (custom) | `pkg/admin/{capture_handlers,device_handlers,traffic_handlers,auth_handlers,auth_middleware,mock_rule_handlers,mocknetpack_web}.go` + `routes.go` + `api.go` | `/api/v1` handlers, auth gate, ownership filtering, static web serving |
 | HTTP (upstream) | rest of `pkg/admin/*.go` | mockd native admin API (mocks, workspaces, engines, proxy, recording, chaos, …) |
-| Contract | `openapi/mocknetpack.yaml` | `/api/v1` schemas + paths (v0.7.0) |
+| Contract | `openapi/mocknetpack.yaml` | `/api/v1` schemas + paths (v0.8.0; M9 adds `/pairing-tokens`, register `pairingToken`/`deviceName`, `403 pairing_token_invalid`) |
 
 ## Domain flows
 
@@ -66,11 +66,21 @@ Web manual registration (only creation path, M7.2+)
     → allowedApps check (catalog) → owner = current user
     → CaptureManager.CreateManualDevice (no upsert; (App,did) conflict ⇒ 409 device_taken)
 
-SDK register (metadata refresh only; does NOT create)
+SDK register (metadata refresh only; pairingToken enables auto-create)
   POST /api/v1/devices/register                     [open]
-    → GetDevice first: unknown (app,did) ⇒ 404 device_not_registered (M7.2.3)
-    → RegisterDevice (upsert metadata, LastSeenAt=now)
+    body {app, did, pairingToken?, deviceName?}
+    no token  → GetDevice first: unknown (app,did) ⇒ 404 device_not_registered (M7.2.3)
+    with token→ ValidatePairingToken(token, app): expired/invalid ⇒ 403 pairing_token_invalid
+                RegisterDeviceWithPairing (M9/D1+D7): unknown ⇒ create (owner=token user,
+                name=deviceName ?? "platform·did[:12]"); known ⇒ reuse — owner only filled if
+                empty, name never overwritten, refresh OS/SDK/version/platform/LastSeenAt
     → returns DeviceView + ServerConfig (idle heartbeat interval 5s)
+
+Pairing token issue (M9, QR 扫码即注册)
+  POST /api/v1/pairing-tokens {app}                 [requireAuth]
+    → allowedApps check → token TTL 10min (pairingTokenTTL), owner = current user
+    → returns {token, app, expiresAt}; same token reusable for multiple devices (D5)
+    → hourly janitor purges expired tokens (aligned with health check)
 
 SDK heartbeat (keep-alive + session-state channel)
   POST /api/v1/devices/{app}/{did}/heartbeat        [open]

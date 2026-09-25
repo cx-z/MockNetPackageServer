@@ -28,7 +28,7 @@ function render(devices) {
   $("stats").textContent = `共 ${devices.length} 台设备 · ${online} 台在线 · 点击设备查看请求流`;
 
   if (devices.length === 0) {
-    $("list").innerHTML = '<div class="empty">暂无设备。点击右上角「＋ 注册设备」手动添加一台。</div>';
+    $("list").innerHTML = '<div class="empty">暂无设备。点击右上角「扫码连接」让手机 App 扫码接入。</div>';
     return;
   }
 
@@ -48,11 +48,12 @@ function render(devices) {
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.innerHTML =
-      '<div class="app">' + esc(d.name || d.app) +
+      '<div class="name">' + esc(d.name || d.app) +
         ' <button class="link-btn rename-btn" type="button" title="重命名">✏️</button>' +
       '</div>' +
-      '<div class="did">' + esc(shortId(d.did)) + "</div>" +
+      '<div class="did"><span class="k">DID</span>' + esc(d.did) + "</div>" +
       '<div class="row2">' +
+        '<span class="app-badge" title="App 标识（' + esc(d.app) + '）">' + esc(d.appName || d.app) + "</span>" +
         '<span class="badge ' + st.cls + '">' + st.label + "</span>" +
         '<span>最后活跃：' + relTime(d.lastSeenAt) + "</span>" +
         (d.currentSession ? '<span>会话：' + esc(shortId(d.currentSession.id)) + "</span>" : "") +
@@ -175,42 +176,4 @@ async function renameDevice(d) {
   }
 }
 
-function openAddDeviceModal() {
-  $("addDeviceError").classList.add("hidden");
-  $("addDid").value = "";
-  $("addName").value = "";
-  $("addDeviceModal").classList.remove("hidden");
-  $("addDid").focus();
-}
-function closeAddDeviceModal() {
-  $("addDeviceModal").classList.add("hidden");
-}
 
-async function submitAddDevice(ev) {
-  ev.preventDefault();
-  $("addDeviceError").classList.add("hidden");
-  const app = $("addApp").value;
-  const did = $("addDid").value.trim();
-  const name = $("addName").value.trim();
-  if (!did || !name) {
-    $("addDeviceError").textContent = "did 与名称均为必填";
-    $("addDeviceError").classList.remove("hidden");
-    return;
-  }
-  try {
-    const res = await apiFetch("/devices", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ app, did, name }),
-    });
-    if (!res.ok) {
-      const e = await res.json().catch(() => ({}));
-      throw new Error(e.error || ("HTTP " + res.status));
-    }
-    closeAddDeviceModal();
-    await loadDevices();
-  } catch (err) {
-    $("addDeviceError").textContent = "注册失败：" + err.message;
-    $("addDeviceError").classList.remove("hidden");
-  }
-}

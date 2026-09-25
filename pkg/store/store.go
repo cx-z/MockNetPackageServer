@@ -196,6 +196,9 @@ type Store interface {
 	Users() UserStore
 	AuthSessions() AuthSessionStore
 
+	// MockNetPack QR pairing tokens (M9, contract v0.8.0)
+	PairingTokens() PairingTokenStore
+
 	// Transactions (for backends that support it)
 	Begin(ctx context.Context) (Transaction, error)
 
