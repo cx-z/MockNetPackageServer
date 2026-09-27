@@ -11,6 +11,9 @@ async function openDetail(app, did) {
 }
 
 async function enterDetail(app, did) {
+  // 4.5：以 detail 为单一事实源——进入新详情前先释放上一会话的 viewer，
+  // 避免 A→B 直跳后 A 会话的续租定时器继续运行、服务端永不超时结束会话。
+  if (detail && detail.sessionId) stopViewer(detail.sessionId);
   detail = { app, did, sessionId: null };
   pageLog = [];   // M9.4：进入设备详情（含跨设备跳转）即重新开始页面日志
   $("listView").classList.add("hidden");

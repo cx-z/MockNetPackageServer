@@ -83,6 +83,11 @@ type storeData struct {
 	// MockNetPack QR pairing tokens (M9, contract v0.8.0). Tokens persist so a
 	// just-scanned QR survives a server restart until its 10-minute TTL expires.
 	PairingTokens []*account.PairingToken `json:"pairingTokens,omitempty"`
+
+	// MockNetPack request share snapshots (M8.5). Shares are independent
+	// read-only copies of a single traffic entry; they persist so a share link
+	// keeps its full 7-day validity across server restarts.
+	Shares []*store.ShareSnapshot `json:"shares,omitempty"`
 }
 
 // New creates a new FileStore with the given configuration.
@@ -220,7 +225,11 @@ func (s *FileStore) doSave() error {
 		return err
 	}
 
-	// Atomic write: write to temp file, then rename
+	// Atomic write: write to temp file, fsync it, then rename, then fsync the
+	// directory so the rename itself survives a crash. Without the fsyncs a
+	// power loss right after the rename can leave a zero-length or missing
+	// data.json (the rename is durable only after the directory entry is
+	// flushed).
 	dataFile := filepath.Join(s.cfg.DataDir, "data.json")
 	tmpFile := dataFile + ".tmp"
 
@@ -232,14 +241,39 @@ func (s *FileStore) doSave() error {
 	if err := os.WriteFile(tmpFile, data, 0600); err != nil {
 		return err
 	}
-
+	if err := syncFile(tmpFile); err != nil {
+		_ = os.Remove(tmpFile)
+		return err
+	}
 	if err := os.Rename(tmpFile, dataFile); err != nil {
 		_ = os.Remove(tmpFile) // Clean up temp file on failure
 		return err
 	}
+	syncDir(s.cfg.DataDir)
 
 	s.dirty.Store(false)
 	return nil
+}
+
+// syncFile flushes a file's contents to stable storage (fsync).
+func syncFile(path string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+// syncDir flushes a directory entry (best-effort: on platforms without
+// directory fsync this is a no-op).
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	defer d.Close()
+	_ = d.Sync()
 }
 
 // markDirty marks data as needing to be saved (thread-safe).
@@ -358,6 +392,11 @@ func (s *FileStore) AuthSessions() store.AuthSessionStore {
 // PairingTokens returns the QR pairing token store (MockNetPack M9).
 func (s *FileStore) PairingTokens() store.PairingTokenStore {
 	return &pairingTokenStore{fs: s}
+}
+
+// Shares returns the request share snapshot store (MockNetPack M8.5).
+func (s *FileStore) Shares() store.ShareStore {
+	return &shareStore{fs: s}
 }
 
 // Begin starts a transaction (snapshot-based for file store).

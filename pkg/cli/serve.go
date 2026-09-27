@@ -817,6 +817,9 @@ func startServers(sctx *serveContext) error {
 	if f.noAuth {
 		adminOpts = append(adminOpts, admin.WithAPIKeyDisabled())
 	}
+	if f.noPersist {
+		adminOpts = append(adminOpts, admin.WithNoPersist())
+	}
 	if f.dataDir != "" {
 		adminOpts = append(adminOpts, admin.WithDataDir(f.dataDir))
 	}

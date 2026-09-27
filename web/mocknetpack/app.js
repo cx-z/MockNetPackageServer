@@ -26,6 +26,8 @@ window.addEventListener("hashchange", () => {
   }
   const sm = location.hash.match(/^#\/share\/(.+)$/);
   if (sm) {
+    // 4.5：切到分享视图同样释放当前详情页的 viewer（detail 为单一事实源）。
+    if (detail && detail.sessionId) stopViewer(detail.sessionId);
     renderShareView(sm[1]);
     return;
   }

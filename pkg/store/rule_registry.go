@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"strings"
 	"time"
@@ -23,26 +22,6 @@ import (
 type interfaceKey struct {
 	method string
 	path   string
-}
-
-// enabledOnInterface returns the rules of (app, did) that are enabled and match
-// (method, path), excluding excludeID (used when the rule being edited is the
-// existing row).
-func (m *CaptureManager) enabledOnInterface(ctx context.Context, app, did, method, path, excludeID string) ([]*capture.MockRule, error) {
-	all, err := m.rules.List(ctx, &MockRuleFilter{App: app, Did: did})
-	if err != nil {
-		return nil, err
-	}
-	var out []*capture.MockRule
-	for _, r := range all {
-		if r.ID == excludeID {
-			continue
-		}
-		if r.Enabled && r.Method == method && r.Path == path {
-			out = append(out, r)
-		}
-	}
-	return out, nil
 }
 
 // evaluateRules recomputes the runtime Effective flag for every rule of a device
@@ -88,37 +67,36 @@ func (m *CaptureManager) evaluateRules(ctx context.Context, app, did string) ([]
 
 // CreateMockRule persists a new rule. When enabled=true it enforces the
 // single-active rule per interface: if another enabled rule already matches the
-// same Method+Path it returns ErrRuleConflict (409). Every write bumps the
-// device rule-set version.
+// same Method+Path it returns ErrRuleConflict (409). The conflict check, the
+// insert and the rule-set version bump run in ONE store lock (4.9) — no reader
+// can observe the rule without its version.
 func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in *capture.MockRuleInput) (*capture.MockRuleView, int, error) {
 	now := time.Now()
-	if in.Enabled {
-		others, err := m.enabledOnInterface(ctx, app, did, in.Method, in.Path, "")
-		if err != nil {
-			return nil, 0, err
+	var created *capture.MockRule
+	version, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
+		if in.Enabled {
+			for _, r := range rules {
+				if r.Enabled && r.Method == in.Method && r.Path == in.Path {
+					return nil, false, ErrRuleConflict
+				}
+			}
 		}
-		if len(others) > 0 {
-			return nil, 0, ErrRuleConflict
+		created = &capture.MockRule{
+			ID:         id.ULID(),
+			App:        app,
+			Did:        did,
+			Method:     in.Method,
+			Path:       in.Path,
+			Response:   in.Response,
+			Enabled:    in.Enabled,
+			Note:       in.Note,
+			Source:     in.Source,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			LastUsedAt: now,
 		}
-	}
-	rule := &capture.MockRule{
-		ID:         id.ULID(),
-		App:        app,
-		Did:        did,
-		Method:     in.Method,
-		Path:       in.Path,
-		Response:   in.Response,
-		Enabled:    in.Enabled,
-		Note:       in.Note,
-		Source:     in.Source,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		LastUsedAt: now,
-	}
-	if err := m.rules.Create(ctx, rule); err != nil {
-		return nil, 0, err
-	}
-	version, err := m.rules.BumpRuleVersion(ctx, app, did)
+		return append(rules, created), true, nil
+	})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -127,11 +105,11 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 		return nil, version, err
 	}
 	for _, v := range views {
-		if v.ID == rule.ID {
+		if v.ID == created.ID {
 			return v, version, nil
 		}
 	}
-	return &capture.MockRuleView{MockRule: rule, Effective: in.Enabled}, version, nil
+	return &capture.MockRuleView{MockRule: created, Effective: in.Enabled}, version, nil
 }
 
 // UpdateMockRule edits a rule's canned response, note, and/or enabled switch
@@ -139,52 +117,61 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 // the input type UpdateMockRuleInput deliberately omits them. Turning the switch
 // on is rejected with ErrRuleConflict if another enabled rule already matches
 // the rule's (frozen) interface. An absent Enabled pointer leaves the current
-// switch untouched. Writes bump the rule-set version and refresh LastUsedAt.
+// switch untouched. The update and the version bump run in ONE store lock (4.9).
 func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID string, in *capture.UpdateMockRuleInput) (*capture.MockRuleView, int, error) {
-	existing, err := m.rules.Get(ctx, ruleID)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, 0, ErrRuleNotFound
+	var updated *capture.MockRule
+	version, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
+		var existing *capture.MockRule
+		for _, r := range rules {
+			if r.ID == ruleID {
+				existing = r
+				break
+			}
 		}
-		return nil, 0, err
-	}
-	if existing.App != app || existing.Did != did {
-		return nil, 0, ErrRuleNotFound
-	}
-
-	// M7: note is required only when the PUT actually edits the canned
-	// response (statusCode/headers/body changed). A pure toggle echoes the
-	// stored response unchanged and may leave the note blank — rules created
-	// from a capture ("Mock 此请求") carry no note and enabling them must not
-	// force an edit.
-	if !reflect.DeepEqual(existing.Response, in.Response) && strings.TrimSpace(in.Note) == "" {
-		return nil, 0, ErrNoteRequired
-	}
-
-	// Enforce single-active on the frozen interface when the edit turns the
-	// rule on (Enabled pointer present and true, while currently off).
-	if in.Enabled != nil && *in.Enabled && !existing.Enabled {
-		others, err := m.enabledOnInterface(ctx, app, did, existing.Method, existing.Path, ruleID)
-		if err != nil {
-			return nil, 0, err
+		if existing == nil {
+			return nil, false, ErrRuleNotFound
 		}
-		if len(others) > 0 {
-			return nil, 0, ErrRuleConflict
-		}
-	}
 
-	existing.Response = in.Response
-	existing.Note = in.Note
-	if in.Enabled != nil {
-		existing.Enabled = *in.Enabled
-	}
-	existing.UpdatedAt = time.Now()
-	// Editing a rule or toggling it counts as "used" (M4 sliding window).
-	existing.LastUsedAt = existing.UpdatedAt
-	if err := m.rules.Update(ctx, existing); err != nil {
-		return nil, 0, err
-	}
-	version, err := m.rules.BumpRuleVersion(ctx, app, did)
+		// M7: note is required only when the PUT actually edits the canned
+		// response (statusCode/headers/body changed). A pure toggle echoes the
+		// stored response unchanged and may leave the note blank — rules created
+		// from a capture ("Mock 此请求") carry no note and enabling them must not
+		// force an edit.
+		if !reflect.DeepEqual(existing.Response, in.Response) && strings.TrimSpace(in.Note) == "" {
+			return nil, false, ErrNoteRequired
+		}
+
+		// Enforce single-active on the frozen interface when the edit turns the
+		// rule on (Enabled pointer present and true, while currently off).
+		if in.Enabled != nil && *in.Enabled && !existing.Enabled {
+			for _, r := range rules {
+				if r.ID != ruleID && r.Enabled && r.Method == existing.Method && r.Path == existing.Path {
+					return nil, false, ErrRuleConflict
+				}
+			}
+		}
+
+		c := *existing
+		c.Response = in.Response
+		c.Note = in.Note
+		if in.Enabled != nil {
+			c.Enabled = *in.Enabled
+		}
+		c.UpdatedAt = time.Now()
+		// Editing a rule or toggling it counts as "used" (M4 sliding window).
+		c.LastUsedAt = c.UpdatedAt
+		updated = &c
+
+		out := make([]*capture.MockRule, 0, len(rules))
+		for _, r := range rules {
+			if r.ID == ruleID {
+				out = append(out, updated)
+			} else {
+				out = append(out, r)
+			}
+		}
+		return out, true, nil
+	})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -200,23 +187,21 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 	return nil, version, ErrRuleNotFound
 }
 
-// DeleteMockRule removes a rule by ID (scoped to app/did). Writes bump the
-// rule-set version so the SDK drops it from its local snapshot.
+// DeleteMockRule removes a rule by ID (scoped to app/did). The delete and the
+// version bump run in ONE store lock (4.9) so the SDK always sees the rule-set
+// version advance together with the removal.
 func (m *CaptureManager) DeleteMockRule(ctx context.Context, app, did, ruleID string) (int, error) {
-	existing, err := m.rules.Get(ctx, ruleID)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return 0, ErrRuleNotFound
+	return m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
+		for i, r := range rules {
+			if r.ID == ruleID {
+				out := make([]*capture.MockRule, 0, len(rules)-1)
+				out = append(out, rules[:i]...)
+				out = append(out, rules[i+1:]...)
+				return out, true, nil
+			}
 		}
-		return 0, err
-	}
-	if existing.App != app || existing.Did != did {
-		return 0, ErrRuleNotFound
-	}
-	if err := m.rules.Delete(ctx, ruleID); err != nil {
-		return 0, err
-	}
-	return m.rules.BumpRuleVersion(ctx, app, did)
+		return nil, false, ErrRuleNotFound
+	})
 }
 
 // ListMockRules returns every rule of the device (Web view, including disabled)
@@ -309,29 +294,26 @@ func (m *CaptureManager) PurgeExpiredRules(ctx context.Context) {
 // disableDeviceRules flips every enabled mock rule of a device off when its
 // capture session ends (M4, F4.5/决策13). Rules are NOT deleted — they remain
 // in the Web rule history — but they are no longer effective; on the next
-// capture session the user must re-enable each one manually. The rule-set
-// version is bumped so the SDK drops them from its local snapshot.
+// capture session the user must re-enable each one manually. The whole disable
+// set and the version bump run in ONE store lock (4.9) so the SDK drops them
+// atomically.
 func (m *CaptureManager) disableDeviceRules(ctx context.Context, app, did string) {
-	all, err := m.rules.List(ctx, &MockRuleFilter{App: app, Did: did})
-	if err != nil {
-		m.log.Warn("session end: list rules to disable failed", "error", err)
-		return
-	}
-	changed := false
-	for _, r := range all {
-		if !r.Enabled {
-			continue
+	if _, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
+		changed := false
+		for i, r := range rules {
+			if !r.Enabled {
+				continue
+			}
+			c := *r
+			c.Enabled = false
+			rules[i] = &c
+			changed = true
 		}
-		r.Enabled = false
-		if err := m.rules.Update(ctx, r); err != nil {
-			m.log.Warn("session end: disable rule failed", "rule", r.ID, "error", err)
-			continue
+		if !changed {
+			return rules, false, nil
 		}
-		changed = true
-	}
-	if changed {
-		if _, err := m.rules.BumpRuleVersion(ctx, app, did); err != nil {
-			m.log.Warn("session end: bump rule version failed", "app", app, "did", did, "error", err)
-		}
+		return rules, true, nil
+	}); err != nil {
+		m.log.Warn("session end: disable rules failed", "app", app, "did", did, "error", err)
 	}
 }

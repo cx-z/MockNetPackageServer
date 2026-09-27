@@ -104,13 +104,34 @@ func (a *API) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 4.16: failure-based lockout (per-username, and per-IP for non-loopback
+	// sources). Checked before the user lookup so throttled callers neither
+	// consume PBKDF2 cost nor get a timing signal about lockout state.
+	ip := clientIP(r)
+	if !a.loginThrottle.allow(req.Username, ip) {
+		writeError(w, http.StatusTooManyRequests, "too_many_attempts",
+			"too many failed login attempts, try again later")
+		return
+	}
+
 	u, err := a.users.GetByUsername(r.Context(), req.Username)
-	if err != nil || !account.VerifyPassword(u.PasswordHash, req.Password) {
+	if err != nil {
+		// 4.16: constant-time decoy — run the same PBKDF2 cost on a dummy hash
+		// so an unknown username takes exactly as long as a known one (no
+		// username-enumeration timing oracle).
+		account.VerifyPassword(account.DummyPasswordHash(), req.Password)
+		a.loginThrottle.recordFailure(req.Username, ip)
 		// Identical 401 for unknown user and wrong password (no user
 		// enumeration, contract: 401 invalid_credentials).
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 		return
 	}
+	if !account.VerifyPassword(u.PasswordHash, req.Password) {
+		a.loginThrottle.recordFailure(req.Username, ip)
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+		return
+	}
+	a.loginThrottle.recordSuccess(req.Username, ip)
 
 	token, err := account.NewToken()
 	if err != nil {

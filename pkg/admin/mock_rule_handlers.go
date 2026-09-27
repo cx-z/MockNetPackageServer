@@ -123,8 +123,8 @@ func (a *API) handleUpdateMockRule(w http.ResponseWriter, r *http.Request) {
 		writeJSONDecodeError(w, err, a.logger())
 		return
 	}
-	if in.Response.StatusCode <= 0 {
-		writeError(w, http.StatusBadRequest, "missing_field", "response.statusCode is required and must be positive")
+	if !validStatusCode(in.Response.StatusCode) {
+		writeError(w, http.StatusBadRequest, "invalid_field", "response.statusCode must be in 100–599")
 		return
 	}
 
@@ -163,9 +163,16 @@ func validateMockRuleInput(w http.ResponseWriter, in *capture.MockRuleInput) boo
 		writeError(w, http.StatusBadRequest, "missing_field", "path is required")
 		return false
 	}
-	if in.Response.StatusCode <= 0 {
-		writeError(w, http.StatusBadRequest, "missing_field", "response.statusCode is required and must be positive")
+	if !validStatusCode(in.Response.StatusCode) {
+		writeError(w, http.StatusBadRequest, "invalid_field", "response.statusCode must be in 100–599")
 		return false
 	}
 	return true
+}
+
+// validStatusCode reports whether code is a legal HTTP status code (4.17):
+// the contract previously accepted any value > 0, so 0/negative fell out but
+// garbage like 99 or 700 could be stored and would never match a real response.
+func validStatusCode(code int) bool {
+	return code >= 100 && code <= 599
 }

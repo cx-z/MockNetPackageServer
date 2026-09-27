@@ -216,12 +216,16 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 // treats delete as best-effort (the entry may belong to an already-deleted
 // session).
 func (a *API) handleDeleteTraffic(w http.ResponseWriter, r *http.Request) {
-	entry, err := a.captureManager.GetTraffic(r.Context(), r.PathValue("id"))
+	// Resolve the owning device the same way share creation does: an ended
+	// session's record is gone (M9), so ownership must come from the retained
+	// store instead of authorizeSessionAccess (4.11). Deleting a retained row
+	// must not 404 just because the session no longer exists.
+	app, did, err := a.captureManager.GetTrafficWithOwner(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeCaptureError(w, err)
 		return
 	}
-	if _, ok := a.authorizeSessionAccess(w, r, entry.SessionID); !ok {
+	if !a.authorizeDeviceAccess(w, r, app, did) {
 		return
 	}
 	if err := a.captureManager.DeleteTraffic(r.Context(), r.PathValue("id")); err != nil {

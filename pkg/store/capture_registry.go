@@ -90,8 +90,13 @@ type CaptureManager struct {
 	// pairingTokens persists QR pairing tokens (M9): short-lived credentials
 	// that let a scanned SDK register a device under the issuing user.
 	pairingTokens PairingTokenStore
-	cfg           CaptureConfig
-	log           *slog.Logger
+	// sharesStore persists request share snapshots (M8.5, 4.8): independent
+	// copies of a single traffic entry. Persisting them (instead of a
+	// memory-only map) keeps a share link valid for its full 7-day TTL across
+	// server restarts.
+	sharesStore ShareStore
+	cfg         CaptureConfig
+	log         *slog.Logger
 
 	// viewerMu guards the runtime viewer leases, keyed by session ID.
 	viewerMu sync.RWMutex
@@ -112,11 +117,20 @@ type CaptureManager struct {
 	retainedMu sync.RWMutex
 	retained   map[string]*retainedSession
 
-	// sharesMu guards the share snapshots (M8.5). Shares are independent copies
-	// of a single traffic entry, decoupled from the owning session/traffic —
-	// clearing the session does not invalidate the share. TTL 7 days.
+	// trafficIndexMu guards trafficIndex (4.22): an ID → location map so
+	// GetTraffic / GetTrafficWithOwner / DeleteTraffic resolve by ID in O(1)
+	// instead of scanning every session's entries. Entries are created on
+	// upload, flipped to retained when the session ends, and removed on
+	// delete/clear/purge — always inside the same critical section that
+	// mutates the owning slice. Lock order: trafficMu → trafficIndexMu and
+	// retainedMu → trafficIndexMu (never the reverse).
+	trafficIndexMu sync.RWMutex
+	trafficIndex   map[string]*trafficIndexEntry
+
+	// sharesMu serializes share snapshot access (M8.5). The snapshots
+	// themselves live in sharesStore (persisted); the mutex guards the
+	// read-expire-delete compound in GetShare.
 	sharesMu sync.RWMutex
-	shares   map[string]*ShareSnapshot
 
 	ctx      context.Context
 	stopCh   chan struct{}
@@ -125,7 +139,7 @@ type CaptureManager struct {
 }
 
 // NewCaptureManager creates a capture manager backed by the given stores.
-func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules MockRuleStore, pairingTokens PairingTokenStore, cfg CaptureConfig) *CaptureManager {
+func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules MockRuleStore, pairingTokens PairingTokenStore, shares ShareStore, cfg CaptureConfig) *CaptureManager {
 	if cfg.HeartbeatTimeout <= 0 {
 		cfg.HeartbeatTimeout = DefaultCaptureConfig().HeartbeatTimeout
 	}
@@ -146,12 +160,13 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules 
 		sessions:      sessions,
 		rules:         rules,
 		pairingTokens: pairingTokens,
+		sharesStore:   shares,
 		cfg:           cfg,
 		log:           slog.Default(),
 		viewers:       make(map[string]map[string]capture.ViewerLease),
 		traffic:       make(map[string][]*capture.TrafficEntry),
 		retained:      make(map[string]*retainedSession),
-		shares:        make(map[string]*ShareSnapshot),
+		trafficIndex:  make(map[string]*trafficIndexEntry),
 		stopCh:        make(chan struct{}),
 	}
 }

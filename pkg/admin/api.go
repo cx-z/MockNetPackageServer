@@ -62,6 +62,10 @@ type API struct {
 	users        store.UserStore
 	authSessions store.AuthSessionStore
 
+	// loginThrottle (4.16): failure-based lockout for the login endpoint,
+	// per-username and per-IP (loopback exempt).
+	loginThrottle *loginThrottle
+
 	// engineSyncMu prevents concurrent admin-store-to-engine syncs (legacy global mutex).
 	// Used as fallback when per-engine mutex is not applicable.
 	engineSyncMu sync.Mutex
@@ -112,6 +116,13 @@ type API struct {
 	// ready indicates that the server has completed initialization
 	// (config loaded, engine healthy, ready to serve traffic).
 	ready atomic.Bool
+
+	// noPersist (4.14): with --no-persist, a data-store Open failure degrades
+	// to an in-memory-only run instead of failing startup.
+	noPersist bool
+	// storeOpenErr records a data-store Open failure so Start() can fail
+	// startup instead of silently running without persistence.
+	storeOpenErr error
 }
 
 // NewAPI creates a new API.
@@ -139,6 +150,7 @@ func NewAPI(port int, opts ...Option) *API {
 		engineTokenExpiration:       EngineTokenExpiration,
 		apiKeyConfig:                DefaultAPIKeyConfig(),
 		metricsRegistry:             metricsRegistry,
+		loginThrottle:               newLoginThrottle(LoginFailureLimit, LoginFailureWindow),
 	}
 
 	// Store default nop logger (can be replaced with SetLogger before Start)
@@ -167,19 +179,28 @@ func NewAPI(port int, opts ...Option) *API {
 		dataStore = file.NewWithDefaults()
 	}
 	if err := dataStore.Open(context.Background()); err != nil {
-		// Log but don't fail - store features will be limited
-		api.logger().Warn("failed to initialize data store", "error", err)
+		if api.noPersist {
+			// 4.14: explicit --no-persist — degrade to an in-memory-only run.
+			api.logger().Warn("failed to initialize data store (--no-persist: continuing without persistence)", "error", err)
+		} else {
+			// 4.14: persistence is the default contract. A store that failed to
+			// open runs without its save loop, so every write silently vanishes
+			// on restart — fail startup instead of pretending to be healthy.
+			api.storeOpenErr = fmt.Errorf("open data store: %w", err)
+			api.logger().Error("failed to initialize data store; startup will fail (use --no-persist to run in-memory only)", "error", err)
+		}
 	}
 	api.dataStore = dataStore
 
 	// Initialize the MockNetPack capture manager (devices / capture sessions /
-	// viewer leases / mock rules / QR pairing tokens). Uses defaults unless
-	// overridden via WithCaptureConfig.
+	// viewer leases / mock rules / QR pairing tokens / share snapshots). Uses
+	// defaults unless overridden via WithCaptureConfig.
 	api.captureManager = store.NewCaptureManager(
 		dataStore.Devices(),
 		dataStore.CaptureSessions(),
 		dataStore.MockRules(),
 		dataStore.PairingTokens(),
+		dataStore.Shares(),
 		api.captureConfig,
 	)
 
@@ -488,6 +509,13 @@ func (a *API) Tracer() *tracing.Tracer {
 func (a *API) Start() error {
 	a.startTime = time.Now()
 
+	// 4.14: a failed data-store open means all persistence is silently dead
+	// (no save loop). Refuse to start — unless the caller explicitly opted
+	// into an in-memory-only run via --no-persist.
+	if a.storeOpenErr != nil {
+		return fmt.Errorf("persistent data store unavailable: %w (restart with --no-persist to run without persistence)", a.storeOpenErr)
+	}
+
 	// Start the engine health check background goroutine
 	a.engineRegistry.StartHealthCheck(a.ctx, EngineHeartbeatTimeout)
 
@@ -541,7 +569,16 @@ func (a *API) SetLogger(log *slog.Logger) {
 
 // Stop gracefully shuts down the admin API server.
 func (a *API) Stop() error {
-	// Stop background goroutines
+	// 4.15: drain the HTTP server FIRST. In-flight handlers (e.g. UploadTraffic
+	// during a capture) still write through the data store; closing the store
+	// before they finish would strand those writes (save loop already gone)
+	// and race the final save. Shutdown waits up to 5s for in-flight requests.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	shutdownErr := a.httpServer.Shutdown(ctx)
+
+	// Stop background goroutines AFTER the server is drained — nothing new can
+	// arrive anymore, and their final state must land in the store below.
 	a.cancel()
 	a.engineRegistry.Stop()
 	a.captureManager.Stop()
@@ -558,16 +595,15 @@ func (a *API) Stop() error {
 		}
 	}
 
-	// Close the data store
+	// Close the data store LAST so the final save includes everything the
+	// drained requests wrote.
 	if a.dataStore != nil {
 		if err := a.dataStore.Close(); err != nil {
 			a.logger().Warn("error closing data store", "error", err)
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return a.httpServer.Shutdown(ctx)
+	return shutdownErr
 }
 
 // SetReady marks the API as ready to serve traffic.

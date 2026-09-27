@@ -78,6 +78,10 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 	req.PairingToken = strings.TrimSpace(req.PairingToken)
 	req.DeviceName = strings.TrimSpace(req.DeviceName)
 	req.AppName = strings.TrimSpace(req.AppName)
+	req.Platform = capture.Platform(strings.TrimSpace(string(req.Platform)))
+	req.OSVersion = strings.TrimSpace(req.OSVersion)
+	req.SDKVersion = strings.TrimSpace(req.SDKVersion)
+	req.AppVersion = strings.TrimSpace(req.AppVersion)
 	if req.App == "" {
 		writeError(w, http.StatusBadRequest, "missing_app", "app is required")
 		return
@@ -86,8 +90,15 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_did", "did is required")
 		return
 	}
-	if len(req.App) > 128 || len(req.Did) > 128 || len(req.PairingToken) > 128 || len(req.DeviceName) > 64 || len(req.AppName) > 64 {
-		writeError(w, http.StatusBadRequest, "invalid_field", "app/did/pairingToken <=128 chars, deviceName/appName <=64 chars")
+	// 4.19: every registration field has a length cap — before, platform /
+	// osVersion / sdkVersion / appVersion were only bounded by the 10MB body
+	// limit, so a misbehaving SDK could persist arbitrary blobs as device
+	// metadata. Caps: app/did/pairingToken <=128, deviceName/appName <=64,
+	// platform/osVersion <=32, sdkVersion/appVersion <=64.
+	if len(req.App) > 128 || len(req.Did) > 128 || len(req.PairingToken) > 128 || len(req.DeviceName) > 64 || len(req.AppName) > 64 ||
+		len(req.Platform) > 32 || len(req.OSVersion) > 32 || len(req.SDKVersion) > 64 || len(req.AppVersion) > 64 {
+		writeError(w, http.StatusBadRequest, "invalid_field",
+			"app/did/pairingToken <=128 chars, deviceName/appName <=64 chars, platform/osVersion <=32 chars, sdkVersion/appVersion <=64 chars")
 		return
 	}
 

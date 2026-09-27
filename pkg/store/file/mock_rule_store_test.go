@@ -34,6 +34,30 @@ func TestMockRule_CreateVersionAndEffective(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
 
+	// 4.9 回归：Mutate 出错时存储保持原样（无半写入、无版本跳动）。
+	fs := newTestStore(t)
+	if _, err := fs.MockRules().Mutate(ctx, "app", "d1", func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
+		return nil, false, errors.New("boom")
+	}); err == nil {
+		t.Fatal("Mutate(error) = nil, want error")
+	}
+	if v, _ := fs.MockRules().GetRuleVersion(ctx, "app", "d1"); v != 0 {
+		t.Fatalf("version after failed Mutate = %d, want 0", v)
+	}
+	if rules, _ := fs.MockRules().List(ctx, &store.MockRuleFilter{App: "app", Did: "d1"}); len(rules) != 0 {
+		t.Fatalf("rules after failed Mutate = %d, want 0", len(rules))
+	}
+
+	// changed=false 的 Mutate 不 bump 版本。
+	if _, err := fs.MockRules().Mutate(ctx, "app", "d1", func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
+		return rules, false, nil
+	}); err != nil {
+		t.Fatalf("Mutate(noop) = %v", err)
+	}
+	if v, _ := fs.MockRules().GetRuleVersion(ctx, "app", "d1"); v != 0 {
+		t.Fatalf("version after noop Mutate = %d, want 0", v)
+	}
+
 	r1, v1, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true))
 	if err != nil {
 		t.Fatalf("Create(r1) = %v", err)
@@ -317,7 +341,7 @@ func TestMockRule_Janitor_PurgesExpired(t *testing.T) {
 	fs := newTestStore(t)
 	cfg := store.DefaultCaptureConfig()
 	cfg.MockRuleRetention = 50 * time.Millisecond
-	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), cfg)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), fs.Shares(), cfg)
 	t.Cleanup(m.Stop)
 	ctx := context.Background()
 

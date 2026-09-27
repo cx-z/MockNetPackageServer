@@ -104,6 +104,52 @@ func TestRequireAuthExpiredSessionRejected(t *testing.T) {
 	}
 }
 
+// TestMockNetPackRoutesWorkFromLANWithAuthEnabled is the 4.6 smoke case:
+// with API-key auth enabled and a non-localhost browser, every /api/v1
+// MockNetPack route must be reachable with ONLY the account Bearer token —
+// the API key middleware must not intercept it (previously the Bearer was
+// mistaken for an API key and every request 401'd). The legacy mockd admin
+// API stays behind the API key.
+func TestMockNetPackRoutesWorkFromLANWithAuthEnabled(t *testing.T) {
+	api := NewAPI(0, WithDataDir(t.TempDir()), WithAPIKey("test-api-key"))
+	t.Cleanup(func() { api.Stop() })
+	// Real loopback server only for login; assertions run directly against the
+	// handler with a non-loopback RemoteAddr (simulating a LAN browser).
+	ts := httptest.NewServer(api.httpServer.Handler)
+	defer ts.Close()
+
+	tok := loginToken(t, ts, "lanuser", "secret123")
+
+	lan := func(method, path, bearer string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req.RemoteAddr = "192.168.1.50:12345" // LAN browser, not loopback
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		return serveAdmin(t, api, req)
+	}
+
+	// 1. Account Bearer alone is enough on /api/v1 (no API key needed).
+	if rec := lan(http.MethodGet, "/api/v1/devices", tok); rec.Code != http.StatusOK {
+		t.Fatalf("LAN /api/v1/devices with account Bearer = %d, want 200", rec.Code)
+	}
+	// 2. No credentials → requireAuth still rejects.
+	if rec := lan(http.MethodGet, "/api/v1/devices", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("LAN /api/v1/devices without token = %d, want 401", rec.Code)
+	}
+	// 3. Legacy admin API: the account Bearer is NOT accepted as an API key.
+	if rec := lan(http.MethodGet, "/openapi.json", tok); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("LAN /openapi.json with account Bearer = %d, want 401", rec.Code)
+	}
+	// 4. Legacy admin API: a real X-API-Key still works from LAN.
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	req.RemoteAddr = "192.168.1.50:12345"
+	req.Header.Set("X-API-Key", "test-api-key")
+	if rec := serveAdmin(t, api, req); rec.Code == http.StatusUnauthorized {
+		t.Fatal("LAN /openapi.json with valid API key must not be 401")
+	}
+}
+
 func TestSDKRoutesStayOpen(t *testing.T) {
 	_, ts := newAuthRequiredTestAPI(t)
 	// SDK-facing routes are deliberately NOT wrapped by requireAuth: the SDK

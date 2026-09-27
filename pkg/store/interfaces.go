@@ -284,6 +284,13 @@ type DeviceStore interface {
 	// Update replaces an existing device. Returns store.ErrNotFound if the
 	// (App, Did) does not exist.
 	Update(ctx context.Context, d *capture.Device) error
+	// UpdateLastSeen refreshes a device's last heartbeat time in memory only
+	// (no dirty marking, nothing written to disk). Heartbeats fire every few
+	// seconds per device; persisting each one would rewrite the whole data
+	// file on every beat. The update is lost on restart, which is harmless: a
+	// device is offline until its next heartbeat anyway. Returns
+	// store.ErrNotFound if the (App, Did) does not exist.
+	UpdateLastSeen(ctx context.Context, app, did string, lastSeenAt time.Time) error
 	// Delete removes a device by (App, Did).
 	Delete(ctx context.Context, app, did string) error
 	// Count returns the total number of devices.
@@ -315,6 +322,14 @@ type CaptureSessionStore interface {
 	// Update replaces an existing session. Returns store.ErrNotFound if the
 	// ID does not exist.
 	Update(ctx context.Context, s *capture.CaptureSession) error
+	// UpdateRequestCount sets a session's request count in memory only (no
+	// dirty marking, nothing written to disk). UploadTraffic bumps the count
+	// on every batch (~every 2s per capturing device); persisting each bump
+	// would rewrite the whole data file at that cadence. The count is display
+	// metadata: after a restart a stale session is ended by the
+	// heartbeat-timeout sweep before any user reads it. Returns
+	// store.ErrNotFound if the ID does not exist.
+	UpdateRequestCount(ctx context.Context, id string, count int) error
 	// Delete removes a session by ID.
 	Delete(ctx context.Context, id string) error
 }
@@ -342,6 +357,14 @@ type MockRuleStore interface {
 	Update(ctx context.Context, r *capture.MockRule) error
 	// Delete removes a rule by ID.
 	Delete(ctx context.Context, id string) error
+	// Mutate applies fn to the device's rule set and bumps the (app, did)
+	// rule-set version atomically — one store lock for both (4.9), so no
+	// reader ever observes the rule set and its version in a half-updated
+	// state. fn receives the device's current rules and returns the new rule
+	// set; changed=false skips the bump and returns the current version;
+	// any error aborts with the store untouched. The returned int is the
+	// rule-set version after the call.
+	Mutate(ctx context.Context, app, did string, fn func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error)) (int, error)
 	// GetRuleVersion returns the current rule-set version for (app, did)
 	// (0 when no rules have ever been written).
 	GetRuleVersion(ctx context.Context, app, did string) (int, error)
@@ -401,5 +424,25 @@ type PairingTokenStore interface {
 	// DeleteExpired removes every token expired before now and returns the
 	// number of deleted tokens (hourly janitor; expired tokens are also
 	// rejected at validation time, so this is housekeeping only).
+	DeleteExpired(ctx context.Context, now time.Time) (int, error)
+}
+
+// ShareStore handles persistence for request share snapshots (M8.5). Shares
+// are independent read-only copies of a single traffic entry, decoupled from
+// the owning session/traffic. They persist across restarts so a share link
+// keeps its full 7-day validity (the product promise) instead of dying with
+// the server process.
+type ShareStore interface {
+	// List returns all persisted share snapshots.
+	List(ctx context.Context) ([]*ShareSnapshot, error)
+	// Create adds a new share snapshot. Returns store.ErrAlreadyExists if the
+	// ID already exists (astronomically unlikely).
+	Create(ctx context.Context, s *ShareSnapshot) error
+	// Delete removes a share snapshot by ID. Returns store.ErrNotFound if
+	// missing.
+	Delete(ctx context.Context, id string) error
+	// DeleteExpired removes every share expired before now and returns the
+	// number of deleted shares (hourly janitor; expired shares are also
+	// rejected lazily on Get, so this is housekeeping only).
 	DeleteExpired(ctx context.Context, now time.Time) (int, error)
 }

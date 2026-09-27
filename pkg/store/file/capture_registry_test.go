@@ -3,6 +3,7 @@ package file
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,7 +20,7 @@ func newCaptureManager(t *testing.T, timeout time.Duration) (*store.CaptureManag
 	if timeout > 0 {
 		cfg.HeartbeatTimeout = timeout
 	}
-	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), cfg)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), fs.Shares(), cfg)
 	t.Cleanup(m.Stop)
 	return m, fs
 }
@@ -265,7 +266,7 @@ func TestCaptureManager_ViewerLeaseExpiry_EndsSession(t *testing.T) {
 	cfg.HeartbeatTimeout = 5 * time.Second
 	cfg.ViewerTTL = 200 * time.Millisecond
 	fs := newTestStore(t)
-	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), cfg)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), fs.Shares(), cfg)
 	t.Cleanup(m.Stop)
 	ctx := context.Background()
 
@@ -460,6 +461,74 @@ func TestCaptureManager_UploadTraffic_AcceptAndCount(t *testing.T) {
 	}
 }
 
+// TestCaptureManager_UploadTraffic_RollingWindow (4.10): once a session
+// exceeds MaxSessionTrafficEntries, the oldest entries are dropped and only
+// the most recent cap are kept, while RequestCount still counts every
+// accepted upload.
+func TestCaptureManager_UploadTraffic_RollingWindow(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+
+	base := time.Now()
+	entries := make([]*capture.TrafficEntry, store.MaxSessionTrafficEntries+10)
+	for i := range entries {
+		entries[i] = trafficEntry("GET", "http://example.com/t", base.Add(time.Duration(i)*time.Millisecond))
+	}
+	count, err := m.UploadTraffic(ctx, "app", "d1", s.ID, entries)
+	if err != nil {
+		t.Fatalf("UploadTraffic() = %v", err)
+	}
+	if count != len(entries) {
+		t.Fatalf("count = %d, want %d (all accepted)", count, len(entries))
+	}
+
+	list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListSessionTraffic() = %v", err)
+	}
+	if total != store.MaxSessionTrafficEntries || len(list) != store.MaxSessionTrafficEntries {
+		t.Fatalf("total=%d len=%d, want %d/%d", total, len(list), store.MaxSessionTrafficEntries, store.MaxSessionTrafficEntries)
+	}
+	// The dropped 10 are the OLDEST; the kept window starts at index 10 of the
+	// upload and the newest entry is preserved.
+	if list[0].Timestamp != entries[10].Timestamp {
+		t.Errorf("oldest kept = %v, want upload entry[10] %v", list[0].Timestamp, entries[10].Timestamp)
+	}
+	if list[len(list)-1].Timestamp != entries[len(entries)-1].Timestamp {
+		t.Errorf("newest kept = %v, want upload entry[last] %v", list[len(list)-1].Timestamp, entries[len(entries)-1].Timestamp)
+	}
+
+	// RequestCount counts every accepted upload, not just the kept window.
+	got, err := m.GetSession(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("GetSession() = %v", err)
+	}
+	if got.RequestCount != len(entries) {
+		t.Errorf("RequestCount = %d, want %d", got.RequestCount, len(entries))
+	}
+
+	// A second overflow batch keeps rolling: the first batch's entries that
+	// survived must now be gone as well (window keeps moving forward).
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID, entries[:1]); err != nil {
+		t.Fatalf("second UploadTraffic() = %v", err)
+	}
+	list, total, _ = m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	if total != store.MaxSessionTrafficEntries {
+		t.Fatalf("total after second batch = %d, want %d", total, store.MaxSessionTrafficEntries)
+	}
+	if list[len(list)-1].Timestamp != entries[0].Timestamp {
+		t.Errorf("newest after second batch = %v, want entry[0] %v", list[len(list)-1].Timestamp, entries[0].Timestamp)
+	}
+}
+
 func TestCaptureManager_ListSessionTraffic_PagingAndClear(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
@@ -649,11 +718,130 @@ func TestCaptureManager_ShareAfterSessionEnd(t *testing.T) {
 	}
 }
 
+func TestCaptureManager_SharePersistsAcrossRestart(t *testing.T) {
+	// 4.8 回归：分享快照落盘持久化——服务端重启后链接仍有效（7 天 TTL 是对
+	// 用户的承诺，不应随进程内存一起消失）。
+	dir := t.TempDir()
+	newFS := func() *FileStore {
+		fs := New(store.Config{
+			DataDir:   dir,
+			ConfigDir: filepath.Join(dir, "config"),
+			CacheDir:  filepath.Join(dir, "cache"),
+			StateDir:  filepath.Join(dir, "state"),
+		})
+		if err := fs.Open(context.Background()); err != nil {
+			t.Fatalf("Open() failed: %v", err)
+		}
+		return fs
+	}
+
+	fs := newFS()
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), fs.Shares(), store.DefaultCaptureConfig())
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); err != nil {
+		t.Fatalf("UploadTraffic() = %v", err)
+	}
+	list, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListSessionTraffic() = %d, %v; want 1 entry", len(list), err)
+	}
+	snap, err := m.CreateShare(ctx, list[0].ID)
+	if err != nil {
+		t.Fatalf("CreateShare() = %v", err)
+	}
+
+	m.Stop()
+	if err := fs.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	// 重启：同一数据目录，全新 FileStore + CaptureManager。
+	fs2 := newFS()
+	defer fs2.Close()
+	m2 := store.NewCaptureManager(fs2.Devices(), fs2.CaptureSessions(), fs2.MockRules(), fs2.PairingTokens(), fs2.Shares(), store.DefaultCaptureConfig())
+	defer m2.Stop()
+
+	got, err := m2.GetShare(ctx, snap.ShareID)
+	if err != nil {
+		t.Fatalf("share lost after restart: %v", err)
+	}
+	if got.Entry == nil || got.Entry.URL != "http://x/a" || got.Entry.Method != "GET" {
+		t.Fatalf("share entry corrupted after restart: %+v", got.Entry)
+	}
+	if !got.ExpiresAt.After(time.Now()) {
+		t.Fatalf("share TTL not preserved: expiresAt=%v", got.ExpiresAt)
+	}
+}
+
+// TestCaptureManager_DeleteRetainedTraffic (4.11): after the session ends, its
+// entries move to the retained store; deleting one of them by ID must succeed
+// (the owning session record is gone, but the row is still the device's data)
+// instead of 404ing at the session-access check.
+func TestCaptureManager_DeleteRetainedTraffic(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+	for i, u := range []string{"http://x/a", "http://x/b"} {
+		if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
+			[]*capture.TrafficEntry{trafficEntry("GET", u, time.Now().Add(time.Duration(i)*time.Millisecond))}); err != nil {
+			t.Fatalf("UploadTraffic() = %v", err)
+		}
+	}
+	list, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	delID, keepID := list[0].ID, list[1].ID
+
+	if err := m.EndSession(ctx, s.ID); err != nil {
+		t.Fatalf("EndSession() = %v", err)
+	}
+	// Both entries are now retained (session record deleted, M9).
+	if _, err := m.GetTraffic(ctx, delID); err != nil {
+		t.Fatalf("GetTraffic(retained, before delete) = %v", err)
+	}
+
+	if err := m.DeleteTraffic(ctx, delID); err != nil {
+		t.Fatalf("DeleteTraffic(retained) = %v, want nil (4.11)", err)
+	}
+	if _, err := m.GetTraffic(ctx, delID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetTraffic(deleted retained) = %v, want ErrNotFound", err)
+	}
+	// The sibling retained entry is untouched.
+	if _, err := m.GetTraffic(ctx, keepID); err != nil {
+		t.Errorf("GetTraffic(sibling retained) = %v, want still present", err)
+	}
+	// Deleting the last retained entry cleans the retained session slot.
+	if err := m.DeleteTraffic(ctx, keepID); err != nil {
+		t.Fatalf("DeleteTraffic(last retained) = %v", err)
+	}
+	if _, err := m.GetTraffic(ctx, keepID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetTraffic(last deleted) = %v, want ErrNotFound", err)
+	}
+	// Unknown ID stays a clean 404.
+	if err := m.DeleteTraffic(ctx, "no-such-id"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("DeleteTraffic(unknown) = %v, want ErrNotFound", err)
+	}
+}
+
 func TestCaptureManager_RetainedTraffic_Expires(t *testing.T) {
 	fs := newTestStore(t)
 	cfg := store.DefaultCaptureConfig()
 	cfg.RetainedTrafficTTL = 50 * time.Millisecond
-	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), cfg)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), fs.Shares(), cfg)
 	t.Cleanup(m.Stop)
 	ctx := context.Background()
 

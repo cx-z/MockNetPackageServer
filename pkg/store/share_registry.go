@@ -62,28 +62,48 @@ func (m *CaptureManager) CreateShare(ctx context.Context, trafficID string) (*Sh
 		Entry:     &copy,
 	}
 
+	// 4.8: persist the snapshot so the link survives server restarts for its
+	// full 7-day validity. The snapshot is self-contained (a full copy of the
+	// entry), so nothing else needs to survive.
 	m.sharesMu.Lock()
-	m.shares[snap.ShareID] = snap
-	m.sharesMu.Unlock()
-
+	defer m.sharesMu.Unlock()
+	if err := m.sharesStore.Create(ctx, snap); err != nil {
+		return nil, err
+	}
 	return snap, nil
 }
 
 // GetShare returns a share snapshot by ID, or ErrNotFound if it does not
-// exist or has expired. Expired shares are lazily purged on access.
+// exist or has expired. Expired shares are lazily purged on access (and
+// periodically by the hourly janitor).
 func (m *CaptureManager) GetShare(ctx context.Context, shareID string) (*ShareSnapshot, error) {
 	m.sharesMu.RLock()
-	snap, ok := m.shares[shareID]
+	all, err := m.sharesStore.List(ctx)
 	m.sharesMu.RUnlock()
-	if !ok {
-		return nil, ErrNotFound
+	if err != nil {
+		return nil, err
 	}
-	if time.Now().After(snap.ExpiresAt) {
-		m.sharesMu.Lock()
-		delete(m.shares, shareID)
-		m.sharesMu.Unlock()
-		return nil, ErrNotFound
+	for _, snap := range all {
+		if snap.ShareID != shareID {
+			continue
+		}
+		if time.Now().After(snap.ExpiresAt) {
+			m.sharesMu.Lock()
+			_ = m.sharesStore.Delete(ctx, shareID) // lazy purge (best-effort)
+			m.sharesMu.Unlock()
+			return nil, ErrNotFound
+		}
+		c := *snap
+		return &c, nil
 	}
-	c := *snap
-	return &c, nil
+	return nil, ErrNotFound
+}
+
+// PurgeExpiredShares deletes every share snapshot expired before now (hourly
+// janitor; expired shares are also rejected lazily on GetShare, so this is
+// housekeeping that keeps the persisted file bounded).
+func (m *CaptureManager) PurgeExpiredShares(ctx context.Context) {
+	if _, err := m.sharesStore.DeleteExpired(ctx, time.Now()); err != nil {
+		m.log.Warn("capture health check: purge expired shares failed", "error", err)
+	}
 }

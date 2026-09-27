@@ -119,6 +119,16 @@ func WithDataDir(dir string) Option {
 	}
 }
 
+// WithNoPersist disables the persistent data store (4.14). Normally a failure
+// to open the data store fails startup (persistence is the default contract —
+// running without it silently loses all mocks/devices/rules on restart). With
+// this option, an Open failure degrades to an in-memory-only run instead.
+func WithNoPersist() Option {
+	return func(a *API) {
+		a.noPersist = true
+	}
+}
+
 // WithVersion sets the version string returned by the status endpoint.
 // If not set, defaults to "dev".
 func WithVersion(version string) Option {

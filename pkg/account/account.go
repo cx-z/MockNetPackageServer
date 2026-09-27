@@ -125,3 +125,20 @@ func NewToken() (string, error) {
 	}
 	return hex.EncodeToString(b), nil
 }
+
+// dummyPasswordHash is a valid PBKDF2 hash used as a constant-time decoy for
+// unknown users at login (4.16): VerifyPassword against it costs exactly the
+// same as a real user's hash, so login latency cannot reveal whether a
+// username exists. Computed once per process; the decoy value is irrelevant,
+// only its verification cost matters.
+var dummyPasswordHash = func() string {
+	h, err := HashPassword("mockd-login-decoy")
+	if err != nil {
+		panic(fmt.Sprintf("account: dummy hash: %v", err))
+	}
+	return h
+}()
+
+// DummyPasswordHash returns the process-wide decoy hash for constant-time
+// login on unknown usernames (4.16).
+func DummyPasswordHash() string { return dummyPasswordHash }

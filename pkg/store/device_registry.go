@@ -168,7 +168,11 @@ func (m *CaptureManager) Heartbeat(ctx context.Context, app, did string) (*captu
 	}
 
 	d.LastSeenAt = time.Now()
-	if err := m.devices.Update(ctx, d); err != nil {
+	// 4.4: heartbeats fire every few seconds per device — persist them in
+	// memory only (no dirty marking), so they do not rewrite the whole data
+	// file on every beat. On restart a device is offline until its next
+	// heartbeat anyway, so a lost LastSeenAt is harmless.
+	if err := m.devices.UpdateLastSeen(ctx, app, did, d.LastSeenAt); err != nil {
 		return nil, nil, err
 	}
 

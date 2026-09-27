@@ -73,14 +73,26 @@ func (m *CaptureManager) ActivateSession(ctx context.Context, app, did string) (
 // ID (share creation) for RetainedTrafficTTL. The list contract is unchanged:
 // an ended session is deleted and never listed again.
 func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
+	// The whole end sequence runs under trafficMu, the same lock UploadTraffic
+	// and ClearSessionTraffic hold for their authoritative session check +
+	// traffic mutation. This serializes "end" with "upload/clear": an upload
+	// either lands entirely before the end (its entries move to retained with
+	// the session) or is rejected after it (session record already gone).
+	// Previously the status check happened outside the lock, so an upload could
+	// append to m.traffic after the entries were moved to retained and the
+	// session deleted, leaving orphaned entries that were never retained,
+	// listed or purged (memory leak) and a failed RequestCount update.
+	m.trafficMu.Lock()
 	s, err := m.sessions.Get(ctx, id)
 	if err != nil {
+		m.trafficMu.Unlock()
 		if errors.Is(err, ErrNotFound) {
 			return ErrSessionNotFound
 		}
 		return err
 	}
 	if s.Status == capture.SessionStatusEnded {
+		m.trafficMu.Unlock()
 		return nil
 	}
 
@@ -93,10 +105,22 @@ func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	// after disconnect (bounded by RetainedTrafficTTL, purged by the health
 	// check). The owning device is recorded because the session record is
 	// about to be deleted and ownership must stay verifiable.
-	m.trafficMu.Lock()
 	entries := m.traffic[id]
 	delete(m.traffic, id)
+	// 4.22: flip the moved entries' index to retained (with the owning-device
+	// snapshot) inside the same critical section that deletes the session
+	// record — from this instant ID lookups resolve them via the retained
+	// location without needing the (now gone) session record.
+	m.indexTraffic(id, true, s.App, s.Did, entries)
+
+	// M9: 结束即删 — delete the session record instead of keeping an
+	// "ended" entry. The device and rule stores are untouched.
+	if err := m.sessions.Delete(ctx, id); err != nil {
+		m.trafficMu.Unlock()
+		return err
+	}
 	m.trafficMu.Unlock()
+
 	if len(entries) > 0 {
 		m.retainedMu.Lock()
 		m.retained[id] = &retainedSession{
@@ -106,12 +130,6 @@ func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 			Entries: entries,
 		}
 		m.retainedMu.Unlock()
-	}
-
-	// M9: 结束即删 — delete the session record instead of keeping an
-	// "ended" entry. The device and rule stores are untouched.
-	if err := m.sessions.Delete(ctx, id); err != nil {
-		return err
 	}
 	// M4 (F4.5/决策13): any session end disables all of the device mock rules;
 	// they stay but must be re-enabled manually.
@@ -237,8 +255,10 @@ func (m *CaptureManager) ReleaseViewer(ctx context.Context, sessionID, viewerID 
 //     (device offline => session ended, 僵尸清理兜底), and
 //  2. garbage-collects expired viewer leases, ending a session when its last
 //     lease expires without a page-close event (beforeunload is unreliable).
-//  Hourly janitors also purge expired mock rules, retained traffic and QR
-//  pairing tokens (M9).
+//  A single hourly janitor also purges expired mock rules, retained traffic,
+//  QR pairing tokens (M9) and share snapshots (M8.5) — one ticker instead of
+//  four (4.22: the janitors are independent and cheap, and running them
+//  sequentially in the same goroutine loses nothing).
 func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 	m.wg.Add(1)
 	go func() {
@@ -246,12 +266,8 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 
 		ticker := time.NewTicker(m.cfg.HeartbeatTimeout / 2)
 		defer ticker.Stop()
-		ruleTicker := time.NewTicker(time.Hour)
-		defer ruleTicker.Stop()
-		retainedTicker := time.NewTicker(time.Hour)
-		defer retainedTicker.Stop()
-		pairingTicker := time.NewTicker(time.Hour)
-		defer pairingTicker.Stop()
+		hourly := time.NewTicker(time.Hour)
+		defer hourly.Stop()
 
 		for {
 			select {
@@ -262,12 +278,11 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 			case <-ticker.C:
 				m.checkDeviceHealth(ctx)
 				m.checkViewerLeases(ctx)
-			case <-ruleTicker.C:
+			case <-hourly.C:
 				m.PurgeExpiredRules(ctx)
-			case <-retainedTicker.C:
 				m.PurgeExpiredRetainedTraffic(ctx)
-			case <-pairingTicker.C:
 				m.PurgeExpiredPairingTokens(ctx)
+				m.PurgeExpiredShares(ctx)
 			}
 		}
 	}()

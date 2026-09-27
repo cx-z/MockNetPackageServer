@@ -205,16 +205,19 @@ func (a *apiKeyAuth) isExempt(path string) bool {
 		}
 	}
 
-	// M7.2.4: SDK-facing routes exempt from API key auth (did is identity;
-	// unknown did returns 404 from the handler itself).
-	//   POST /api/v1/devices/register
-	//   POST /api/v1/devices/{app}/{did}/heartbeat
-	//   POST /api/v1/devices/{app}/{did}/traffic
-	if path == "/api/v1/devices/register" || path == "/api/v1/traffic" {
-		return true
-	}
-	if strings.HasPrefix(path, "/api/v1/devices/") &&
-		(strings.HasSuffix(path, "/heartbeat") || strings.HasSuffix(path, "/traffic")) {
+	// M7.1.3 auth split: the entire /api/v1 prefix is the MockNetPack capture
+	// API and is deliberately NOT protected by the API key — every Web-facing
+	// route there carries its own account Bearer check (requireAuth), and the
+	// SDK/public routes (device register, heartbeat, traffic upload, mock-rules
+	// ?sinceVersion, auth register/login, share GET) are intentionally open.
+	// The API key guards the legacy mockd admin API at the root paths (/mocks,
+	// /sessions, /openapi.json, …).
+	//
+	// Exempting the prefix is what makes the Web usable from a LAN/remote
+	// browser when auth is enabled: before this split the browser's account
+	// Bearer token was mistaken for an API key and every /api/v1 request was
+	// rejected with 401.
+	if strings.HasPrefix(path, "/api/v1/") {
 		return true
 	}
 
@@ -265,16 +268,6 @@ func (a *apiKeyAuth) middleware(next http.Handler) http.Handler {
 
 		// Check if path is exempt
 		if a.isExempt(r.URL.Path) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// M8: SDK incremental mock-rules pull (GET ?sinceVersion) is a device
-		// channel like heartbeat (SDK carries no API key/Bearer). The Web
-		// full-list branch enforces its own Bearer check inside the handler.
-		if r.Method == http.MethodGet &&
-			strings.HasPrefix(r.URL.Path, "/api/v1/devices/") &&
-			strings.HasSuffix(r.URL.Path, "/mock-rules") {
 			next.ServeHTTP(w, r)
 			return
 		}
