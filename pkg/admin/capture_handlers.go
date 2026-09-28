@@ -52,13 +52,25 @@ type CreateDeviceRequest struct {
 	Name string `json:"name"`
 }
 
-// allowedApps is the app catalog for the MockNetPack capture API (M7 拍板 #5):
-// one neutral placeholder app by default; admin-only app management is a
-// recorded backlog item. Additional integrating apps can be onboarded at
-// runtime without a code change via the MOCKD_ALLOWED_APPS environment
-// variable (comma-separated bundle ids), so the repo stays neutral while
-// real apps can scan and register.
-var allowedApps = func() map[string]bool {
+// allowedAppsFile is the git-ignored runtime app catalog (hot-reloaded): one
+// bundle id per line, '#' comments and blank lines skipped. The path is
+// MOCKD_ALLOWED_APPS_FILE if set, otherwise ".allowed-apps.local" relative to
+// the working directory (start.sh cd's into the repo root, so it resolves to
+// <repo>/.allowed-apps.local). The file is never committed, so real bundle ids
+// stay out of the repository.
+func allowedAppsFile() string {
+	if p := os.Getenv("MOCKD_ALLOWED_APPS_FILE"); p != "" {
+		return p
+	}
+	return ".allowed-apps.local"
+}
+
+// loadAllowedApps returns the effective app catalog. It is computed on every
+// call so the local file is hot-reloaded without a restart:
+//  1. the neutral placeholder default ("com.example.integrating");
+//  2. MOCKD_ALLOWED_APPS env, comma-separated bundle ids (backward compat);
+//  3. the git-ignored local file (MOCKD_ALLOWED_APPS_FILE or .allowed-apps.local).
+func loadAllowedApps() map[string]bool {
 	m := map[string]bool{"com.example.integrating": true}
 	if extra := os.Getenv("MOCKD_ALLOWED_APPS"); extra != "" {
 		for _, app := range strings.Split(extra, ",") {
@@ -67,8 +79,17 @@ var allowedApps = func() map[string]bool {
 			}
 		}
 	}
+	if data, err := os.ReadFile(allowedAppsFile()); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			m[line] = true
+		}
+	}
 	return m
-}()
+}
 
 // RegisterDeviceResponse is returned on successful registration.
 type RegisterDeviceResponse struct {

@@ -122,3 +122,6 @@ pkg/admin/dashboard/dist/assets/
 pkg/admin/dashboard/dist/index.html
 .mcp.json
 .claude/worktrees/
+
+# Runtime app catalog (hot-reloaded by loadAllowedApps; never committed)
+.allowed-apps.local

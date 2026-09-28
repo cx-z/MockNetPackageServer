@@ -20,6 +20,11 @@ PORT=4280
 ADMIN_PORT=4290
 PID_FILE="/tmp/mockd-web.pid"
 
+# Runtime app catalog (git-ignored, hot-reloaded by loadAllowedApps): absolute
+# path so the daemon finds it regardless of its working directory. Add real
+# bundle ids there (one per line) — no restart needed.
+export MOCKD_ALLOWED_APPS_FILE="${MOCKD_ALLOWED_APPS_FILE:-$(pwd)/.allowed-apps.local}"
+
 # 1) 确保二进制存在（首次）或按需重建
 if [ ! -x "$BIN" ] || [ "${1:-}" = "rebuild" ]; then
   echo "==> 编译 $BIN ..."

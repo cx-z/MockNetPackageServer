@@ -38,7 +38,7 @@ func (a *API) handleCreatePairingToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_field", "app is required")
 		return
 	}
-	if !allowedApps[req.App] {
+	if !loadAllowedApps()[req.App] {
 		writeError(w, http.StatusBadRequest, "invalid_app", "app is not in the allowed catalog")
 		return
 	}
