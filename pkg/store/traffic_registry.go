@@ -16,15 +16,22 @@ import (
 // Traffic (session-scoped, runtime-only)
 // ============================================================================
 
-// MaxSessionTrafficEntries caps the number of traffic entries kept per active
-// session (4.10). A long capture must not grow server memory without bound:
-// once the cap is reached, new uploads replace the OLDEST entries (rolling
-// window). The session's RequestCount still counts every accepted upload, so
-// the Web badge ("共收到 N 个请求") keeps growing while the list shows the
-// most recent MaxSessionTrafficEntries rows. The cap is a server-side
-// contract bound: the SDK is never told — it just keeps uploading, and the
-// newest data always wins.
-const MaxSessionTrafficEntries = 20000
+// DefaultMaxSessionTrafficEntries is the default cap on the number of traffic
+// entries kept per active session (4.10, O2.1). A long capture must not grow
+// server memory without bound: once the cap is reached, new uploads replace
+// the OLDEST entries (rolling window). The session's RequestCount still counts
+// every accepted upload, so the Web badge ("共收到 N 个请求") keeps growing
+// while the list shows the most recent MaxSessionTrafficEntries rows. The cap
+// is a server-side contract bound: the SDK is never told — it just keeps
+// uploading, and the newest data always wins. Overridable via
+// --capture-session-max-entries (CaptureConfig.MaxSessionTrafficEntries).
+const DefaultMaxSessionTrafficEntries = 20000
+
+// DefaultTrafficRetention is how long an ended capture session and its traffic
+// stay queryable before the janitor purges them (O3, from session end).
+// Overridable via --capture-traffic-retention-hours
+// (CaptureConfig.TrafficRetention).
+const DefaultTrafficRetention = 48 * time.Hour
 
 // retainedSession holds the traffic of an ended capture session for a bounded
 // window (RetainedTrafficTTL) so records the user saw on the page can still be
@@ -118,8 +125,8 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 	// slice, and only the surviving new entries enter it.
 	existing := len(m.traffic[sessionID]) - len(stored)
 	var trimmedOld int // how many pre-existing entries the window trim dropped
-	if n := len(m.traffic[sessionID]); n > MaxSessionTrafficEntries {
-		drop := n - MaxSessionTrafficEntries
+	if n := len(m.traffic[sessionID]); n > m.cfg.MaxSessionTrafficEntries {
+		drop := n - m.cfg.MaxSessionTrafficEntries
 		m.unindexTraffic(m.traffic[sessionID][:drop])
 		trimmedOld = drop
 		m.traffic[sessionID] = append([]*capture.TrafficEntry(nil), m.traffic[sessionID][drop:]...)

@@ -478,7 +478,7 @@ func TestCaptureManager_UploadTraffic_RollingWindow(t *testing.T) {
 	}
 
 	base := time.Now()
-	entries := make([]*capture.TrafficEntry, store.MaxSessionTrafficEntries+10)
+	entries := make([]*capture.TrafficEntry, store.DefaultMaxSessionTrafficEntries+10)
 	for i := range entries {
 		entries[i] = trafficEntry("GET", "http://example.com/t", base.Add(time.Duration(i)*time.Millisecond))
 	}
@@ -494,8 +494,8 @@ func TestCaptureManager_UploadTraffic_RollingWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSessionTraffic() = %v", err)
 	}
-	if total != store.MaxSessionTrafficEntries || len(list) != store.MaxSessionTrafficEntries {
-		t.Fatalf("total=%d len=%d, want %d/%d", total, len(list), store.MaxSessionTrafficEntries, store.MaxSessionTrafficEntries)
+	if total != store.DefaultMaxSessionTrafficEntries || len(list) != store.DefaultMaxSessionTrafficEntries {
+		t.Fatalf("total=%d len=%d, want %d/%d", total, len(list), store.DefaultMaxSessionTrafficEntries, store.DefaultMaxSessionTrafficEntries)
 	}
 	// The dropped 10 are the OLDEST; the kept window starts at index 10 of the
 	// upload and the newest entry is preserved.
@@ -521,8 +521,8 @@ func TestCaptureManager_UploadTraffic_RollingWindow(t *testing.T) {
 		t.Fatalf("second UploadTraffic() = %v", err)
 	}
 	list, total, _ = m.ListSessionTraffic(ctx, s.ID, 0, 0)
-	if total != store.MaxSessionTrafficEntries {
-		t.Fatalf("total after second batch = %d, want %d", total, store.MaxSessionTrafficEntries)
+	if total != store.DefaultMaxSessionTrafficEntries {
+		t.Fatalf("total after second batch = %d, want %d", total, store.DefaultMaxSessionTrafficEntries)
 	}
 	if list[len(list)-1].Timestamp != entries[0].Timestamp {
 		t.Errorf("newest after second batch = %v, want entry[0] %v", list[len(list)-1].Timestamp, entries[0].Timestamp)
@@ -875,5 +875,94 @@ func TestCaptureManager_RetainedTraffic_Expires(t *testing.T) {
 	}
 	if _, err := m.CreateShare(ctx, id); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("CreateShare(after purge) = %v, want ErrNotFound", err)
+	}
+}
+
+// ============================================================================
+// M2-1: 上限契约化与配置化（O2.1）
+// ============================================================================
+
+// TestCaptureManager_DefaultCaptureConfig_M2Values asserts the M2 defaults:
+// session traffic cap 20000 and ended-session retention 48h (O2.1/O3).
+func TestCaptureManager_DefaultCaptureConfig_M2Values(t *testing.T) {
+	cfg := store.DefaultCaptureConfig()
+	if cfg.MaxSessionTrafficEntries != store.DefaultMaxSessionTrafficEntries {
+		t.Errorf("MaxSessionTrafficEntries = %d, want %d", cfg.MaxSessionTrafficEntries, store.DefaultMaxSessionTrafficEntries)
+	}
+	if cfg.TrafficRetention != 48*time.Hour {
+		t.Errorf("TrafficRetention = %v, want 48h", cfg.TrafficRetention)
+	}
+}
+
+// TestCaptureManager_ConfigZero_FallsBackToDefaults asserts NewCaptureManager
+// falls back to the server defaults when the injected config carries zero
+// values (the CLI passes 0 for unset flags).
+func TestCaptureManager_ConfigZero_FallsBackToDefaults(t *testing.T) {
+	fs := newTestStore(t)
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), fs.Shares(), store.CaptureConfig{})
+	t.Cleanup(m.Stop)
+
+	got := m.Config()
+	if got.MaxSessionTrafficEntries != store.DefaultMaxSessionTrafficEntries {
+		t.Errorf("MaxSessionTrafficEntries = %d, want default %d", got.MaxSessionTrafficEntries, store.DefaultMaxSessionTrafficEntries)
+	}
+	if got.TrafficRetention != 48*time.Hour {
+		t.Errorf("TrafficRetention = %v, want default 48h", got.TrafficRetention)
+	}
+}
+
+// TestCaptureManager_RollingWindow_UsesConfiguredCap asserts the per-session
+// traffic cap is honored from CaptureConfig.MaxSessionTrafficEntries (O2.1):
+// overflow drops the oldest entries, RequestCount still counts every upload.
+func TestCaptureManager_RollingWindow_UsesConfiguredCap(t *testing.T) {
+	fs := newTestStore(t)
+	cfg := store.DefaultCaptureConfig()
+	cfg.MaxSessionTrafficEntries = 3 // tiny cap to exercise the window
+	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), fs.Shares(), cfg)
+	t.Cleanup(m.Stop)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+
+	base := time.Now()
+	entries := make([]*capture.TrafficEntry, 5)
+	for i := range entries {
+		entries[i] = trafficEntry("GET", "http://example.com/t", base.Add(time.Duration(i)*time.Millisecond))
+	}
+	count, err := m.UploadTraffic(ctx, "app", "d1", s.ID, entries)
+	if err != nil {
+		t.Fatalf("UploadTraffic() = %v", err)
+	}
+	if count != len(entries) {
+		t.Fatalf("count = %d, want %d (all accepted)", count, len(entries))
+	}
+
+	list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("ListSessionTraffic() = %v", err)
+	}
+	if total != 3 || len(list) != 3 {
+		t.Fatalf("total=%d len=%d, want 3/3 (configured cap)", total, len(list))
+	}
+	// The 2 dropped entries are the OLDEST; the newest 3 survive.
+	if list[0].Timestamp != entries[2].Timestamp {
+		t.Errorf("oldest kept = %v, want upload entry[2] %v", list[0].Timestamp, entries[2].Timestamp)
+	}
+	if list[len(list)-1].Timestamp != entries[4].Timestamp {
+		t.Errorf("newest kept = %v, want upload entry[4] %v", list[len(list)-1].Timestamp, entries[4].Timestamp)
+	}
+
+	got, err := m.GetSession(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("GetSession() = %v", err)
+	}
+	if got.RequestCount != len(entries) {
+		t.Errorf("RequestCount = %d, want %d (counts every upload)", got.RequestCount, len(entries))
 	}
 }

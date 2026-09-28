@@ -129,6 +129,11 @@ type CaptureSession struct {
 	StartedAt time.Time `json:"startedAt"`
 	// EndedAt is when the session ended (nil while capturing).
 	EndedAt *time.Time `json:"endedAt,omitempty"`
+	// RetainUntil is when the ended session's traffic expires (O3 48h 保留):
+	// until then the session and its traffic stay queryable via the traffic
+	// list/history API; afterwards the janitor purges the record and traffic.
+	// Nil while capturing (no retention window applies).
+	RetainUntil *time.Time `json:"retainUntil,omitempty"`
 	// RequestCount is the number of traffic entries captured in this session.
 	RequestCount int `json:"requestCount"`
 	// ViewerCount is the number of Web pages currently viewing this session.

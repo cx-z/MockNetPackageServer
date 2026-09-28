@@ -62,18 +62,29 @@ type CaptureConfig struct {
 	// resolvable by ID for share-link creation (M8.6 断开后可分享). It bounds
 	// the in-memory retained store; 0 means the default (7d, same as ShareTTL).
 	RetainedTrafficTTL time.Duration
+	// MaxSessionTrafficEntries caps the number of traffic entries kept per
+	// session (O2.1, contract: 超限丢最旧 rolling window). 0 means the server
+	// default (DefaultMaxSessionTrafficEntries = 20000).
+	MaxSessionTrafficEntries int
+	// TrafficRetention is how long an ended session and its traffic stay
+	// queryable before the janitor purges them (O3 48h 保留, from session end).
+	// 0 means the server default (48h).
+	TrafficRetention time.Duration
 }
 
 // DefaultCaptureConfig returns the default capture configuration
 // (heartbeat 20s advised / 60s timeout, viewer lease 120s, rule retention 7d,
-// retained-traffic window 7d aligned with share-link TTL).
+// retained-traffic window 7d aligned with share-link TTL, session traffic cap
+// 20000 entries, ended-session traffic retention 48h).
 func DefaultCaptureConfig() CaptureConfig {
 	return CaptureConfig{
-		HeartbeatInterval:  20 * time.Second,
-		HeartbeatTimeout:   60 * time.Second,
-		ViewerTTL:          120 * time.Second,
-		MockRuleRetention:  7 * 24 * time.Hour,
-		RetainedTrafficTTL: ShareTTL,
+		HeartbeatInterval:       20 * time.Second,
+		HeartbeatTimeout:        60 * time.Second,
+		ViewerTTL:               120 * time.Second,
+		MockRuleRetention:       7 * 24 * time.Hour,
+		RetainedTrafficTTL:      ShareTTL,
+		MaxSessionTrafficEntries: DefaultMaxSessionTrafficEntries,
+		TrafficRetention:        DefaultTrafficRetention,
 	}
 }
 
@@ -154,6 +165,12 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules 
 	}
 	if cfg.RetainedTrafficTTL <= 0 {
 		cfg.RetainedTrafficTTL = DefaultCaptureConfig().RetainedTrafficTTL
+	}
+	if cfg.MaxSessionTrafficEntries <= 0 {
+		cfg.MaxSessionTrafficEntries = DefaultCaptureConfig().MaxSessionTrafficEntries
+	}
+	if cfg.TrafficRetention <= 0 {
+		cfg.TrafficRetention = DefaultCaptureConfig().TrafficRetention
 	}
 	return &CaptureManager{
 		devices:       devices,

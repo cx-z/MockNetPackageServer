@@ -34,7 +34,7 @@ func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 	// Fill the window exactly, then overflow by one entry: the oldest entry is
 	// trimmed from the slice AND must leave the index.
 	base := time.Now()
-	first := make([]*capture.TrafficEntry, store.MaxSessionTrafficEntries)
+	first := make([]*capture.TrafficEntry, store.DefaultMaxSessionTrafficEntries)
 	for i := range first {
 		first[i] = trafficEntry("GET", "http://example.com/first", base.Add(time.Duration(i)*time.Millisecond))
 	}
@@ -42,7 +42,7 @@ func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 		t.Fatalf("UploadTraffic(first) = %v", err)
 	}
 	full, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
-	if err != nil || len(full) != store.MaxSessionTrafficEntries {
+	if err != nil || len(full) != store.DefaultMaxSessionTrafficEntries {
 		t.Fatalf("ListSessionTraffic(full) = %d entries, err %v", len(full), err)
 	}
 	oldestID := full[0].ID
@@ -55,7 +55,7 @@ func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 		t.Errorf("GetTraffic(trimmed oldest) = %v, want ErrNotFound (index must follow the window trim)", err)
 	}
 	window, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
-	if err != nil || len(window) != store.MaxSessionTrafficEntries {
+	if err != nil || len(window) != store.DefaultMaxSessionTrafficEntries {
 		t.Fatalf("ListSessionTraffic(window) = %d entries, err %v", len(window), err)
 	}
 	survivorID := window[0].ID
