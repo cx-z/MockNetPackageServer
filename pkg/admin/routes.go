@@ -320,6 +320,10 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	// while the QR modal is open to detect scan completion (a device
 	// registered with the token), then auto-closes the modal.
 	mux.HandleFunc("GET "+captureAPIPrefix+"/pairing-tokens/{token}", a.requireAuth(a.handleGetPairingToken))
+	// M9.4 (contract v0.9.1): app catalog for the Web "App" dropdown — served
+	// dynamically so bundle ids added to the hot-reloaded local catalog file
+	// appear in the dropdown without a restart.
+	mux.HandleFunc("GET "+captureAPIPrefix+"/apps", a.requireAuth(a.handleListApps))
 
 	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions", a.requireAuth(a.handleActivateSession))
 	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions", a.requireAuth(a.handleListSessions))

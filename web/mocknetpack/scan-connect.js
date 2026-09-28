@@ -66,8 +66,32 @@ const SCAN_TOKEN_TTL_SEC = 600; // 10 分钟（服务端 pairingTokenTTL）
 let scanQR = null;              // QRCode 实例
 let scanCountdownTimer = null;
 
+/// 从服务端加载 app 目录（GET /api/v1/apps，M9.4）填充扫码弹窗下拉框。
+/// 目录由后端热加载（默认占位 + MOCKD_ALLOWED_APPS + git-ignored 本地文件），
+/// 所以往 allowed-apps.local 里加 bundle id 后，下拉框刷新即出现、无需重启。
+/// 加载失败时保留现有（默认）选项，不影响签发。
+async function loadAppOptions() {
+  const sel = $("addApp");
+  if (!sel || sel.dataset.loaded) return;
+  try {
+    const res = await apiFetch("/apps");
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && Array.isArray(data.apps) && data.apps.length > 0) {
+      sel.innerHTML = "";
+      for (const app of data.apps) {
+        const opt = document.createElement("option");
+        opt.value = app;
+        opt.textContent = app;
+        sel.appendChild(opt);
+      }
+      sel.dataset.loaded = "1";
+    }
+  } catch (_) { /* 保留默认选项 */ }
+}
+
 async function openScanConnectModal() {
   // 扫码连接弹窗内 App 下拉（v1.5：手动注册入口已移除，下拉迁移至扫码弹窗）。
+  await loadAppOptions(); // M9.4：先同步服务端 app 目录，再取当前选中值
   const app = $("addApp").value || "com.example.integrating";
   $("scanConnectApp").textContent = "App：" + app;
   $("scanConnectError").classList.add("hidden");

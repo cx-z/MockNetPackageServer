@@ -745,6 +745,38 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   # ==========================================================================
+  # 7a. App 目录（M9.4，v0.9.1）：Web「App」下拉框的数据源
+  # Web 扫码弹窗的 App 下拉框不再硬编码，而是 GET /apps 动态拉取服务端生效中的
+  # app 目录（默认占位 + MOCKD_ALLOWED_APPS 环境变量 + git-ignored 本地文件
+  # allowed-apps.local，热加载：改文件无需重启）。真实 bundle id 只存在于
+  # 本地文件，不进入仓库。
+  # ==========================================================================
+  /apps:
+    get:
+      tags: [devices]
+      x-milestone: m9
+      summary: 查询生效中的 app 目录（requireAuth，Web 下拉框数据源）
+      description: |
+        返回按字典序排序的 app 目录。目录由 loadAllowedApps() 每次请求实时计算：
+        默认占位 com.example.integrating + MOCKD_ALLOWED_APPS 环境变量（逗号分隔，
+        向后兼容）+ 本地文件（MOCKD_ALLOWED_APPS_FILE 或 .allowed-apps.local，
+        每行一个 bundle id，# 注释与空行忽略）。修改本地文件立即生效，无需重启服务。
+      operationId: listApps
+      responses:
+        '200':
+          description: 生效中的 app 目录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAppsResponse'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================================================
   # 7b. 服务器局域网地址（M9.1-fix，v0.8.1）：localhost 场景二维码修复
   # 浏览器用 localhost 打开 Web 时，location.origin 对手机不可达（手机连自己的
   # localhost 被拒）。Web 先查此端点拿服务端局域网可达 origin，替换二维码 u 字段。
@@ -1168,6 +1200,16 @@ components:
         origin:
           type: string
           description: 服务端局域网可达 origin（如 http://192.168.1.3:4290，无路径）；Web 拼接 /api/v1 作二维码 u
+
+    ListAppsResponse:
+      type: object
+      required: [apps]
+      properties:
+        apps:
+          type: array
+          items:
+            type: string
+          description: 生效中的 app 目录（字典序）；Web 扫码弹窗下拉框的数据源（M9.4）
 
     RegisterDeviceResponse:
       type: object

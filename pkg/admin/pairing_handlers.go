@@ -7,6 +7,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -21,6 +22,25 @@ type CreatePairingTokenResponse struct {
 	Token     string    `json:"token"`
 	App       string    `json:"app"`
 	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// ListAppsResponse is the GET /api/v1/apps reply: the effective app catalog
+// (default placeholder + MOCKD_ALLOWED_APPS env + git-ignored local file),
+// sorted so the Web dropdown is stable across reloads.
+type ListAppsResponse struct {
+	Apps []string `json:"apps"`
+}
+
+// handleListApps handles GET /api/v1/apps (requireAuth): the Web populates its
+// "App" dropdown from here, so bundle ids added to the hot-reloaded local
+// catalog file (allowed-apps.local) appear in the dropdown without a restart.
+func (a *API) handleListApps(w http.ResponseWriter, r *http.Request) {
+	apps := make([]string, 0, 8)
+	for app := range loadAllowedApps() {
+		apps = append(apps, app)
+	}
+	sort.Strings(apps)
+	writeJSON(w, http.StatusOK, ListAppsResponse{Apps: apps})
 }
 
 // handleCreatePairingToken handles POST /api/v1/pairing-tokens (requireAuth):
