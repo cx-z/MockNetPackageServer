@@ -221,11 +221,11 @@ func generateAuthTemplate(params map[string]string) (*config.MockCollection, err
 		Name:    params["name"],
 		Mocks: []*config.MockConfiguration{
 			newMock("auth-login", "Login", "POST", basePath+"/login", 200,
-				`{"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeIntegratingAppF2QT4fwpMeJf36POk6yJV_adQssw5c", "expiresIn": 3600, "tokenType": "Bearer"}`, now),
+				`{"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", "expiresIn": 3600, "tokenType": "Bearer"}`, now),
 			newMock("auth-logout", "Logout", "POST", basePath+"/logout", 200,
 				`{"message": "Logged out successfully"}`, now),
 			newMock("auth-refresh", "Refresh Token", "POST", basePath+"/refresh", 200,
-				`{"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeIntegratingAppF2QT4fwpMeJf36POk6yJV_adQssw5c", "expiresIn": 3600, "tokenType": "Bearer"}`, now),
+				`{"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", "expiresIn": 3600, "tokenType": "Bearer"}`, now),
 			newMock("auth-me", "Get Current User", "GET", basePath+"/me", 200,
 				`{"id": 1, "email": "user@example.com", "name": "John Doe", "role": "user"}`, now),
 		},
