@@ -99,6 +99,17 @@ async function openScanConnectModal() {
   await issueScanToken(app);
 }
 
+// M9.4-fix（v0.9.1）：切换 App 立即重新签发——之前下拉框未绑定 change，
+// 二维码仍绑定旧 app，手机扫旧码会报 app 不对（需手动刷新才正确）。
+$("addApp").addEventListener("change", () => {
+  const app = $("addApp").value;
+  if (!app) return;
+  $("scanConnectApp").textContent = "App：" + app;
+  if (!$("scanConnectModal").classList.contains("hidden")) {
+    issueScanToken(app); // 弹窗开着 → 用新 app 重新签发并渲染二维码
+  }
+});
+
 /// 登录态签发配对令牌并渲染二维码；失败显示错误、保留弹窗可重试。
 async function issueScanToken(app) {
   clearScanCountdown();
