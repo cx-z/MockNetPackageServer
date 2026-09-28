@@ -2,7 +2,7 @@
 # openapi-check.rb — MockNetPack openapi 契约校验（A8：ruby 校验）。
 # 用法：ruby scripts/openapi-check.rb [path-to-mocknetpack.yaml]
 # 校验：YAML 语法（Psych）+ OpenAPI 结构 + 关键契约点（版本号、traffic 过滤参数、
-# CaptureSession.retainUntil）。任何不满足即非零退出。
+# CaptureSession.retainUntil、O4 权限字段与 403 语义、O5 分享持久化路径）。任何不满足即非零退出。
 
 require "yaml"
 
@@ -11,7 +11,7 @@ doc = YAML.load_file(path)
 raise "not a Hash" unless doc.is_a?(Hash)
 
 %w[openapi info paths].each { |k| raise "missing top-level #{k}" unless doc.key?(k) }
-raise "version != 0.10.0 (got #{doc.dig("info", "version").inspect})" unless doc.dig("info", "version") == "0.10.0"
+raise "version != 0.11.0 (got #{doc.dig("info", "version").inspect})" unless doc.dig("info", "version") == "0.11.0"
 raise "title missing" if doc.dig("info", "title").to_s.empty?
 
 paths = doc["paths"]
@@ -35,5 +35,20 @@ names = tl.map { |x| x["name"] }
 
 cs = doc.dig("components", "schemas", "CaptureSession", "properties")
 raise "CaptureSession missing retainUntil" unless cs && cs.key?("retainUntil")
+
+# O4（v0.11.0）：MockRule 纯服务端字段 owner/updatedBy；PUT/DELETE 403 权限语义。
+mr = doc.dig("components", "schemas", "MockRule", "properties")
+raise "MockRule missing owner" unless mr && mr.key?("owner")
+raise "MockRule missing updatedBy" unless mr && mr.key?("updatedBy")
+%w[put delete].each do |m|
+  responses = paths.dig("/devices/{app}/{did}/mock-rules/{ruleId}", m, "responses")
+  raise "mock-rules #{m} missing 403" unless responses && responses.key?("403")
+end
+
+# O5（v0.11.0）：分享持久化路径（POST /shares + 公开 GET /shares/{shareId}）。
+%w[post].each { |m| raise "shares #{m} missing" unless paths.dig("/shares", m) }
+raise "shares get missing" unless paths.dig("/shares/{shareId}", "get")
+raise "CreateShareResponse missing expiresAt" unless doc.dig("components", "schemas", "CreateShareResponse", "properties", "expiresAt")
+raise "ShareSnapshot missing expiresAt" unless doc.dig("components", "schemas", "ShareSnapshot", "properties", "expiresAt")
 
 puts "OK: openapi v#{doc.dig("info", "version")}, #{paths.size} paths, ruby YAML + structure checks passed"

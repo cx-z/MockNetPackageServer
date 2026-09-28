@@ -2,9 +2,19 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.10.0
+  version: 0.11.0
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
+    - 权限与分享（O4/O5，v0.11.0）：MockRule 新增 owner（创建者用户名，服务端从当前会话用户写入，
+      创建时设）与 updatedBy（最后修改者，每次 PUT 更新）两个纯服务端字段——Web 全量列表下发展示；
+      SDK 增量拉取（sinceVersion）只返回 SDK 消费字段（id/method/path/response/enabled/effective），
+      绝不携带 owner/updatedBy 等纯服务端/Web-only 字段。权限矩阵：查看规则对设备可见者全部开放
+      （设备隔离 M7.2.2 不变）；编辑回包/启停 toggle/删除仅规则 owner 与 admin（PUT / DELETE 非 owner
+      且非 admin → 403 forbidden，且 403 不泄露规则存在性——对非 admin 未知 ruleId 同样 403）；
+      「Mock 此请求」创建新规则所有开发者可用，创建后自己即 owner。存量规则（owner 为空，v0.11.0
+      之前创建）仅 admin 可管理，dev 只读 403。分享持久化（O5）：ShareSnapshot 随 data.json 落盘，
+      重启不失效，7 天 TTL（expiresAt = 创建时刻 + 7 天）不变——过期链接返回 404，janitor 每小时
+      清理过期快照（与 O3 48h 会话流量保留并存）。
     - 容量与留存（M2，v0.10.0）：会话流量上限契约化（--capture-session-max-entries，默认 20000，
       超限丢最旧 rolling window）；服务端过滤下推（GET /sessions/{id}/traffic 新增
       keyword/statusCode/from/to，过滤先于分页）；会话结束后流量保留 48h（--capture-traffic-retention-hours，
@@ -401,6 +411,61 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /shares:
+    post:
+      tags: [shares]
+      x-milestone: m8
+      summary: 创建分享链接（快照）
+      description: |
+        把一条流量（进行中会话内，或结束会话的保留区内）复制为独立只读快照并生成分享链接
+        （M8.5/M8.6）。快照自包含（深度拷贝，切断与原会话/流量的关联）。持久化语义（O5，v0.11.0）：
+        快照随 data.json 落盘、服务重启不失效；有效期 7 天（expiresAt = 创建时刻 + 7 天），过期链接
+        返回 404，janitor 每小时清理过期快照（与 O3 48h 会话流量保留并存）。
+        需要登录（设备可见者：设备 owner 或 admin）。链接本身公开只读（GET /shares/{id} 免登录）。
+      operationId: createShare
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateShareRequest'
+      responses:
+        '201':
+          description: 创建成功，返回分享链接（7 天有效）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateShareResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /shares/{shareId}:
+    get:
+      tags: [shares]
+      x-milestone: m8
+      summary: 读取分享快照（公开只读，免登录）
+      description: |
+        按分享 ID 返回只读快照。持久化语义（O5，v0.11.0）：链接跨服务重启有效（快照落盘）；
+        过期（创建后 7 天）或未知 ID 一律 404。
+      operationId: getShare
+      parameters:
+        - name: shareId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 分享快照
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareSnapshot'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /sessions/{id}/traffic:
     get:
       tags: [traffic]
@@ -500,7 +565,9 @@ paths:
       description: |
         SDK 侧：携带 sinceVersion 增量拉取本设备运行时生效规则；version 为单调递增版本号，规则变更（创建/编辑/启停/删除）即 +1。
         仅返回 effective=true 的规则供 SDK 回包（异常态同接口多条 enabled 时该接口规则全部 effective=false、不出现在 SDK 集）。
-        Web 侧：不带 sinceVersion，返回本设备全部规则（含停用、含 source 快照），并附带 conflicts 异常态报告。
+        SDK 拉取响应只含 SDK 消费字段（id/method/path/response/enabled/effective）——owner/updatedBy 等
+        纯服务端字段（O4，v0.11.0）与 source/note/lastUsedAt 等 Web-only 字段绝不下发 SDK。
+        Web 侧：不带 sinceVersion，返回本设备全部规则（含停用、含 source 快照、含 owner/updatedBy），并附带 conflicts 异常态报告。
         匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口同时仅一条生效（前端互斥 + 服务端兜底：多条生效时该接口不 Mock 并在 conflicts 下发前端弹窗）。
       operationId: listMockRules
       parameters:
@@ -561,6 +628,8 @@ paths:
         必填（空或纯空白返回 400，M7）；纯开关操作（response 原样回传）note 可空。
         单条覆盖式更新、不做编辑历史；编辑成功刷新 lastUsedAt。
         同一接口仅一条生效的服务端兜底在此执行：若置为启用时发现同接口已有其他生效规则，返回 409（前端应先做开关互斥）。
+        权限（O4，v0.11.0）：编辑/启停仅规则 owner 与 admin——非 owner 且非 admin 返回 403 forbidden，
+        且不泄露规则存在性（对非 admin，未知 ruleId 同样 403；admin 才见真实 404）。
       operationId: updateMockRule
       parameters:
         - $ref: '#/components/parameters/AppPath'
@@ -581,6 +650,12 @@ paths:
                 $ref: '#/components/schemas/MockRule'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          description: 权限不足——仅规则 owner 或 admin 可编辑/启停（O4，v0.11.0）；未知 ruleId 对非 admin 同样 403（不泄露存在性）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -593,6 +668,9 @@ paths:
       tags: [mock-rules]
       x-milestone: m4
       summary: 删除规则
+      description: |
+        权限（O4，v0.11.0）：删除仅规则 owner 与 admin——非 owner 且非 admin 返回 403 forbidden
+        （未知 ruleId 对非 admin 同样 403，不泄露存在性）。
       operationId: deleteMockRule
       parameters:
         - $ref: '#/components/parameters/AppPath'
@@ -601,6 +679,12 @@ paths:
       responses:
         '204':
           description: 已删除
+        '403':
+          description: 权限不足——仅规则 owner 或 admin 可删除（O4，v0.11.0）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1594,6 +1678,20 @@ components:
             规则备注（M5）。单条字符串，编辑保存时覆盖式更新，不做编辑历史。
             创建时可空（null，兼容 M4 及之前老规则）；Web 编辑弹窗中必填（PUT 时服务端校验非空）。
             纯管理面字段，不参与匹配、不下发给 SDK。
+        owner:
+          type: string
+          nullable: true
+          description: |
+            规则创建者用户名（O4，v0.11.0）。服务端从当前会话用户写入，创建时设；空（null）
+            表示存量规则（v0.11.0 之前创建），仅 admin 可管理（O4.3）。
+            纯服务端字段：Web 全量列表下发展示；SDK 增量拉取不下发（SDK 只关心
+            method/path/response/enabled/effective）。
+        updatedBy:
+          type: string
+          nullable: true
+          description: |
+            最后修改者用户名（O4，v0.11.0）。每次 PUT 更新时由服务端写入当前会话用户。
+            纯服务端字段：Web 全量列表下发展示；SDK 增量拉取不下发。
 
     MockRuleSource:
       type: object
@@ -1724,6 +1822,46 @@ components:
               message:
                 type: string
                 example: "不允许同一个接口同时开启多个 Mock 规则"
+
+    # ---------------------------------------------------------------- 分享（M8.5/O5）
+    CreateShareRequest:
+      type: object
+      required: [trafficId]
+      properties:
+        trafficId:
+          type: string
+          description: 被分享流量条目的 ID（进行中会话内，或结束会话 48h 保留区内）
+    CreateShareResponse:
+      type: object
+      required: [shareId, url, expiresAt]
+      properties:
+        shareId:
+          type: string
+          description: 分享 ID（不可猜测 UUID；链接唯一标识）
+        url:
+          type: string
+          example: /mocknetpack/#/share/7306f2b0-55db-48cb-8e8f-068a9f0136b8
+          description: 分享页路径（相对 Web 根）
+        expiresAt:
+          type: string
+          format: date-time
+          description: 失效时刻（创建时刻 + 7 天，O5 持久化语义：跨重启仍按此 TTL 过期）
+    ShareSnapshot:
+      type: object
+      required: [shareId, createdAt, expiresAt, entry]
+      properties:
+        shareId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          description: 7 天 TTL 失效时刻；过期后 GET /shares/{id} 返回 404
+        entry:
+          $ref: '#/components/schemas/TrafficEntry'
+          description: 只读快照（深度拷贝，切断与原会话/流量的关联；sessionId 置空不暴露内部关联）
 
     # ---------------------------------------------------------------- 账号（M7.1）
     User:
