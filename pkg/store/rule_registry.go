@@ -121,12 +121,29 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 	return &capture.MockRuleView{MockRule: created, Effective: in.Enabled}, version, nil
 }
 
+// canManageRule reports whether caller may mutate rule r (O4.2/O4.3). nil
+// caller (--no-auth smoke mode) always passes, mirroring the requireAuth
+// bypass; admins pass; otherwise only the rule's owner passes. A rule with an
+// empty owner is a legacy rule (pre-O4) — admin-manageable only (O4.3).
+func canManageRule(caller *RuleCaller, r *capture.MockRule) bool {
+	if caller == nil {
+		return true
+	}
+	if caller.IsAdmin {
+		return true
+	}
+	return r.Owner != "" && r.Owner == caller.Username
+}
+
 // UpdateMockRule edits a rule's canned response, note, and/or enabled switch
 // (M5). The match key (Method+Path) and the source snapshot are immutable —
 // the input type UpdateMockRuleInput deliberately omits them. Turning the switch
 // on is rejected with ErrRuleConflict if another enabled rule already matches
 // the rule's (frozen) interface. An absent Enabled pointer leaves the current
 // switch untouched. The update and the version bump run in ONE store lock (4.9).
+// O4.2: only the rule's owner or an admin may edit/toggle; any other caller
+// gets ErrRuleForbidden. For non-admin callers a missing ruleID also returns
+// ErrRuleForbidden (not ErrRuleNotFound) so rule existence cannot be probed.
 func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID string, in *capture.UpdateMockRuleInput, caller *RuleCaller) (*capture.MockRuleView, int, error) {
 	var updated *capture.MockRule
 	version, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
@@ -138,7 +155,15 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 			}
 		}
 		if existing == nil {
+			// 不泄露规则存在性：非 admin 对未知 ruleID 统一按无权限处理。
+			if caller != nil && !caller.IsAdmin {
+				return nil, false, ErrRuleForbidden
+			}
 			return nil, false, ErrRuleNotFound
+		}
+		// O4.2 权限矩阵：编辑/启停仅 owner 与 admin。
+		if !canManageRule(caller, existing) {
+			return nil, false, ErrRuleForbidden
 		}
 
 		// M7: note is required only when the PUT actually edits the canned
@@ -202,17 +227,24 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 
 // DeleteMockRule removes a rule by ID (scoped to app/did). The delete and the
 // version bump run in ONE store lock (4.9) so the SDK always sees the rule-set
-// version advance together with the removal. caller is reserved for the O4
-// permission check (M3-2); this milestone stamps fields only.
+// version advance together with the removal. O4.2: only the rule's owner or an
+// admin may delete; other callers get ErrRuleForbidden (and, like Update, a
+// missing ruleID is masked as ErrRuleForbidden for non-admin callers).
 func (m *CaptureManager) DeleteMockRule(ctx context.Context, app, did, ruleID string, caller *RuleCaller) (int, error) {
 	return m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
 		for i, r := range rules {
 			if r.ID == ruleID {
+				if !canManageRule(caller, r) {
+					return nil, false, ErrRuleForbidden
+				}
 				out := make([]*capture.MockRule, 0, len(rules)-1)
 				out = append(out, rules[:i]...)
 				out = append(out, rules[i+1:]...)
 				return out, true, nil
 			}
+		}
+		if caller != nil && !caller.IsAdmin {
+			return nil, false, ErrRuleForbidden
 		}
 		return nil, false, ErrRuleNotFound
 	})

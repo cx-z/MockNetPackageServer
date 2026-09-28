@@ -24,6 +24,12 @@ var (
 	ErrSessionEnded = errors.New("capture session already ended")
 	// ErrRuleNotFound means no mock rule with the given ID exists for the device.
 	ErrRuleNotFound = errors.New("mock rule not found")
+	// ErrRuleForbidden means the caller may not mutate the rule (O4.2): only the
+	// rule's owner or an admin may edit/toggle/delete it. For non-admin callers
+	// this error also masks non-existence (a missing ruleID returns
+	// ErrRuleForbidden, not ErrRuleNotFound) so the 403/404 difference cannot
+	// be used to probe rule IDs (maps to HTTP 403).
+	ErrRuleForbidden = errors.New("mock rule permission denied")
 	// ErrRuleConflict means enabling this rule would leave more than one enabled
 	// rule on the same interface (maps to HTTP 409).
 	ErrRuleConflict = errors.New("mock rule conflict: another enabled rule already exists for this interface")

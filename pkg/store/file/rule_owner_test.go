@@ -79,12 +79,12 @@ func TestMockRule_UpdatedByStampOnUpdate(t *testing.T) {
 		t.Errorf("owner changed on update = %q, want %q (owner is immutable)", u1.Owner, "alice")
 	}
 
-	// 他人编辑 → updatedBy 记录最后修改者。
+	// admin 修改 → updatedBy 记录最后修改者（owner 不变；M3-2 权限：非 owner 需 admin）。
 	u2, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID,
 		updateInput(`{"v":3}`, "edit by bob", boolPtr(false)),
-		&store.RuleCaller{Username: "bob", IsAdmin: false})
+		&store.RuleCaller{Username: "bob", IsAdmin: true})
 	if err != nil {
-		t.Fatalf("UpdateMockRule(bob) = %v", err)
+		t.Fatalf("UpdateMockRule(admin bob) = %v", err)
 	}
 	if u2.UpdatedBy != "bob" {
 		t.Errorf("updatedBy = %q, want %q", u2.UpdatedBy, "bob")

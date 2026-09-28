@@ -192,6 +192,8 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "Resource not found")
 	case errors.Is(err, store.ErrRuleNotFound):
 		writeError(w, http.StatusNotFound, "rule_not_found", "Mock rule not found")
+	case errors.Is(err, store.ErrRuleForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "insufficient permission: only the rule owner or an admin may modify this rule")
 	case errors.Is(err, store.ErrRuleConflict):
 		writeError(w, http.StatusConflict, "rule_conflict", store.MockRuleConflictMessage)
 	case errors.Is(err, store.ErrNoteRequired):
