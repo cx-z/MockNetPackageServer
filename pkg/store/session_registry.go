@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/getmockd/mockd/internal/id"
@@ -267,6 +269,7 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 				m.checkDeviceHealth(ctx)
 				m.checkViewerLeases(ctx)
 			case <-hourly.C:
+				m.LogDataFileSize() // O2.4 存储水位：每小时一行 data.json 体积
 				m.PurgeExpiredRules(ctx)
 				m.PurgeExpiredEndedSessions(ctx)
 				m.PurgeExpiredRetainedTraffic(ctx)
@@ -415,3 +418,55 @@ func (m *CaptureManager) activeSessionFor(ctx context.Context, app, did string) 
 
 // activeStatus is a shared pointer to the capturing session status used in filters.
 var activeStatus = capture.SessionStatusCapturing
+
+// ============================================================================
+// O2.4 存储水位监控
+// ============================================================================
+
+// DefaultDataFileWarnBytes is the data.json size watermark at which the
+// storage-size check logs at WARN level (500MB, non-blocking).
+const DefaultDataFileWarnBytes = 500 * 1024 * 1024
+
+// SetDataFilePath points the storage-watermark check at the persisted
+// data.json file (O2.4). An empty path disables the check (tests / pure
+// in-memory runs).
+func (m *CaptureManager) SetDataFilePath(p string) {
+	m.dataFile = p
+}
+
+// LogDataFileSize emits one line with the current data.json size (O2.4):
+// INFO when under the watermark, WARN at or above it. Best-effort and
+// non-blocking; a missing file is reported as size 0 without error spam.
+func (m *CaptureManager) LogDataFileSize() {
+	if m.dataFile == "" {
+		return
+	}
+	fi, err := os.Stat(m.dataFile)
+	if err != nil {
+		m.log.Info("data.json size", "path", m.dataFile, "bytes", 0, "exists", false)
+		return
+	}
+	n := fi.Size()
+	if n >= DefaultDataFileWarnBytes {
+		m.log.Warn("data.json size exceeds warning threshold (O2.4)",
+			"path", m.dataFile, "bytes", n, "human", humanBytes(n),
+			"warnThreshold", DefaultDataFileWarnBytes)
+		return
+	}
+	m.log.Info("data.json size (O2.4)",
+		"path", m.dataFile, "bytes", n, "human", humanBytes(n))
+}
+
+// humanBytes renders a byte count in a compact human-readable form.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}

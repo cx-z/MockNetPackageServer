@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -203,6 +204,9 @@ func NewAPI(port int, opts ...Option) *API {
 		dataStore.Shares(),
 		api.captureConfig,
 	)
+	// O2.4 存储水位监控：把水位检查指向持久化 data.json，启动时及每小时
+	// 输出体积日志（超 500MB WARN，不阻断）。
+	api.captureManager.SetDataFilePath(filepath.Join(dataStore.DataDir(), "data.json"))
 
 	// Initialize the MockNetPack account stores (M7.1): users and session
 	// tokens share the same persistent FileStore.
@@ -518,6 +522,10 @@ func (a *API) Start() error {
 
 	// Start the engine health check background goroutine
 	a.engineRegistry.StartHealthCheck(a.ctx, EngineHeartbeatTimeout)
+
+	// O2.4 存储水位：启动时输出一行 data.json 体积（之后由 hourly janitor
+	// 每小时输出，超 500MB WARN 一次）。
+	a.captureManager.LogDataFileSize()
 
 	// Start the MockNetPack capture health check (device heartbeat timeout +
 	// viewer lease garbage collection)

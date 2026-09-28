@@ -78,13 +78,13 @@ type CaptureConfig struct {
 // 20000 entries, ended-session traffic retention 48h).
 func DefaultCaptureConfig() CaptureConfig {
 	return CaptureConfig{
-		HeartbeatInterval:       20 * time.Second,
-		HeartbeatTimeout:        60 * time.Second,
-		ViewerTTL:               120 * time.Second,
-		MockRuleRetention:       7 * 24 * time.Hour,
-		RetainedTrafficTTL:      ShareTTL,
+		HeartbeatInterval:        20 * time.Second,
+		HeartbeatTimeout:         60 * time.Second,
+		ViewerTTL:                120 * time.Second,
+		MockRuleRetention:        7 * 24 * time.Hour,
+		RetainedTrafficTTL:       ShareTTL,
 		MaxSessionTrafficEntries: DefaultMaxSessionTrafficEntries,
-		TrafficRetention:        DefaultTrafficRetention,
+		TrafficRetention:         DefaultTrafficRetention,
 	}
 }
 
@@ -108,6 +108,7 @@ type CaptureManager struct {
 	sharesStore ShareStore
 	cfg         CaptureConfig
 	log         *slog.Logger
+	dataFile    string // O2.4 存储水位：data.json 绝对路径（空=不输出水位日志）
 
 	// viewerMu guards the runtime viewer leases, keyed by session ID.
 	viewerMu sync.RWMutex
