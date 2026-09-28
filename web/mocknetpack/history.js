@@ -8,10 +8,15 @@
 
 const HISTORY_PAGE = 100; // 与 TRAFFIC_PAGE 一致，契约 limit 上限 500
 let history = null;       // { sid, offset, total, entries }
+// F2：历史视图打开标志。openHistory 暂停的轮询可能被「在途的 loadDetail 完成后
+// 重建 detailPollTimer / bindSession 重启 trafficTimer」重新拉起，故 loadDetail
+// 与 bindSession 在 historyOpen 期间跳过计时器重建（traffic.js 引用）。
+let historyOpen = false;
 
 /** 打开历史日志：暂停实时/详情轮询，拉设备最近已结束会话列表，默认选中最新。 */
 async function openHistory() {
   if (!detail) return;
+  historyOpen = true;                      // 先置标志：在途 loadDetail 不得重建
   stopTrafficPoll();                       // 暂停 2s 请求流轮询
   if (detailPollTimer) {                   // 暂停 5s 详情轮询——否则 loadDetail→
     clearInterval(detailPollTimer);        // bindSession 会在 ≤5s 内重启请求轮询，
@@ -29,6 +34,7 @@ async function openHistory() {
 
 /** 关闭历史日志；若当前设备仍有抓包会话，恢复实时轮询，并恢复详情轮询。 */
 function closeHistory() {
+  historyOpen = false;
   $("historyView").classList.add("hidden");
   history = null;
   if (detail && detail.sessionId && !trafficTimer) {

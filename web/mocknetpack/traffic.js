@@ -57,9 +57,14 @@ async function loadDetail() {
 
     loadRules();
     // M9：只绑定当前抓包会话（无则空态），不展示历史会话。
+    // F2：历史日志视图打开期间跳过绑定——bindSession 会重启 trafficTimer 轮询，
+    // 与 openHistory 的暂停意图冲突；关闭历史后由 closeHistory 恢复。
+    if (historyOpen) return;
     bindSession(cur && cur.status === "capturing" ? cur : null);
     // M7.2.4: 详情页定时刷新设备状态（熄屏重启后 offline→online 同步）
-    if (!detailPollTimer) {
+    // F2：历史打开期间不重建（openHistory 已 clear，在途 loadDetail 完成后
+    // 不得把它重新拉起来）。
+    if (!detailPollTimer && !historyOpen) {
       detailPollTimer = setInterval(loadDetail, POLL_MS);
     }
   } catch (e) {
@@ -70,6 +75,9 @@ async function loadDetail() {
 /** M9.4：绑定当前会话。capturing → 注册 viewer + 2s 轮询，日志合并进 pageLog 继续累积；
  *  无会话（断开）→ 停止轮询，已展示日志保留不清空（离开页面才清空）。 */
 function bindSession(session) {
+  // F2：历史日志视图打开期间不绑定/重启轮询（openHistory 已暂停；在途调用
+  // 不得把 trafficTimer 重新拉起），关闭历史后由 closeHistory 恢复。
+  if (historyOpen) return;
   stopTrafficPoll();
   detail.sessionId = session ? session.id : null;
 
