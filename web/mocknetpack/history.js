@@ -4,15 +4,19 @@
 // 最近 48h 已结束会话的请求：服务端过滤（keyword/statusCode/from/to，
 // M2-3 下推参数）+ limit/offset「加载更多」分页。只读——不提供删除/清空
 // （O3.1 保留语义：服务端流量在 48h 窗口内由历史日志查询，Web 不再调
-// DELETE）。打开时暂停当前会话实时轮询，关闭时恢复。
+// DELETE）。打开时暂停实时轮询与设备详情轮询（互不干扰），关闭时恢复。
 
 const HISTORY_PAGE = 100; // 与 TRAFFIC_PAGE 一致，契约 limit 上限 500
 let history = null;       // { sid, offset, total, entries }
 
-/** 打开历史日志：暂停实时轮询，拉设备最近已结束会话列表，默认选中最新。 */
+/** 打开历史日志：暂停实时/详情轮询，拉设备最近已结束会话列表，默认选中最新。 */
 async function openHistory() {
   if (!detail) return;
-  stopTrafficPoll();            // 历史视图打开期间暂停实时轮询（互不干扰）
+  stopTrafficPoll();                       // 暂停 2s 请求流轮询
+  if (detailPollTimer) {                   // 暂停 5s 详情轮询——否则 loadDetail→
+    clearInterval(detailPollTimer);        // bindSession 会在 ≤5s 内重启请求轮询，
+    detailPollTimer = null;                // 与「互不干扰」注释不符（F2 修复）
+  }
   $("historyView").classList.remove("hidden");
   history = null;
   $("historySessions").innerHTML = '<div class="history-empty">加载中…</div>';
@@ -23,13 +27,19 @@ async function openHistory() {
   await loadHistorySessions();
 }
 
-/** 关闭历史日志；若当前设备仍有抓包会话，恢复实时轮询。 */
+/** 关闭历史日志；若当前设备仍有抓包会话，恢复实时轮询，并恢复详情轮询。 */
 function closeHistory() {
   $("historyView").classList.add("hidden");
   history = null;
   if (detail && detail.sessionId && !trafficTimer) {
     trafficTimer = setInterval(pollTraffic, TRAFFIC_POLL_MS);
     pollTraffic();
+  }
+  // 恢复详情轮询（openHistory 已暂停）。detailPollTimer 若为 null 说明确实被
+  // 暂停过；无需立即 loadDetail——5s 内自然刷新，也避免与刚恢复的
+  // trafficTimer 在 bindSession 内重建造成双定时器。
+  if (detail && !detailPollTimer) {
+    detailPollTimer = setInterval(loadDetail, POLL_MS);
   }
 }
 
@@ -51,7 +61,13 @@ async function loadHistorySessions() {
     const ended = (data.sessions || []).filter((s) =>
       s.status === "ended" &&
       (!s.retainUntil || new Date(s.retainUntil).getTime() > now));
-    ended.sort((a, b) => (b.endedAt || b.startedAt || "").localeCompare(a.endedAt || a.startedAt || ""));
+    // U1 修复：按 endedAt epoch 毫秒倒序（最新在前）。字符串 localeCompare 在
+    // 服务端改发 UTC/混合时区偏移时会错序；epoch 比较与时区无关。
+    ended.sort((a, b) => {
+      const ta = Date.parse(a.endedAt || a.startedAt || "");
+      const tb = Date.parse(b.endedAt || b.startedAt || "");
+      return (isNaN(tb) ? 0 : tb) - (isNaN(ta) ? 0 : ta);
+    });
 
     const box = $("historySessions");
     if (!ended.length) {
@@ -89,11 +105,14 @@ async function selectHistorySession(sid) {
   await applyHistoryFilter();
 }
 
-/** datetime-local 值（本地时区）→ RFC3339（UTC，无毫秒，Go time.RFC3339 可解析）。 */
+/** datetime-local 值（本地时区）→ RFC3339（UTC，无毫秒，Go time.RFC3339 可解析）。
+ *  U2 修复：Invalid Date 守卫——非法/空输入返回 ""（不设该过滤参数），
+ *  避免 new Date(v).toISOString() 抛 RangeError。 */
 function toRfc3339(v) {
   if (!v) return "";
-  const iso = new Date(v).toISOString();
-  return iso.replace(/\.\d{3}Z$/, "Z");
+  const t = new Date(v).getTime();
+  if (isNaN(t)) return "";
+  return new Date(t).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 /** 从表单构建服务端过滤 query（M2-3 参数，下推，不在前端过滤）。 */
