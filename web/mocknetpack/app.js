@@ -76,6 +76,22 @@ function enterApp() {
   $("backBtn").onclick = backToList;
   const clearBtn = $("trafficClearBtn");
   if (clearBtn) clearBtn.onclick = clearTrafficLog;
+  // M2 (O3.3): 历史日志视图（最近 48h 已结束会话，服务端过滤 + 分页）
+  const historyBtn = $("historyBtn");
+  if (historyBtn) historyBtn.onclick = openHistory;
+  const historyCloseBtn = $("historyCloseBtn");
+  if (historyCloseBtn) historyCloseBtn.onclick = closeHistory;
+  const hFilterBtn = $("hFilterBtn");
+  if (hFilterBtn) hFilterBtn.onclick = applyHistoryFilter;
+  const hResetBtn = $("hResetBtn");
+  if (hResetBtn) {
+    hResetBtn.onclick = () => {
+      resetHistoryFilters();
+      applyHistoryFilter();
+    };
+  }
+  const hMoreBtn = $("historyMoreBtn");
+  if (hMoreBtn) hMoreBtn.onclick = loadHistoryMore;
   loadDevices();
   pollTimer = setInterval(loadDevices, POLL_MS);
   // 刷新时若 hash 是详情页，直接进入（否则 hash 与当前相同，点击同一条目不触发 hashchange）

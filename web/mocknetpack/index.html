@@ -116,6 +116,7 @@
         <div id="rulesList"><div class="empty">加载中…</div></div>
 
         <div class="section-title">请求流 <span class="sub" id="trafficInfo"></span>
+          <button id="historyBtn" class="small ghost" title="最近 48h 已结束会话的请求（服务端过滤 + 分页）">历史日志</button>
           <button id="trafficClearBtn" class="small ghost" title="清空本页历史日志（不影响已创建的 Mock 规则）">清空</button>
         </div>
         <input id="trafficFilter" class="filter-input" placeholder="过滤请求（URL/Method 关键字，仅当前页面，刷新即清空）" />
@@ -127,6 +128,29 @@
         <div id="ruleDetail" class="hidden"><div class="empty">点击左侧一条规则查看详情。</div></div>
         <div id="trafficDetail"><div class="empty">点击左侧请求或规则查看详情。</div></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== M2 (O3.3) 历史日志：最近 48h 已结束会话请求（服务端过滤 + 分页） ===== -->
+  <div id="historyView" class="history-overlay hidden">
+    <div class="history-card">
+      <div class="history-head">
+        <span class="section-title">历史日志 <span class="sub">最近 48h 已结束会话（只读，服务端过滤）</span></span>
+        <button id="historyCloseBtn" class="small ghost">← 返回设备详情</button>
+      </div>
+      <div class="history-sessions" id="historySessions"><div class="history-empty">加载中…</div></div>
+      <div class="history-filters">
+        <input id="hKeyword" class="hf-w" placeholder="URL 关键词" />
+        <input id="hStatusCode" class="hf-s" type="number" min="100" max="599" placeholder="状态码" />
+        <input id="hFrom" class="hf-t" type="datetime-local" />
+        <span class="history-empty">至</span>
+        <input id="hTo" class="hf-t" type="datetime-local" />
+        <button id="hFilterBtn" class="small">过滤</button>
+        <button id="hResetBtn" class="small ghost">重置</button>
+        <span class="sub" id="historyInfo"></span>
+      </div>
+      <div class="history-list" id="historyList"><div class="history-empty">请选择左侧会话查看历史请求。</div></div>
+      <button id="historyMoreBtn" class="small ghost history-more hidden">加载更多</button>
     </div>
   </div>
 </div>
@@ -147,6 +171,7 @@
 <script src="rules.js"></script>
 <script src="viewer.js"></script>
 <script src="share.js"></script>
+<script src="history.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

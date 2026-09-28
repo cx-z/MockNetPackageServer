@@ -308,3 +308,40 @@ button.mini.active { background: var(--primary); color: #fff; }
   opacity: 1;
   background: rgba(229, 62, 62, 0.12) !important;
 }
+
+/* ===== M2 (O3.3) 历史日志视图 ===== */
+.history-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center; z-index: 110;
+}
+.history-card {
+  background: #fff; border-radius: 10px; padding: 16px 20px;
+  width: 92vw; max-width: 980px; height: 86vh; max-height: 720px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.25);
+  display: flex; flex-direction: column; gap: 10px; overflow: hidden;
+}
+.history-card .history-head { display: flex; align-items: center; gap: 10px; }
+.history-card .history-head .section-title { margin: 0; flex: 1; }
+.history-sessions {
+  display: flex; flex-wrap: wrap; gap: 8px; max-height: 84px; overflow-y: auto;
+  padding: 6px; border: 1px solid var(--border); border-radius: 8px;
+  background: #fafbfc;
+}
+.history-session {
+  border: 1px solid var(--border); border-radius: 6px; background: #fff;
+  padding: 6px 10px; font-size: 12px; cursor: pointer; line-height: 1.35;
+}
+.history-session.active { border-color: var(--primary); background: #f4f8ff; }
+.history-session .hs-time { color: #444; font-weight: 600; }
+.history-session .hs-meta { color: #888; }
+.history-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.history-filters input {
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  font-size: 12px; background: #fff;
+}
+.history-filters input.hf-w { width: 180px; }
+.history-filters input.hf-s { width: 76px; }
+.history-filters input.hf-t { width: 172px; }
+.history-list { flex: 1; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 6px; min-height: 120px; }
+.history-more { align-self: center; }
+.history-empty { color: #999; font-size: 13px; padding: 24px 0; text-align: center; }

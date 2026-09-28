@@ -119,11 +119,20 @@ async function pollTraffic() {
   }
 }
 
-/** 合并日志：按 id 去重、timestamp 升序，保留最近 LOG_CAP 条（跨会话时间线混排）。 */
+/** 合并日志：按 id 去重、timestamp 升序，保留最近 LOG_CAP 条（跨会话时间线混排）。
+ *  O3.1 复活抑制：被前端删除（✕/清空）的条目不再被轮询拉回——
+ *  _deletedIds 精确丢弃单条；_logClearedAt 之前的旧条目在清空后一律丢弃。 */
 function mergeLog(base, fresh) {
   const seen = new Map();
+  const cutMs = detail && detail._logClearedAt ? new Date(detail._logClearedAt).getTime() : 0;
   for (const e of base) seen.set(e.id, e);
-  for (const e of fresh) if (!seen.has(e.id)) seen.set(e.id, e);
+  for (const e of fresh) {
+    if (seen.has(e.id)) continue;
+    if (detail && detail._deletedIds && detail._deletedIds.has(e.id)) continue;
+    // 清空前的旧条目：毫秒比较（服务端 timestamp 带时区偏移，字符串比较会错位）
+    if (cutMs && new Date(e.timestamp || 0).getTime() <= cutMs) continue;
+    seen.set(e.id, e);
+  }
   const arr = Array.from(seen.values())
     .sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
   return arr.length > LOG_CAP ? arr.slice(arr.length - LOG_CAP) : arr;
@@ -178,14 +187,14 @@ function renderTraffic(entries) {
   }
 }
 
-/** M9.5：删除单条日志。连接中同步删服务端该条流量（该条可能属于当前会话；
- *  属于已删旧会话则 404 容错）。只动日志，不影响已创建的 Mock 规则。 */
+/** M2 (O3.1 保留语义)：删除单条日志 = 只清前端页面日志，不再调服务端
+ *  DELETE（服务端流量按 48h 保留供历史日志查询）。只动日志，不影响已创建的
+ *  Mock 规则。 */
 async function deleteTrafficEntry(e) {
   if (!detail) return;
+  if (!detail._deletedIds) detail._deletedIds = new Set();
+  detail._deletedIds.add(e.id);   // 复活抑制：轮询合并时丢弃该条
   pageLog = pageLog.filter((x) => x.id !== e.id);
-  if (detail.sessionId) {
-    try { await apiFetch("/traffic/" + encodeURIComponent(e.id), { method: "DELETE" }); } catch { /* 容错 */ }
-  }
   if (detail._activeTraffic === e.id) {
     detail._activeTraffic = null;
     $("trafficDetail").innerHTML = '<div class="empty">点击左侧请求或规则查看详情。</div>';
@@ -194,14 +203,14 @@ async function deleteTrafficEntry(e) {
   renderTraffic(pageLog);
 }
 
-/** M9.5：清空本页历史日志。连接中同步清服务端当前会话流量（防轮询"复活"）；
- *  断开状态只清前端。只动日志，不影响已创建的 Mock 规则。 */
+/** M2 (O3.1 保留语义)：清空本页日志 = 只清前端页面日志，不再调服务端
+ *  DELETE（服务端流量按 48h 保留供历史日志查询）。连接中清空后新流量继续
+ *  累积。只动日志，不影响已创建的 Mock 规则。 */
 async function clearTrafficLog() {
   if (!detail) return;
+  detail._logClearedAt = new Date().toISOString(); // 复活抑制：清空时刻前的旧条目轮询时丢弃
   pageLog = [];
-  const sid = detail.sessionId;
-  if (sid) {
-    try { await apiFetch("/sessions/" + encodeURIComponent(sid) + "/traffic", { method: "DELETE" }); } catch { /* 容错 */ }
+  if (detail.sessionId) {
     renderTraffic(pageLog);   // live：共 0 条，新流量继续累积
   } else {
     $("trafficInfo").textContent = "";
