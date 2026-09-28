@@ -7,7 +7,9 @@ package admin
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/getmockd/mockd/pkg/capture"
@@ -50,9 +52,23 @@ type CreateDeviceRequest struct {
 	Name string `json:"name"`
 }
 
-// allowedApps is the fixed app catalog (M7 拍板 #5): only one app for now;
-// admin-only app management is a recorded backlog item.
-var allowedApps = map[string]bool{"com.example.integrating": true}
+// allowedApps is the app catalog for the MockNetPack capture API (M7 拍板 #5):
+// one neutral placeholder app by default; admin-only app management is a
+// recorded backlog item. Additional integrating apps can be onboarded at
+// runtime without a code change via the MOCKD_ALLOWED_APPS environment
+// variable (comma-separated bundle ids), so the repo stays neutral while
+// real apps can scan and register.
+var allowedApps = func() map[string]bool {
+	m := map[string]bool{"com.example.integrating": true}
+	if extra := os.Getenv("MOCKD_ALLOWED_APPS"); extra != "" {
+		for _, app := range strings.Split(extra, ",") {
+			if app = strings.TrimSpace(app); app != "" {
+				m[app] = true
+			}
+		}
+	}
+	return m
+}()
 
 // RegisterDeviceResponse is returned on successful registration.
 type RegisterDeviceResponse struct {
