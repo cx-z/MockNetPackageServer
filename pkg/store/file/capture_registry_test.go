@@ -897,8 +897,19 @@ func TestCaptureManager_ExpiredEndedSession_Purged(t *testing.T) {
 		t.Fatalf("ListSessionTraffic(within window) = %v", err)
 	}
 
-	// After the window passes, the janitor purges record + traffic.
+	// After the window passes but BEFORE the janitor runs, readers must
+	// already 404 (v0.10.0: an expired-ended session is unqueryable even if
+	// the janitor has not purged it yet — F3 coverage for the expiry-first
+	// branch in GetSession / ListSessionTraffic).
 	time.Sleep(200 * time.Millisecond)
+	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("GetSession(expired, no janitor) = %v, want ErrSessionNotFound", err)
+	}
+	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{}); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("ListSessionTraffic(expired, no janitor) = %v, want ErrSessionNotFound", err)
+	}
+
+	// After the window passes, the janitor purges record + traffic.
 	m.PurgeExpiredEndedSessions(ctx)
 	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
 		t.Errorf("GetSession(after purge) = %v, want ErrSessionNotFound", err)

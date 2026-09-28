@@ -151,9 +151,18 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 		// removed entries from the FRONT; the rolled-back tail is the stored
 		// entries plus any pre-existing entries the oversized-batch cut took
 		// with them — unindex exactly that tail before cutting it.
-		tail := m.traffic[sessionID][len(m.traffic[sessionID])-len(stored):]
+		// An oversized batch (> cap) trims part of the just-appended entries
+		// too, so the slice may hold fewer than len(stored) entries; clamp the
+		// rollback to what is actually left (the trimmed entries were already
+		// unindexed above, so dropping them from the rollback stays consistent).
+		cur := m.traffic[sessionID]
+		rb := len(stored)
+		if rb > len(cur) {
+			rb = len(cur)
+		}
+		tail := cur[len(cur)-rb:]
 		m.unindexTraffic(tail)
-		m.traffic[sessionID] = m.traffic[sessionID][:len(m.traffic[sessionID])-len(stored)]
+		m.traffic[sessionID] = cur[:len(cur)-rb]
 		m.trafficMu.Unlock()
 		return 0, err
 	}

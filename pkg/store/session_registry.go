@@ -140,6 +140,12 @@ func (m *CaptureManager) GetSession(ctx context.Context, id string) (*capture.Ca
 		}
 		return nil, err
 	}
+	// O3 / v0.10.0: an ended session whose 48h retention window (RetainUntil)
+	// has passed is gone for readers even if the janitor has not purged the
+	// record yet — same expiry-first semantics as ListSessionTraffic.
+	if s.Status == capture.SessionStatusEnded && s.RetainUntil != nil && time.Now().After(*s.RetainUntil) {
+		return nil, ErrSessionNotFound
+	}
 	return s, nil
 }
 

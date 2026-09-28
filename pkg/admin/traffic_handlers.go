@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/getmockd/mockd/pkg/capture"
 	"github.com/getmockd/mockd/pkg/store"
 )
 
@@ -57,7 +58,19 @@ func (a *API) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		writeCaptureError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, SessionListResponse{Sessions: sessions, Total: len(sessions)})
+	// O3 / v0.10.0: expired-ended sessions (past RetainUntil) are not listed
+	// even before the janitor purges them — same expiry-first semantics as
+	// GetSession / ListSessionTraffic. The Web history view's client-side
+	// retainUntil filter becomes belt-and-suspenders.
+	now := time.Now()
+	visible := make([]*capture.CaptureSession, 0, len(sessions))
+	for _, s := range sessions {
+		if s.Status == capture.SessionStatusEnded && s.RetainUntil != nil && now.After(*s.RetainUntil) {
+			continue
+		}
+		visible = append(visible, s)
+	}
+	writeJSON(w, http.StatusOK, SessionListResponse{Sessions: visible, Total: len(visible)})
 }
 
 // handleGetSession handles GET /api/v1/sessions/{id}.
