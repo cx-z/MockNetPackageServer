@@ -268,7 +268,8 @@ func (m *CaptureManager) DeleteDevice(ctx context.Context, app, did string) erro
 		return err
 	}
 	for _, v := range views {
-		_, _ = m.DeleteMockRule(ctx, app, did, v.ID)
+		// System cleanup on device delete: no user context (nil caller).
+		_, _ = m.DeleteMockRule(ctx, app, did, v.ID, nil)
 	}
 	return m.devices.Delete(ctx, app, did)
 }

@@ -8,16 +8,66 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/getmockd/mockd/pkg/account"
 	"github.com/getmockd/mockd/pkg/capture"
+	"github.com/getmockd/mockd/pkg/store"
 )
 
 // MockRuleListResponse is the contract MockRuleList: the device's rule set plus
 // the current monotonic version. Conflicts is only populated for the Web full
 // list (omitted on the SDK incremental pull).
 type MockRuleListResponse struct {
-	Version  int                        `json:"version"`
-	Rules    []*capture.MockRuleView    `json:"rules"`
-	Conflicts []capture.MockRuleConflict `json:"conflicts,omitempty"`
+	Version   int                         `json:"version"`
+	Rules     []*capture.MockRuleView     `json:"rules"`
+	Conflicts []capture.MockRuleConflict  `json:"conflicts,omitempty"`
+}
+
+// ruleCaller builds the O4 permission identity for a rule mutation from the
+// authenticated request. nil under --no-auth (smoke mode): no session user.
+func ruleCaller(r *http.Request) *store.RuleCaller {
+	u := currentUser(r)
+	if u == nil {
+		return nil
+	}
+	return &store.RuleCaller{Username: u.Username, IsAdmin: u.Role == account.RoleAdmin}
+}
+
+// sdkRuleView is the SDK incremental-pull wire format (O4.1): only the fields
+// the SDK consumes. owner/updatedBy (and other Web-only fields such as
+// source/note/lastUsedAt) are pure server-side fields and must never reach the
+// SDK — the contract guarantees the pull leaks nothing beyond the match key,
+// the canned response, the switch and the runtime effective flag.
+type sdkRuleView struct {
+	ID        string               `json:"id"`
+	Method    string               `json:"method"`
+	Path      string               `json:"path"`
+	Response  capture.MockResponse `json:"response"`
+	Enabled   bool                 `json:"enabled"`
+	Effective bool                 `json:"effective"`
+}
+
+// toSDKRules maps full views to the SDK wire format.
+func toSDKRules(views []*capture.MockRuleView) []sdkRuleView {
+	out := make([]sdkRuleView, 0, len(views))
+	for _, v := range views {
+		out = append(out, sdkRuleView{
+			ID:        v.ID,
+			Method:    v.Method,
+			Path:      v.Path,
+			Response:  v.Response,
+			Enabled:   v.Enabled,
+			Effective: v.Effective,
+		})
+	}
+	return out
+}
+
+// sdkRuleListResponse is the SDK pull response shape: version plus the stripped
+// rule set. Distinct from MockRuleListResponse so the wire format for the SDK
+// can never accidentally grow Web-only fields.
+type sdkRuleListResponse struct {
+	Version int           `json:"version"`
+	Rules   []sdkRuleView `json:"rules"`
 }
 
 // handleListMockRules handles GET /api/v1/devices/{app}/{did}/mock-rules.
@@ -46,13 +96,15 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 			writeCaptureError(w, err)
 			return
 		}
-		rules := active
-		if rules == nil {
-			rules = []*capture.MockRuleView{}
+		// SDK wire format: strip owner/updatedBy and other Web-only fields
+		// (O4.1 — pure server-side fields must not leave the server).
+		sdkRules := toSDKRules(active)
+		if sdkRules == nil {
+			sdkRules = []sdkRuleView{}
 		}
-		writeJSON(w, http.StatusOK, MockRuleListResponse{
+		writeJSON(w, http.StatusOK, sdkRuleListResponse{
 			Version: version,
-			Rules:   rules,
+			Rules:   sdkRules,
 		})
 		_ = changed // always true when version != since; empty array is the "no change" signal to the SDK
 		return
@@ -104,7 +156,7 @@ func (a *API) handleCreateMockRule(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeDeviceAccess(w, r, r.PathValue("app"), r.PathValue("did")) {
 		return
 	}
-	view, _, err := a.captureManager.CreateMockRule(r.Context(), r.PathValue("app"), r.PathValue("did"), &in)
+	view, _, err := a.captureManager.CreateMockRule(r.Context(), r.PathValue("app"), r.PathValue("did"), &in, ruleCaller(r))
 	if err != nil {
 		writeCaptureError(w, err)
 		return
@@ -131,7 +183,7 @@ func (a *API) handleUpdateMockRule(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeDeviceAccess(w, r, r.PathValue("app"), r.PathValue("did")) {
 		return
 	}
-	view, _, err := a.captureManager.UpdateMockRule(r.Context(), r.PathValue("app"), r.PathValue("did"), r.PathValue("ruleId"), &in)
+	view, _, err := a.captureManager.UpdateMockRule(r.Context(), r.PathValue("app"), r.PathValue("did"), r.PathValue("ruleId"), &in, ruleCaller(r))
 	if err != nil {
 		writeCaptureError(w, err)
 		return
@@ -144,7 +196,7 @@ func (a *API) handleDeleteMockRule(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeDeviceAccess(w, r, r.PathValue("app"), r.PathValue("did")) {
 		return
 	}
-	if _, err := a.captureManager.DeleteMockRule(r.Context(), r.PathValue("app"), r.PathValue("did"), r.PathValue("ruleId")); err != nil {
+	if _, err := a.captureManager.DeleteMockRule(r.Context(), r.PathValue("app"), r.PathValue("did"), r.PathValue("ruleId"), ruleCaller(r)); err != nil {
 		writeCaptureError(w, err)
 		return
 	}

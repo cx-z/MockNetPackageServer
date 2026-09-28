@@ -216,7 +216,7 @@ func TestConcurrentRuleCreateSameInterfaceRaceFree(t *testing.T) {
 			_, _, err := m.CreateMockRule(ctx, "app", "d1", &capture.MockRuleInput{
 				Method: "POST", Path: "/same", Enabled: true,
 				Response: capture.MockResponse{StatusCode: 200},
-			})
+			}, nil)
 			if err != nil {
 				errCh <- err
 			}
@@ -288,7 +288,7 @@ func TestRaceRuleTouchVsList(t *testing.T) {
 	// capturing session so UploadTraffic reaches the touch path.
 	if _, _, err := m.CreateMockRule(ctx, "com.example.integrating", "race-did", &capture.MockRuleInput{
 		Method: "GET", Path: "/p", Enabled: true, Response: capture.MockResponse{StatusCode: 200},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	sess, _, err := m.ActivateSession(ctx, "com.example.integrating", "race-did")

@@ -323,6 +323,15 @@ type MockRule struct {
 	// toggle may leave it blank. Pure admin-side field: never used for matching
 	// or pushed to the SDK. Empty string means no note (legacy rows pre-M5).
 	Note string `json:"note,omitempty"`
+	// Owner is the rule creator's username (O4). Set server-side from the
+	// current session user at creation; empty means a legacy rule (pre-O4),
+	// which only admins may manage. Pure server-side field: never used for
+	// matching and stripped from the SDK incremental pull.
+	Owner string `json:"owner,omitempty"`
+	// UpdatedBy is the last modifier's username (O4). Rewritten on every PUT
+	// update. Pure server-side field: never used for matching and stripped
+	// from the SDK incremental pull.
+	UpdatedBy string `json:"updatedBy,omitempty"`
 }
 
 // MockRuleInput is the create payload (contract MockRuleInput). It carries the

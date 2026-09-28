@@ -43,6 +43,14 @@ var (
 // falls into the abnormal multi-enabled state (requirement 6.5 / F4.6).
 const MockRuleConflictMessage = "不允许同一个接口同时开启多个 Mock 规则"
 
+// RuleCaller describes the authenticated user performing a rule mutation
+// (O4 权限与分享). nil means --no-auth smoke mode: no session user, full
+// access (permission checks are skipped, matching requireAuth bypass).
+type RuleCaller struct {
+	Username string
+	IsAdmin  bool
+}
+
 // CaptureConfig carries the MockNetPack capture runtime configuration.
 // All values are server-side configuration items (requirement 决策 #14).
 type CaptureConfig struct {

@@ -1,8 +1,10 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/getmockd/mockd/pkg/capture"
@@ -214,4 +216,56 @@ func TestMockRuleAPI_EditOmitsEnabledKeepsSwitch(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.False(t, updated.Enabled, "enabled must not flip when omitted from edit body")
 	assert.False(t, updated.Effective)
+}
+
+// O4.1 序列化出口：Web 全量列表下发 owner/updatedBy；SDK 增量拉取（同一路由
+// ?sinceVersion 分支）绝不携带 owner/updatedBy 及 source/note/lastUsedAt 等
+// 纯服务端/Web-only 字段（契约 v0.11.0：SDK 只关心 method/path/response/enabled/effective）。
+func TestMockRuleAPI_OwnerFields_WebVsSDK(t *testing.T) {
+	_, ts := newAuthRequiredTestAPI(t)
+	devA := freshDevToken(t, ts, "ownerA")
+	base := ts.URL + "/api/v1/devices/com.example.integrating/rule-owner-dev/mock-rules"
+
+	// 设备由 devA 注册（M7.2.2 数据隔离：devA 可见自己的设备）。
+	res, _ := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/devices", devA,
+		map[string]string{"app": "com.example.integrating", "did": "rule-owner-dev", "name": "A"})
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+
+	// devA 创建规则 → owner 写入当前会话用户名。
+	var created capture.MockRuleView
+	res, body := doAuthJSON(t, http.MethodPost, base, devA, ruleBody("POST", "/api/owned", false))
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	require.NoError(t, json.Unmarshal(body, &created))
+	assert.Equal(t, "ownerA", created.Owner)
+	assert.Equal(t, "ownerA", created.UpdatedBy)
+
+	// 启用（owner 有权），使规则 effective，SDK 拉取才能拿到它。
+	res, _ = doAuthJSON(t, http.MethodPut, base+"/"+created.ID, devA,
+		updateBody(`{"ok":true}`, "enable for sdk", boolPtr(true)))
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	// Web 全量列表（devA token）：下发 owner/updatedBy。
+	res, body = doAuthJSON(t, http.MethodGet, base, devA, nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	var webList MockRuleListResponse
+	require.NoError(t, json.Unmarshal(body, &webList))
+	require.Len(t, webList.Rules, 1)
+	assert.Equal(t, "ownerA", webList.Rules[0].Owner)
+	assert.Equal(t, "ownerA", webList.Rules[0].UpdatedBy)
+
+	// SDK 增量拉取（无需 token；?sinceVersion=0）：序列化结果必须不含纯服务端字段。
+	res, body = doAuthJSON(t, http.MethodGet, base+"?sinceVersion=0", "", nil)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	raw := string(body)
+	for _, leaked := range []string{`"owner"`, `"updatedBy"`, `"source"`, `"note"`, `"lastUsedAt"`, `"conflicts"`} {
+		if strings.Contains(raw, leaked) {
+			t.Errorf("SDK pull leaks %s: %s", leaked, raw)
+		}
+	}
+	var sdkList sdkRuleListResponse
+	require.NoError(t, json.Unmarshal(body, &sdkList))
+	require.Len(t, sdkList.Rules, 1)
+	assert.Equal(t, "POST", sdkList.Rules[0].Method)
+	assert.Equal(t, "/api/owned", sdkList.Rules[0].Path)
+	assert.True(t, sdkList.Rules[0].Effective)
 }

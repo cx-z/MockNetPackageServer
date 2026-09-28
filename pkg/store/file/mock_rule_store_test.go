@@ -58,7 +58,7 @@ func TestMockRule_CreateVersionAndEffective(t *testing.T) {
 		t.Fatalf("version after noop Mutate = %d, want 0", v)
 	}
 
-	r1, v1, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true))
+	r1, v1, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true), nil)
 	if err != nil {
 		t.Fatalf("Create(r1) = %v", err)
 	}
@@ -67,7 +67,7 @@ func TestMockRule_CreateVersionAndEffective(t *testing.T) {
 	}
 
 	// A disabled rule does not bump effective; version still increments.
-	r2, v2, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/b", false))
+	r2, v2, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/b", false), nil)
 	if err != nil {
 		t.Fatalf("Create(r2) = %v", err)
 	}
@@ -88,23 +88,23 @@ func TestMockRule_SameInterfaceMutex(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
 
-	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true)); err != nil {
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true), nil); err != nil {
 		t.Fatalf("Create(active) = %v", err)
 	}
 	// Same Method+Path while one is already enabled -> conflict.
-	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true)); !errors.Is(err, store.ErrRuleConflict) {
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true), nil); !errors.Is(err, store.ErrRuleConflict) {
 		t.Errorf("Create(second enabled same interface) = %v, want ErrRuleConflict", err)
 	}
 	// Different method -> not the same interface.
-	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/a", true)); err != nil {
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/a", true), nil); err != nil {
 		t.Errorf("Create(different method) = %v, want nil", err)
 	}
 	// Same method, different path -> not the same interface.
-	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/other", true)); err != nil {
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/other", true), nil); err != nil {
 		t.Errorf("Create(different path) = %v, want nil", err)
 	}
 	// A disabled second rule on the same interface is allowed.
-	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false)); err != nil {
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false), nil); err != nil {
 		t.Errorf("Create(disabled same interface) = %v, want nil", err)
 	}
 }
@@ -114,7 +114,7 @@ func TestMockRule_AbnormalConflict(t *testing.T) {
 	ctx := context.Background()
 
 	// Normal first rule.
-	r1, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true))
+	r1, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true), nil)
 	if err != nil {
 		t.Fatalf("Create(r1) = %v", err)
 	}
@@ -154,10 +154,10 @@ func TestMockRule_IncrementalPull(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
 
-	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true)); err != nil {
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true), nil); err != nil {
 		t.Fatalf("Create(a) = %v", err)
 	}
-	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/b", false)); err != nil {
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/b", false), nil); err != nil {
 		t.Fatalf("Create(b) = %v", err)
 	}
 
@@ -180,7 +180,7 @@ func TestMockRule_CrossDeviceIsolation(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
 
-	if _, v1, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true)); err != nil || v1 != 1 {
+	if _, v1, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true), nil); err != nil || v1 != 1 {
 		t.Fatalf("Create(d1) = %v v=%v", err, v1)
 	}
 
@@ -199,26 +199,26 @@ func TestMockRule_UpdateToggleConflict(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
 
-	r1, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true))
+	r1, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true), nil)
 	if err != nil {
 		t.Fatalf("Create(r1) = %v", err)
 	}
 	// r2 disabled on the same interface is allowed.
-	r2, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false))
+	r2, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false), nil)
 	if err != nil {
 		t.Fatalf("Create(r2 disabled) = %v", err)
 	}
 
 	// Trying to enable r2 while r1 is enabled -> conflict.
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r2.ID, updateInput(`{"ok":true}`, "edit r2", boolPtr(true))); !errors.Is(err, store.ErrRuleConflict) {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r2.ID, updateInput(`{"ok":true}`, "edit r2", boolPtr(true)), nil); !errors.Is(err, store.ErrRuleConflict) {
 		t.Errorf("enable r2 = %v, want ErrRuleConflict", err)
 	}
 	// Disable r1 first.
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r1.ID, updateInput(`{"ok":true}`, "disable r1", boolPtr(false))); err != nil {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r1.ID, updateInput(`{"ok":true}`, "disable r1", boolPtr(false)), nil); err != nil {
 		t.Fatalf("disable r1 = %v", err)
 	}
 	// Now enabling r2 succeeds.
-	if updated, _, err := m.UpdateMockRule(ctx, "app", "d1", r2.ID, updateInput(`{"ok":true}`, "enable r2", boolPtr(true))); err != nil || !updated.Effective {
+	if updated, _, err := m.UpdateMockRule(ctx, "app", "d1", r2.ID, updateInput(`{"ok":true}`, "enable r2", boolPtr(true)), nil); err != nil || !updated.Effective {
 		t.Errorf("enable r2 after r1 off = %v effective=%v; want ok", err, updated.Effective)
 	}
 }
@@ -227,14 +227,14 @@ func TestMockRule_UpdateNoteRequiredOnlyOnEdit(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
 
-	r, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false))
+	r, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false), nil)
 	if err != nil {
 		t.Fatalf("Create = %v", err)
 	}
 
 	// Pure toggle (response echoed unchanged) with blank note -> allowed (M7):
 	// a rule created from a capture has no note and must be enableable directly.
-	updated, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"ok":true}`, "", boolPtr(true)))
+	updated, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"ok":true}`, "", boolPtr(true)), nil)
 	if err != nil {
 		t.Fatalf("toggle with blank note = %v, want ok", err)
 	}
@@ -243,20 +243,20 @@ func TestMockRule_UpdateNoteRequiredOnlyOnEdit(t *testing.T) {
 	}
 
 	// Edit (response changed) with blank note -> rejected.
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "", nil)); !errors.Is(err, store.ErrNoteRequired) {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "", nil), nil); !errors.Is(err, store.ErrNoteRequired) {
 		t.Errorf("edit with blank note = %v, want ErrNoteRequired", err)
 	}
 	// Whitespace-only note on an edit -> also rejected.
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "   ", nil)); !errors.Is(err, store.ErrNoteRequired) {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "   ", nil), nil); !errors.Is(err, store.ErrNoteRequired) {
 		t.Errorf("edit with whitespace note = %v, want ErrNoteRequired", err)
 	}
 	// Edit with a note -> applied.
-	updated, _, err = m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "why", nil))
+	updated, _, err = m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "why", nil), nil)
 	if err != nil || updated.Response.Body != `{"changed":true}` {
 		t.Errorf("edit with note = %v body=%q; want ok changed", err, updated.Response.Body)
 	}
 	// The edited rule still toggles with a blank note (response now unchanged).
-	updated, _, err = m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "", boolPtr(false)))
+	updated, _, err = m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"changed":true}`, "", boolPtr(false)), nil)
 	if err != nil || updated.Enabled {
 		t.Errorf("toggle after edit with blank note = %v enabled=%v; want ok off", err, updated.Enabled)
 	}
@@ -273,7 +273,7 @@ func TestMockRule_SourcePersisted(t *testing.T) {
 	}
 	in := ruleInput("POST", "/api/a", true)
 	in.Source = src
-	view, _, err := m.CreateMockRule(ctx, "app", "d1", in)
+	view, _, err := m.CreateMockRule(ctx, "app", "d1", in, nil)
 	if err != nil {
 		t.Fatalf("Create(with source) = %v", err)
 	}
@@ -292,16 +292,16 @@ func TestMockRule_UpdateNotFoundAndCrossDevice(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
 
-	r, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true))
+	r, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true), nil)
 	if err != nil {
 		t.Fatalf("Create = %v", err)
 	}
 	// Unknown rule id.
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", "no-such", updateInput("x", "note", boolPtr(true))); !errors.Is(err, store.ErrRuleNotFound) {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", "no-such", updateInput("x", "note", boolPtr(true)), nil); !errors.Is(err, store.ErrRuleNotFound) {
 		t.Errorf("Update(unknown) = %v, want ErrRuleNotFound", err)
 	}
 	// Same id but a different device -> not found (isolation).
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d2", r.ID, updateInput("x", "note", boolPtr(true))); !errors.Is(err, store.ErrRuleNotFound) {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d2", r.ID, updateInput("x", "note", boolPtr(true)), nil); !errors.Is(err, store.ErrRuleNotFound) {
 		t.Errorf("Update(cross-device) = %v, want ErrRuleNotFound", err)
 	}
 }
@@ -315,7 +315,7 @@ func TestMockRule_LastUsedAt_CreateAndEdit(t *testing.T) {
 	ctx := context.Background()
 
 	before := time.Now()
-	view, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true))
+	view, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true), nil)
 	if err != nil {
 		t.Fatalf("Create = %v", err)
 	}
@@ -325,7 +325,7 @@ func TestMockRule_LastUsedAt_CreateAndEdit(t *testing.T) {
 
 	editedAt := view.LastUsedAt
 	time.Sleep(5 * time.Millisecond)
-	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", view.ID, updateInput(`{"ok":true}`, "edited note", boolPtr(false))); err != nil {
+	if _, _, err := m.UpdateMockRule(ctx, "app", "d1", view.ID, updateInput(`{"ok":true}`, "edited note", boolPtr(false)), nil); err != nil {
 		t.Fatalf("Update = %v", err)
 	}
 	views, _, _, err := m.ListMockRules(ctx, "app", "d1")
@@ -345,11 +345,11 @@ func TestMockRule_Janitor_PurgesExpired(t *testing.T) {
 	t.Cleanup(m.Stop)
 	ctx := context.Background()
 
-	fresh, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/fresh", true))
+	fresh, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/fresh", true), nil)
 	if err != nil {
 		t.Fatalf("Create fresh = %v", err)
 	}
-	stale, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/stale", true))
+	stale, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/stale", true), nil)
 	if err != nil {
 		t.Fatalf("Create stale = %v", err)
 	}
@@ -382,7 +382,7 @@ func TestMockRule_HitTouchesLastUsedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Activate = %v", err)
 	}
-	rule, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/hit", true))
+	rule, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/hit", true), nil)
 	if err != nil {
 		t.Fatalf("Create = %v", err)
 	}
@@ -420,15 +420,15 @@ func TestMockRule_SessionEndDisablesRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Activate = %v", err)
 	}
-	r1, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true))
+	r1, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", true), nil)
 	if err != nil {
 		t.Fatalf("Create r1 = %v", err)
 	}
-	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/b", true)); err != nil {
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("GET", "/api/b", true), nil); err != nil {
 		t.Fatalf("Create r2 = %v", err)
 	}
 	// A third rule that stays disabled should remain disabled, not deleted.
-	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("DELETE", "/api/c", false)); err != nil {
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("DELETE", "/api/c", false), nil); err != nil {
 		t.Fatalf("Create r3 = %v", err)
 	}
 
@@ -463,7 +463,7 @@ func TestMockRule_UpdateNoteAndKeepEnabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a disabled rule with no note (M4-era legacy row).
-	r, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false))
+	r, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false), nil)
 	if err != nil {
 		t.Fatalf("Create = %v", err)
 	}
@@ -474,7 +474,7 @@ func TestMockRule_UpdateNoteAndKeepEnabled(t *testing.T) {
 	// Edit: change the body and set a note; OMIT enabled so the switch stays
 	// off (the contract: absent Enabled pointer = leave as-is).
 	edited, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID,
-		updateInput(`{"edited":true}`, "debugging feed list", nil))
+		updateInput(`{"edited":true}`, "debugging feed list", nil), nil)
 	if err != nil {
 		t.Fatalf("Update = %v", err)
 	}

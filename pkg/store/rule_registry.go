@@ -69,8 +69,11 @@ func (m *CaptureManager) evaluateRules(ctx context.Context, app, did string) ([]
 // single-active rule per interface: if another enabled rule already matches the
 // same Method+Path it returns ErrRuleConflict (409). The conflict check, the
 // insert and the rule-set version bump run in ONE store lock (4.9) — no reader
-// can observe the rule without its version.
-func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in *capture.MockRuleInput) (*capture.MockRuleView, int, error) {
+// can observe the rule without its version. caller stamps the rule's Owner
+// (O4.1: creator username, server-side field); nil caller (--no-auth) leaves
+// Owner empty, which M3-2 treats as a legacy rule (admin-manageable only).
+// Every developer may create rules; ownership is established by this stamp.
+func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in *capture.MockRuleInput, caller *RuleCaller) (*capture.MockRuleView, int, error) {
 	now := time.Now()
 	var created *capture.MockRule
 	version, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
@@ -80,6 +83,10 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 					return nil, false, ErrRuleConflict
 				}
 			}
+		}
+		var owner string
+		if caller != nil {
+			owner = caller.Username
 		}
 		created = &capture.MockRule{
 			ID:         id.ULID(),
@@ -94,6 +101,8 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 			CreatedAt:  now,
 			UpdatedAt:  now,
 			LastUsedAt: now,
+			Owner:      owner,
+			UpdatedBy:  owner,
 		}
 		return append(rules, created), true, nil
 	})
@@ -118,7 +127,7 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 // on is rejected with ErrRuleConflict if another enabled rule already matches
 // the rule's (frozen) interface. An absent Enabled pointer leaves the current
 // switch untouched. The update and the version bump run in ONE store lock (4.9).
-func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID string, in *capture.UpdateMockRuleInput) (*capture.MockRuleView, int, error) {
+func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID string, in *capture.UpdateMockRuleInput, caller *RuleCaller) (*capture.MockRuleView, int, error) {
 	var updated *capture.MockRule
 	version, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
 		var existing *capture.MockRule
@@ -160,6 +169,10 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 		c.UpdatedAt = time.Now()
 		// Editing a rule or toggling it counts as "used" (M4 sliding window).
 		c.LastUsedAt = c.UpdatedAt
+		// O4.1: stamp the last modifier from the current session user.
+		if caller != nil {
+			c.UpdatedBy = caller.Username
+		}
 		updated = &c
 
 		out := make([]*capture.MockRule, 0, len(rules))
@@ -189,8 +202,9 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 
 // DeleteMockRule removes a rule by ID (scoped to app/did). The delete and the
 // version bump run in ONE store lock (4.9) so the SDK always sees the rule-set
-// version advance together with the removal.
-func (m *CaptureManager) DeleteMockRule(ctx context.Context, app, did, ruleID string) (int, error) {
+// version advance together with the removal. caller is reserved for the O4
+// permission check (M3-2); this milestone stamps fields only.
+func (m *CaptureManager) DeleteMockRule(ctx context.Context, app, did, ruleID string, caller *RuleCaller) (int, error) {
 	return m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
 		for i, r := range rules {
 			if r.ID == ruleID {
