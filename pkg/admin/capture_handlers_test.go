@@ -124,11 +124,12 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 
-	// M9 (会话结束即删): the session record is gone after disconnect.
-	var errResp ErrorResponse
-	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &errResp)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, "session_not_found", errResp.Error)
+	// O3 (48h 保留): the session record stays, marked ended.
+	var endedSession capture.CaptureSession
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &endedSession)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, capture.SessionStatusEnded, endedSession.Status)
+	assert.NotNil(t, endedSession.RetainUntil)
 
 	// Heartbeat now carries no session (SDK stops capture).
 	hb = HeartbeatResponse{}
@@ -227,19 +228,20 @@ func TestCaptureAPI_ViewerLifecycle(t *testing.T) {
 	assert.Equal(t, 1, got.ViewerCount)
 	assert.Equal(t, capture.SessionStatusCapturing, got.Status)
 
-	// Release the last viewer: session ends and its record is deleted (M9).
+	// Release the last viewer: session ends (record kept, O3 保留).
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID+"/viewers/v2", nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
-	var errResp ErrorResponse
-	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &errResp)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, "session_not_found", errResp.Error)
+	var endedSession capture.CaptureSession
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &endedSession)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, capture.SessionStatusEnded, endedSession.Status)
 
-	// Registering a viewer on a deleted session is rejected.
+	// Registering a viewer on an ended session is rejected (409).
+	var errResp ErrorResponse
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions/"+sessionID+"/viewers",
 		RegisterViewerRequest{ViewerID: "v3"}, &errResp)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, "session_not_found", errResp.Error)
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	assert.Equal(t, "session_ended", errResp.Error)
 }
 
 func TestCaptureAPI_ErrorPaths(t *testing.T) {
@@ -391,15 +393,30 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/traffic/nope", nil, nil)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 
-	// End session (M9: 结束即删) -> session and its traffic are gone: 404.
+	// Re-upload one entry so the end-session retention assertions have data.
+	keep := []*capture.TrafficEntry{{Timestamp: time.Now().Add(time.Millisecond), Method: "GET", URL: "http://example.com/keep", DurationMs: 1}}
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "com.example.integrating", Did: "dev-1", SessionID: sessionID, Entries: keep}, &up)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	var keptList TrafficListResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &keptList)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, keptList.Entries, 1)
+	keptID := keptList.Entries[0].ID
+
+	// End session (O3 48h 保留): session record + traffic stay queryable.
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
-	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &errResp)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, "session_not_found", errResp.Error)
-	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/traffic/"+first.ID, nil, &errResp)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, "not_found", errResp.Error)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &gotSession)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, capture.SessionStatusEnded, gotSession.Status)
+	assert.NotNil(t, gotSession.RetainUntil)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 1, list.Total) // traffic kept during the retention window
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/traffic/"+keptID, nil, &detail)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "http://example.com/keep", detail.URL)
 }
 
 func TestCaptureAPI_TrafficErrors(t *testing.T) {
@@ -461,11 +478,11 @@ func TestCaptureAPI_TrafficErrors(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, "session_not_found", errResp.Error)
 
-	// Ended session (M9: 结束即删) upload -> 404 session_not_found.
+	// Ended session (O3: record kept) upload -> 409 session_ended.
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
 		TrafficUploadRequest{App: "com.example.integrating", Did: "d1", SessionID: sessionID, Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, "session_not_found", errResp.Error)
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	assert.Equal(t, "session_ended", errResp.Error)
 }

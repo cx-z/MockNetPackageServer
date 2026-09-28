@@ -153,14 +153,23 @@ func TestCaptureManager_EndSession(t *testing.T) {
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
-	// M9 (会话结束即删): the session record is deleted on end.
-	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
-		t.Errorf("GetSession() after end = %v, want ErrSessionNotFound (M9: 结束即删)", err)
+	// M2 (O3 48h 保留): the session record is KEPT — marked ended with a
+	// retention deadline (EndedAt + TrafficRetention); its traffic stays
+	// queryable during the window.
+	got, err := m.GetSession(ctx, s.ID)
+	if err != nil || got.Status != capture.SessionStatusEnded {
+		t.Fatalf("GetSession() after end = %+v, %v; want ended record (O3 保留)", got, err)
+	}
+	if got.EndedAt == nil || got.RetainUntil == nil {
+		t.Fatalf("GetSession() after end: EndedAt=%v RetainUntil=%v; want both set", got.EndedAt, got.RetainUntil)
+	}
+	if want := got.EndedAt.Add(m.Config().TrafficRetention); !got.RetainUntil.Equal(want) {
+		t.Errorf("RetainUntil = %v, want %v (EndedAt + retention)", got.RetainUntil, want)
 	}
 
-	// Ending a deleted session reports not found (Web treats 404 as success).
-	if err := m.EndSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
-		t.Errorf("EndSession(again) = %v, want ErrSessionNotFound (record deleted)", err)
+	// Ending an already-ended session is idempotent (keeps the record).
+	if err := m.EndSession(ctx, s.ID); err != nil {
+		t.Errorf("EndSession(again) = %v, want nil (idempotent)", err)
 	}
 
 	// Device list reflects no active session after end.
@@ -220,12 +229,13 @@ func TestCaptureManager_ViewerLifecycle_LastViewerEndsSession(t *testing.T) {
 		t.Errorf("renew changed ViewerCount = %d, want 1", got.ViewerCount)
 	}
 
-	// Release the last viewer: session ends and its record is deleted (M9).
+	// Release the last viewer: session ends (record kept, O3 保留).
 	if err := m.ReleaseViewer(ctx, s.ID, "viewer-2"); err != nil {
 		t.Fatalf("ReleaseViewer(2) = %v", err)
 	}
-	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
-		t.Errorf("GetSession() after last release = %v, want ErrSessionNotFound (M9: 结束即删)", err)
+	got, err = m.GetSession(ctx, s.ID)
+	if err != nil || got.Status != capture.SessionStatusEnded {
+		t.Errorf("GetSession() after last release = %+v, %v; want ended record (O3 保留)", got, err)
 	}
 
 	// Releasing an unknown viewer is idempotent.
@@ -251,8 +261,9 @@ func TestCaptureManager_HeartbeatTimeout_EndsSession(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := m.GetSession(ctx, s.ID); errors.Is(err, store.ErrSessionNotFound) {
-			return // session ended (M9: record deleted) by health check
+		s, err := m.GetSession(ctx, s.ID)
+		if err == nil && s.Status == capture.SessionStatusEnded {
+			return // session marked ended (O3: record kept) by health check
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -285,8 +296,9 @@ func TestCaptureManager_ViewerLeaseExpiry_EndsSession(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := m.GetSession(ctx, s.ID); errors.Is(err, store.ErrSessionNotFound) {
-			return // session ended (M9: record deleted) after viewer lease expiry
+		s, err := m.GetSession(ctx, s.ID)
+		if err == nil && s.Status == capture.SessionStatusEnded {
+			return // session marked ended (O3: record kept) after viewer lease expiry
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -381,13 +393,13 @@ func TestCaptureManager_UploadTraffic_Validation(t *testing.T) {
 		t.Errorf("UploadTraffic(cross-device) = %v, want ErrSessionNotFound", err)
 	}
 
-	// Ended session (M9: record deleted) -> ErrSessionNotFound.
+	// Ended session (O3: record kept) -> ErrSessionEnded.
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
 	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
-		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); !errors.Is(err, store.ErrSessionNotFound) {
-		t.Errorf("UploadTraffic(ended session) = %v, want ErrSessionNotFound (M9: 结束即删)", err)
+		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); !errors.Is(err, store.ErrSessionEnded) {
+		t.Errorf("UploadTraffic(ended session) = %v, want ErrSessionEnded (O3: record kept)", err)
 	}
 }
 
@@ -579,18 +591,16 @@ func TestCaptureManager_ListSessionTraffic_PagingAndClear(t *testing.T) {
 		t.Errorf("ListSessionTraffic(unknown) = %v, want ErrSessionNotFound", err)
 	}
 
-	// Ended session (M9: record deleted): traffic/entry/session are gone.
+	// Ended session (O3 保留): record + traffic stay queryable in the window.
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
-	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); !errors.Is(err, store.ErrSessionNotFound) {
-		t.Errorf("ListSessionTraffic(ended) = %v, want ErrSessionNotFound (M9: 结束即删)", err)
+	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); err != nil {
+		t.Errorf("ListSessionTraffic(ended, within retention) = %v, want data", err)
 	}
-	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
-		t.Errorf("GetSession(after end) = %v, want ErrSessionNotFound", err)
-	}
-	if _, err := m.GetTraffic(ctx, "any-old-id"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("GetTraffic(after end) = %v, want ErrNotFound", err)
+	gs, err := m.GetSession(ctx, s.ID)
+	if err != nil || gs.Status != capture.SessionStatusEnded {
+		t.Errorf("GetSession(after end) = %+v, %v; want ended record", gs, err)
 	}
 }
 
@@ -624,9 +634,9 @@ func TestCaptureManager_Traffic_SessionIsolation(t *testing.T) {
 	}
 }
 
-func TestCaptureManager_HeartbeatTimeout_ClearsTraffic(t *testing.T) {
-	// Health check ends the session on heartbeat timeout; the session's
-	// temporary traffic must be cleared along with it.
+func TestCaptureManager_HeartbeatTimeout_RetainsTraffic(t *testing.T) {
+	// Health check ends the session on heartbeat timeout; O3 keeps the
+	// session's traffic for the retention window (queryable afterwards).
 	m, _ := newCaptureManager(t, 300*time.Millisecond)
 	ctx := context.Background()
 
@@ -646,12 +656,19 @@ func TestCaptureManager_HeartbeatTimeout_ClearsTraffic(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); errors.Is(err, store.ErrSessionNotFound) {
-			return // session ended (M9: record deleted; ended sessions are never listed)
+		// Session is ended AND its traffic is still queryable (O3 保留).
+		s, err := m.GetSession(ctx, s.ID)
+		if err != nil || s.Status != capture.SessionStatusEnded {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		entries, total, lerr := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+		if lerr == nil && total == 1 && len(entries) == 1 && entries[0].URL == "http://x/a" {
+			return // traffic retained after heartbeat-timeout end
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatal("traffic not cleared after heartbeat-timeout session end")
+	t.Fatal("traffic not retained after heartbeat-timeout session end")
 }
 
 func TestCaptureManager_ShareAfterSessionEnd(t *testing.T) {
@@ -675,15 +692,18 @@ func TestCaptureManager_ShareAfterSessionEnd(t *testing.T) {
 	}
 	id := list[0].ID
 
-	// M9: ending the session deletes its record...
+	// M2 (O3): ending the session marks it ended but KEEPS the record and the
+	// traffic (48h retention window).
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
-	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
-		t.Fatalf("GetSession(after end) = %v, want ErrSessionNotFound (M9: 结束即删)", err)
+	gs, err := m.GetSession(ctx, s.ID)
+	if err != nil || gs.Status != capture.SessionStatusEnded {
+		t.Fatalf("GetSession(after end) = %+v, %v; want ended record (O3 保留)", gs, err)
 	}
 
-	// M8.6: retained traffic is still resolvable by ID with its owning device.
+	// Traffic stays resolvable by ID with its owning device (session record
+	// now resolves the owner; retained store no longer involved).
 	e, err := m.GetTraffic(ctx, id)
 	if err != nil || e.ID != id || e.URL != "http://x/a" {
 		t.Fatalf("GetTraffic(retained) = %+v, %v; want entry %q", e, err, id)
@@ -712,9 +732,13 @@ func TestCaptureManager_ShareAfterSessionEnd(t *testing.T) {
 		t.Errorf("GetShare() = %+v, %v", got, err)
 	}
 
-	// M9 list semantics unchanged: the ended session is not listable.
-	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); !errors.Is(err, store.ErrSessionNotFound) {
-		t.Errorf("ListSessionTraffic(ended) = %v, want ErrSessionNotFound", err)
+	// O3: within the retention window the ended session IS listable with data.
+	list2, total2, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	if err != nil || total2 != 1 || len(list2) != 1 {
+		t.Errorf("ListSessionTraffic(ended, within retention) = %d/%d, %v; want 1/1", len(list2), total2, err)
+	}
+	if list2[0].ID != id {
+		t.Errorf("ListSessionTraffic(ended) entry = %q, want %q", list2[0].ID, id)
 	}
 }
 
@@ -786,7 +810,7 @@ func TestCaptureManager_SharePersistsAcrossRestart(t *testing.T) {
 // entries move to the retained store; deleting one of them by ID must succeed
 // (the owning session record is gone, but the row is still the device's data)
 // instead of 404ing at the session-access check.
-func TestCaptureManager_DeleteRetainedTraffic(t *testing.T) {
+func TestCaptureManager_DeleteTraffic_AfterSessionEnd(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
 
@@ -809,24 +833,24 @@ func TestCaptureManager_DeleteRetainedTraffic(t *testing.T) {
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
-	// Both entries are now retained (session record deleted, M9).
+	// O3: both entries stay in the session's traffic (kept for the window).
 	if _, err := m.GetTraffic(ctx, delID); err != nil {
-		t.Fatalf("GetTraffic(retained, before delete) = %v", err)
+		t.Fatalf("GetTraffic(after end, before delete) = %v", err)
 	}
 
 	if err := m.DeleteTraffic(ctx, delID); err != nil {
-		t.Fatalf("DeleteTraffic(retained) = %v, want nil (4.11)", err)
+		t.Fatalf("DeleteTraffic(ended session) = %v, want nil (4.11)", err)
 	}
 	if _, err := m.GetTraffic(ctx, delID); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("GetTraffic(deleted retained) = %v, want ErrNotFound", err)
+		t.Errorf("GetTraffic(deleted) = %v, want ErrNotFound", err)
 	}
-	// The sibling retained entry is untouched.
+	// The sibling entry is untouched.
 	if _, err := m.GetTraffic(ctx, keepID); err != nil {
-		t.Errorf("GetTraffic(sibling retained) = %v, want still present", err)
+		t.Errorf("GetTraffic(sibling) = %v, want still present", err)
 	}
-	// Deleting the last retained entry cleans the retained session slot.
+	// Deleting the last entry leaves the session traffic empty.
 	if err := m.DeleteTraffic(ctx, keepID); err != nil {
-		t.Fatalf("DeleteTraffic(last retained) = %v", err)
+		t.Fatalf("DeleteTraffic(last) = %v", err)
 	}
 	if _, err := m.GetTraffic(ctx, keepID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetTraffic(last deleted) = %v, want ErrNotFound", err)
@@ -837,10 +861,13 @@ func TestCaptureManager_DeleteRetainedTraffic(t *testing.T) {
 	}
 }
 
-func TestCaptureManager_RetainedTraffic_Expires(t *testing.T) {
+func TestCaptureManager_ExpiredEndedSession_Purged(t *testing.T) {
+	// A4 (O3): after the 48h retention window passes, the janitor
+	// (PurgeExpiredEndedSessions) releases the session record + traffic —
+	// list/share lookups all 404. Within the window everything stays queryable.
 	fs := newTestStore(t)
 	cfg := store.DefaultCaptureConfig()
-	cfg.RetainedTrafficTTL = 50 * time.Millisecond
+	cfg.TrafficRetention = 50 * time.Millisecond
 	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), fs.Shares(), cfg)
 	t.Cleanup(m.Stop)
 	ctx := context.Background()
@@ -862,14 +889,23 @@ func TestCaptureManager_RetainedTraffic_Expires(t *testing.T) {
 		t.Fatalf("EndSession() = %v", err)
 	}
 
-	// Within the retention window the entry stays shareable.
+	// Within the retention window the entry stays queryable + shareable.
 	if _, err := m.GetTraffic(ctx, id); err != nil {
-		t.Fatalf("GetTraffic(within TTL) = %v", err)
+		t.Fatalf("GetTraffic(within window) = %v", err)
+	}
+	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); err != nil {
+		t.Fatalf("ListSessionTraffic(within window) = %v", err)
 	}
 
-	// After the window passes, the janitor purges it and sharing fails again.
+	// After the window passes, the janitor purges record + traffic.
 	time.Sleep(200 * time.Millisecond)
-	m.PurgeExpiredRetainedTraffic(ctx)
+	m.PurgeExpiredEndedSessions(ctx)
+	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("GetSession(after purge) = %v, want ErrSessionNotFound", err)
+	}
+	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Errorf("ListSessionTraffic(after purge) = %v, want ErrSessionNotFound", err)
+	}
 	if _, err := m.GetTraffic(ctx, id); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetTraffic(after purge) = %v, want ErrNotFound", err)
 	}

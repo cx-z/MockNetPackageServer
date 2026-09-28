@@ -233,9 +233,13 @@ func (m *CaptureManager) touchHitRules(ctx context.Context, app, did string, hit
 
 // ListSessionTraffic returns a session's traffic entries in arrival order
 // (request timeline, ascending), with limit/offset paging and the total count.
-// For an ended session the temporary traffic has been cleared, so an empty
-// list with total 0 is returned (contract: ended session => 200 + entries=[]
-// + total=0); an unknown session returns ErrSessionNotFound.
+//
+// M2 (O3 48h 保留): an ENDED session stays queryable during its retention
+// window (RetainUntil, default 48h from end) — the Web history view reads
+// real data from it. Once the window passes (even before the hourly janitor
+// runs) the session is reported not found, matching the contract
+// "过期清理后 404"; the janitor then releases the memory. An unknown session
+// returns ErrSessionNotFound.
 func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID string, limit, offset int) ([]*capture.TrafficEntry, int, error) {
 	s, err := m.sessions.Get(ctx, sessionID)
 	if err != nil {
@@ -245,7 +249,12 @@ func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID strin
 		return nil, 0, err
 	}
 	if s.Status == capture.SessionStatusEnded {
-		return []*capture.TrafficEntry{}, 0, nil
+		// O3: expired-ended sessions are gone from the API even if the hourly
+		// janitor has not run yet (record purge happens there).
+		if s.RetainUntil == nil || time.Now().After(*s.RetainUntil) {
+			return nil, 0, ErrSessionNotFound
+		}
+		// Within the retention window: fall through and return the real data.
 	}
 
 	m.trafficMu.RLock()

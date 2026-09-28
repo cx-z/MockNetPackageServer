@@ -12,13 +12,13 @@ import (
 
 // 4.22: the runtime traffic ID index must stay consistent with the slices
 // across every mutation — rolling-window trim unindexes the oldest entries,
-// clear unindexes the whole session, session end flips active entries to
-// retained (owner resolves from the end-time snapshot), and the janitor
-// unindexes purged retained entries.
+// clear unindexes the whole session, session end keeps entries in the session
+// (O3: traffic stays queryable during the retention window), and the janitor
+// unindexes purged expired-ended-session entries.
 func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 	fs := newTestStore(t)
 	cfg := store.DefaultCaptureConfig()
-	cfg.RetainedTrafficTTL = 50 * time.Millisecond
+	cfg.TrafficRetention = 50 * time.Millisecond
 	m := store.NewCaptureManager(fs.Devices(), fs.CaptureSessions(), fs.MockRules(), fs.PairingTokens(), fs.Shares(), cfg)
 	t.Cleanup(m.Stop)
 	ctx := context.Background()
@@ -76,8 +76,8 @@ func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 		t.Errorf("GetTraffic(after clear) = %v, want ErrNotFound (index must follow clear)", err)
 	}
 
-	// Re-upload one entry and end the session: the entry moves to retained and
-	// the index flips — still resolvable, owner from the end-time snapshot.
+	// Re-upload one entry and end the session: the entry STAYS in the session
+	// (O3 retention) — still resolvable, owner via the kept session record.
 	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
 		[]*capture.TrafficEntry{trafficEntry("POST", "http://example.com/retain", base)}); err != nil {
 		t.Fatalf("UploadTraffic(retain) = %v", err)
@@ -88,15 +88,15 @@ func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 		t.Fatalf("EndSession() = %v", err)
 	}
 	if _, err := m.GetTraffic(ctx, retainedID); err != nil {
-		t.Errorf("GetTraffic(retained) = %v, want present", err)
+		t.Errorf("GetTraffic(after end) = %v, want present", err)
 	}
 	if app, did, err := m.GetTrafficWithOwner(ctx, retainedID); err != nil || app != "app" || did != "d1" {
-		t.Errorf("GetTrafficWithOwner(retained) = (%q, %q, %v), want (app, d1, nil) from snapshot", app, did, err)
+		t.Errorf("GetTrafficWithOwner(after end) = (%q, %q, %v), want (app, d1, nil)", app, did, err)
 	}
 
-	// Janitor purge unindexes the retained entry.
+	// Janitor purge unindexes the expired ended session's entries.
 	time.Sleep(80 * time.Millisecond)
-	m.PurgeExpiredRetainedTraffic(ctx)
+	m.PurgeExpiredEndedSessions(ctx)
 	if _, err := m.GetTraffic(ctx, retainedID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetTraffic(after purge) = %v, want ErrNotFound (index must follow purge)", err)
 	}

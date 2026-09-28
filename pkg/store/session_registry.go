@@ -63,25 +63,26 @@ func (m *CaptureManager) ActivateSession(ctx context.Context, app, did string) (
 // or heartbeat timeout). Idempotent: ending an already-ended session is a
 // no-op. Viewer leases for the session are cleared.
 //
-// M9 (会话结束即删): ending a session deletes its record — the user's view
-// keeps only the current session, no history. Mock rules are NOT deleted:
-// they persist per device and are disabled on session end (M4/F4.5 决策13),
-// re-enabled manually on the next session.
+// M2 (O3 48h 保留): ending a session marks it ended and stamps RetainUntil
+// (now + TrafficRetention, default 48h). The session record and its traffic
+// are KEPT and stay queryable via ListSessionTraffic during the window — the
+// Web history view reads them; after the window the janitor purges both. This
+// replaces the M9 "结束即删" model: the record is no longer deleted on end.
 //
-// M8.6 (断开后可分享): the session's traffic is NOT discarded — it moves to
-// the retained store so records already shown on the page stay resolvable by
-// ID (share creation) for RetainedTrafficTTL. The list contract is unchanged:
-// an ended session is deleted and never listed again.
+// M8.6 (断开后可分享): share creation still works after disconnect — traffic
+// stays in the session (index retained=false) and the owner resolves via the
+// session record, which now survives the end. The separate retained store is
+// no longer written by EndSession; legacy retained data (pre-M2) is purged by
+// PurgeExpiredRetainedTraffic as before.
+//
+// Mock rules are NOT deleted: they persist per device and are disabled on
+// session end (M4/F4.5 决策13), re-enabled manually on the next session.
 func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	// The whole end sequence runs under trafficMu, the same lock UploadTraffic
 	// and ClearSessionTraffic hold for their authoritative session check +
 	// traffic mutation. This serializes "end" with "upload/clear": an upload
-	// either lands entirely before the end (its entries move to retained with
-	// the session) or is rejected after it (session record already gone).
-	// Previously the status check happened outside the lock, so an upload could
-	// append to m.traffic after the entries were moved to retained and the
-	// session deleted, leaving orphaned entries that were never retained,
-	// listed or purged (memory leak) and a failed RequestCount update.
+	// either lands entirely before the end (its entries stay in the session's
+	// traffic, queryable during the retention window) or is rejected after it.
 	m.trafficMu.Lock()
 	s, err := m.sessions.Get(ctx, id)
 	if err != nil {
@@ -100,37 +101,23 @@ func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	delete(m.viewers, id)
 	m.viewerMu.Unlock()
 
-	// M8.6: move the session's traffic to the retained store instead of
-	// deleting it, keeping the entries resolvable by ID for share creation
-	// after disconnect (bounded by RetainedTrafficTTL, purged by the health
-	// check). The owning device is recorded because the session record is
-	// about to be deleted and ownership must stay verifiable.
-	entries := m.traffic[id]
-	delete(m.traffic, id)
-	// 4.22: flip the moved entries' index to retained (with the owning-device
-	// snapshot) inside the same critical section that deletes the session
-	// record — from this instant ID lookups resolve them via the retained
-	// location without needing the (now gone) session record.
-	m.indexTraffic(id, true, s.App, s.Did, entries)
-
-	// M9: 结束即删 — delete the session record instead of keeping an
-	// "ended" entry. The device and rule stores are untouched.
-	if err := m.sessions.Delete(ctx, id); err != nil {
+	// M2 (O3): mark ended + retention deadline instead of deleting the record
+	// and moving traffic to the retained store. Traffic stays in m.traffic[id];
+	// the ID index keeps retained=false, and ownership still resolves through
+	// the (now persisted) session record.
+	now := time.Now()
+	sc := *s
+	sc.Status = capture.SessionStatusEnded
+	endAt := now
+	sc.EndedAt = &endAt
+	retainUntil := now.Add(m.cfg.TrafficRetention)
+	sc.RetainUntil = &retainUntil
+	if err := m.sessions.Update(ctx, &sc); err != nil {
 		m.trafficMu.Unlock()
 		return err
 	}
 	m.trafficMu.Unlock()
 
-	if len(entries) > 0 {
-		m.retainedMu.Lock()
-		m.retained[id] = &retainedSession{
-			App:     s.App,
-			Did:     s.Did,
-			EndedAt: time.Now(),
-			Entries: entries,
-		}
-		m.retainedMu.Unlock()
-	}
 	// M4 (F4.5/决策13): any session end disables all of the device mock rules;
 	// they stay but must be re-enabled manually.
 	m.disableDeviceRules(ctx, s.App, s.Did)
@@ -255,10 +242,11 @@ func (m *CaptureManager) ReleaseViewer(ctx context.Context, sessionID, viewerID 
 //     (device offline => session ended, 僵尸清理兜底), and
 //  2. garbage-collects expired viewer leases, ending a session when its last
 //     lease expires without a page-close event (beforeunload is unreliable).
-//  A single hourly janitor also purges expired mock rules, retained traffic,
-//  QR pairing tokens (M9) and share snapshots (M8.5) — one ticker instead of
-//  four (4.22: the janitors are independent and cheap, and running them
-//  sequentially in the same goroutine loses nothing).
+//     A single hourly janitor also purges expired mock rules, expired ended
+//     sessions (O3 48h retention), retained traffic, QR pairing tokens (M9) and
+//     share snapshots (M8.5) — one ticker instead of five (4.22: the janitors
+//     are independent and cheap, and running them sequentially in the same
+//     goroutine loses nothing).
 func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 	m.wg.Add(1)
 	go func() {
@@ -280,12 +268,53 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 				m.checkViewerLeases(ctx)
 			case <-hourly.C:
 				m.PurgeExpiredRules(ctx)
+				m.PurgeExpiredEndedSessions(ctx)
 				m.PurgeExpiredRetainedTraffic(ctx)
 				m.PurgeExpiredPairingTokens(ctx)
 				m.PurgeExpiredShares(ctx)
 			}
 		}
 	}()
+}
+
+// PurgeExpiredEndedSessions deletes ended sessions whose retention window
+// (RetainUntil) has passed, together with their in-memory traffic (O3 48h 保留:
+// 会话结束后流量保留 48h，之后 janitor 清理释放内存). It coexists with the 7-day
+// mock-rule sliding cleanup (PurgeExpiredRules) — the two janitors are
+// independent. Best-effort; called hourly by the health check. A session whose
+// record is already gone is skipped; traffic keys without an owning session are
+// swept by purgeRetainedBefore's orphan pass.
+func (m *CaptureManager) PurgeExpiredEndedSessions(ctx context.Context) {
+	now := time.Now()
+	all, err := m.sessions.List(ctx, nil)
+	if err != nil {
+		m.log.Warn("capture health check: list sessions for purge failed", "error", err)
+		return
+	}
+	for _, s := range all {
+		if s.Status != capture.SessionStatusEnded || s.RetainUntil == nil {
+			continue
+		}
+		if !now.After(*s.RetainUntil) {
+			continue
+		}
+		// Re-check under trafficMu so a concurrent EndSession/UploadTraffic
+		// cannot interleave between the list snapshot and the delete.
+		m.trafficMu.Lock()
+		cur, err := m.sessions.Get(ctx, s.ID)
+		if err != nil {
+			m.trafficMu.Unlock()
+			continue // already gone; nothing to purge
+		}
+		if cur.Status == capture.SessionStatusEnded && cur.RetainUntil != nil && now.After(*cur.RetainUntil) {
+			m.unindexTraffic(m.traffic[s.ID])
+			delete(m.traffic, s.ID)
+			if err := m.sessions.Delete(ctx, s.ID); err != nil {
+				m.log.Warn("capture health check: purge expired ended session failed", "session", s.ID, "error", err)
+			}
+		}
+		m.trafficMu.Unlock()
+	}
 }
 
 // Stop stops the background health-check goroutine. Safe to call multiple times.
