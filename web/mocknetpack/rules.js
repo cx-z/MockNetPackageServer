@@ -20,6 +20,25 @@ async function loadRules() {
   }
 }
 
+// O4.4 前端可管理性判定（UX 隐藏，非安全边界——服务端仍强制 403）。
+// --no-auth（authUser 为 null）下服务端无权限校验，全量渲染；已登录：
+// admin 全权；否则仅规则 owner 可管理。owner 空的存量规则仅 admin 可管理。
+function canManageRule(r) {
+  if (!authUser) return true;
+  if (authUser.role === "admin") return true;
+  return !!(r.owner && r.owner === authUser.username);
+}
+
+// ruleOwnersText 渲染"创建人 / 最后编辑人"（O4.4）：空 owner 显示 "—"。
+function ruleOwnersText(r) {
+  const owner = r.owner || "—";
+  const updater = r.updatedBy || "—";
+  if (r.owner) {
+    return "创建人 " + esc(r.owner) + " · 最后编辑 " + esc(r.updatedBy || "—");
+  }
+  return "创建人 — · 最后编辑 " + esc(updater);
+}
+
 function renderRules(data) {
   const rules = data.rules || [];
   $("rulesInfo").textContent = "· 共 " + rules.length + " 条 · 版本 " + (data.version ?? 0);
@@ -59,6 +78,7 @@ function renderRules(data) {
           (r.response && r.response.body ? " · " + esc(String(r.response.body).slice(0, 80)) : "") +
           (r.response && r.response.bodyBase64 ? " · [二进制 " + atob(r.response.bodyBase64).length + " 字节]" : "") +
           (r.source ? " · 来自抓包" : "") + "</div>" +
+        '<div class="r-owner">' + ruleOwnersText(r) + "</div>" +
       "</div>";
 
     // 点击规则体 → 右列展示详情/编辑（M8.2 两列布局）。
@@ -69,23 +89,27 @@ function renderRules(data) {
       renderRuleDetail(r);
     };
 
-    const sw = document.createElement("label");
-    sw.className = "switch";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = !!r.enabled;
-    const slider = document.createElement("span");
-    slider.className = "slider";
-    sw.appendChild(input);
-    sw.appendChild(slider);
-    input.addEventListener("change", () => toggleRule(r, input.checked));
-    el.appendChild(sw);
+    // O4.4：权限不符（非 owner 非 admin）时不渲染开关/删除入口（服务端仍强制 403）。
+    const manageable = canManageRule(r);
+    if (manageable) {
+      const sw = document.createElement("label");
+      sw.className = "switch";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = !!r.enabled;
+      const slider = document.createElement("span");
+      slider.className = "slider";
+      sw.appendChild(input);
+      sw.appendChild(slider);
+      input.addEventListener("change", () => toggleRule(r, input.checked));
+      el.appendChild(sw);
 
-    const del = document.createElement("button");
-    del.className = "small danger";
-    del.textContent = "删除";
-    del.onclick = (ev) => { ev.stopPropagation(); deleteRule(r); };
-    el.appendChild(del);
+      const del = document.createElement("button");
+      del.className = "small danger";
+      del.textContent = "删除";
+      del.onclick = (ev) => { ev.stopPropagation(); deleteRule(r); };
+      el.appendChild(del);
+    }
 
     box.appendChild(el);
   }
@@ -132,7 +156,10 @@ function renderRuleDetail(r) {
 
   box.innerHTML =
     '<div class="detail-panel">' +
-      '<div class="d-actions"><button id="ruleEditBtn" class="small">编辑</button></div>' +
+      // O4.4：权限不符时不渲染编辑入口（服务端仍强制 403）。
+      (canManageRule(r)
+        ? '<div class="d-actions"><button id="ruleEditBtn" class="small">编辑</button></div>'
+        : '<div class="d-actions"><span class="sub">只读（仅创建人/admin 可编辑）</span></div>') +
       '<div class="tabs">' +
         '<button class="tab active" data-tab="req">请求</button>' +
         '<button class="tab" data-tab="resp">响应</button>' +

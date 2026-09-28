@@ -164,6 +164,8 @@ button.mini.active { background: var(--primary); color: #fff; }
 .rule-row .r-line2 { font-size: 12px; color: var(--muted); margin-top: 2px;
                      font-family: ui-monospace, Menlo, monospace; overflow: hidden;
                      text-overflow: ellipsis; white-space: nowrap; }
+.rule-row .r-owner { font-size: 11px; color: var(--muted); margin-top: 2px; opacity: .85;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge.eff { background: #e6f4ea; color: var(--capturing); }
 .badge.stopped { background: #f0f1f3; color: var(--muted); }
 
