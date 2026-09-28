@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/getmockd/mockd/internal/id"
@@ -231,8 +232,41 @@ func (m *CaptureManager) touchHitRules(ctx context.Context, app, did string, hit
 	}
 }
 
+// TrafficFilter narrows ListSessionTraffic (O2.2 服务端过滤下推): the Web
+// history view filters on the server instead of pulling the full list and
+// filtering client-side. Zero value = no filter. All set filters are ANDed.
+type TrafficFilter struct {
+	// Keyword matches a case-insensitive substring of the entry URL.
+	// Empty means no URL filter.
+	Keyword string
+	// StatusCode matches the entry's response status exactly (nil = no filter).
+	StatusCode *int
+	// From/To bound the entry timestamp inclusively (nil = open bound).
+	From *time.Time
+	To   *time.Time
+}
+
+// matches reports whether the entry satisfies every set filter.
+func (f TrafficFilter) matches(e *capture.TrafficEntry) bool {
+	if f.Keyword != "" && !strings.Contains(strings.ToLower(e.URL), strings.ToLower(f.Keyword)) {
+		return false
+	}
+	if f.StatusCode != nil && e.StatusCode != *f.StatusCode {
+		return false
+	}
+	if f.From != nil && e.Timestamp.Before(*f.From) {
+		return false
+	}
+	if f.To != nil && e.Timestamp.After(*f.To) {
+		return false
+	}
+	return true
+}
+
 // ListSessionTraffic returns a session's traffic entries in arrival order
 // (request timeline, ascending), with limit/offset paging and the total count.
+// The filter (O2.2) is applied BEFORE paging: total is the size of the
+// filtered set, and limit/offset page within it.
 //
 // M2 (O3 48h 保留): an ENDED session stays queryable during its retention
 // window (RetainUntil, default 48h from end) — the Web history view reads
@@ -240,7 +274,7 @@ func (m *CaptureManager) touchHitRules(ctx context.Context, app, did string, hit
 // runs) the session is reported not found, matching the contract
 // "过期清理后 404"; the janitor then releases the memory. An unknown session
 // returns ErrSessionNotFound.
-func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID string, limit, offset int) ([]*capture.TrafficEntry, int, error) {
+func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID string, limit, offset int, filter TrafficFilter) ([]*capture.TrafficEntry, int, error) {
 	s, err := m.sessions.Get(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -261,7 +295,18 @@ func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID strin
 	entries := m.traffic[sessionID]
 	m.trafficMu.RUnlock()
 
-	total := len(entries)
+	// O2.2: server-side filter first, then page within the filtered set.
+	filtered := entries
+	if filter.Keyword != "" || filter.StatusCode != nil || filter.From != nil || filter.To != nil {
+		filtered = make([]*capture.TrafficEntry, 0, len(entries))
+		for _, e := range entries {
+			if filter.matches(e) {
+				filtered = append(filtered, e)
+			}
+		}
+	}
+
+	total := len(filtered)
 	if offset < 0 {
 		offset = 0
 	}
@@ -273,7 +318,7 @@ func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID strin
 		end = offset + limit
 	}
 	out := make([]*capture.TrafficEntry, 0, end-offset)
-	for _, e := range entries[offset:end] {
+	for _, e := range filtered[offset:end] {
 		c := *e
 		out = append(out, &c)
 	}

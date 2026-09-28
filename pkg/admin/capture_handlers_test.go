@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"net/url"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -485,4 +486,75 @@ func TestCaptureAPI_TrafficErrors(t *testing.T) {
 		TrafficUploadRequest{App: "com.example.integrating", Did: "d1", SessionID: sessionID, Entries: []*capture.TrafficEntry{validEntry()}}, &errResp)
 	require.Equal(t, http.StatusConflict, resp.StatusCode)
 	assert.Equal(t, "session_ended", errResp.Error)
+}
+
+// TestCaptureAPI_TrafficList_FilterParams asserts the O2.2 server-side filter
+// parameters on GET /sessions/{id}/traffic: keyword / statusCode / from / to
+// narrow the list (ANDed), paging pages within the filtered set, and invalid
+// values are rejected with 400 invalid_field.
+func TestCaptureAPI_TrafficList_FilterParams(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+	mustSeedDevice(t, srv, "com.example.integrating", "filter-dev-1")
+	var session capture.CaptureSession
+	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
+		ActivateSessionRequest{App: "com.example.integrating", Did: "filter-dev-1"}, &session)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	sessionID := session.ID
+
+	base := time.Now().Add(-5 * time.Minute)
+	entries := []*capture.TrafficEntry{
+		{Timestamp: base, Method: "GET", URL: "http://f/api/users?q=a", Path: "/api/users", StatusCode: 200, DurationMs: 1},
+		{Timestamp: base.Add(time.Minute), Method: "POST", URL: "http://f/api/orders", Path: "/api/orders", StatusCode: 201, DurationMs: 2},
+		{Timestamp: base.Add(2 * time.Minute), Method: "GET", URL: "http://f/api/users?q=b", Path: "/api/users", StatusCode: 404, DurationMs: 3},
+		{Timestamp: base.Add(3 * time.Minute), Method: "GET", URL: "http://f/health", Path: "/health", StatusCode: 200, DurationMs: 4},
+	}
+	var up TrafficUploadResponse
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "com.example.integrating", Did: "filter-dev-1", SessionID: sessionID, Entries: entries}, &up)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	assert.Equal(t, 4, up.Count)
+
+	// keyword only (case-insensitive substring of URL).
+	var list TrafficListResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?keyword=USERS", nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 2, list.Total)
+	assert.Equal(t, "http://f/api/users?q=a", list.Entries[0].URL)
+
+	// statusCode only.
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?statusCode=404", nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 1, list.Total)
+	assert.Equal(t, "http://f/api/users?q=b", list.Entries[0].URL)
+
+	// time range only (from..to inclusive).
+	from := url.QueryEscape(base.Add(30 * time.Second).Format(time.RFC3339))
+	to := url.QueryEscape(base.Add(2*time.Minute + 30*time.Second).Format(time.RFC3339))
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?from="+from+"&to="+to, nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 2, list.Total)
+
+	// combined keyword + statusCode + time (ANDed): only users+200 within
+	// [30s, 2m30s] — entry 0 (t=0 < from) and entry 2 (404) are excluded.
+	resp = doJSON(t, http.MethodGet,
+		srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?keyword=users&statusCode=200&from="+from+"&to="+to, nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 0, list.Total)
+
+	// Paging within the filtered set: keyword=api gives 3 hits; limit=1&offset=1
+	// returns the 2nd hit, total stays 3.
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?keyword=api&limit=1&offset=1", nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 3, list.Total)
+	require.Len(t, list.Entries, 1)
+	assert.Equal(t, "http://f/api/orders", list.Entries[0].URL)
+
+	// Invalid filter values -> 400 invalid_field.
+	var errResp ErrorResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?from=not-a-time", nil, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, "invalid_field", errResp.Error)
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?statusCode=abc", nil, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, "invalid_field", errResp.Error)
 }

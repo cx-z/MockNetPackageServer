@@ -41,7 +41,7 @@ func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID, first); err != nil {
 		t.Fatalf("UploadTraffic(first) = %v", err)
 	}
-	full, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	full, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if err != nil || len(full) != store.DefaultMaxSessionTrafficEntries {
 		t.Fatalf("ListSessionTraffic(full) = %d entries, err %v", len(full), err)
 	}
@@ -54,7 +54,7 @@ func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 	if _, err := m.GetTraffic(ctx, oldestID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetTraffic(trimmed oldest) = %v, want ErrNotFound (index must follow the window trim)", err)
 	}
-	window, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	window, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if err != nil || len(window) != store.DefaultMaxSessionTrafficEntries {
 		t.Fatalf("ListSessionTraffic(window) = %d entries, err %v", len(window), err)
 	}
@@ -82,7 +82,7 @@ func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 		[]*capture.TrafficEntry{trafficEntry("POST", "http://example.com/retain", base)}); err != nil {
 		t.Fatalf("UploadTraffic(retain) = %v", err)
 	}
-	list, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	list, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	retainedID := list[0].ID
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)

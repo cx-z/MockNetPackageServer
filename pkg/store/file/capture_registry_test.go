@@ -442,7 +442,7 @@ func TestCaptureManager_UploadTraffic_AcceptAndCount(t *testing.T) {
 	}
 
 	// Server-generated ID + session binding + arrival order preserved.
-	list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if err != nil {
 		t.Fatalf("ListSessionTraffic() = %v", err)
 	}
@@ -458,7 +458,7 @@ func TestCaptureManager_UploadTraffic_AcceptAndCount(t *testing.T) {
 
 	// Returned entries are copies: mutating them must not touch storage.
 	list[0].Method = "HACKED"
-	again, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	again, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if again[0].Method != "GET" {
 		t.Errorf("stored entry mutated through returned copy: %q", again[0].Method)
 	}
@@ -502,7 +502,7 @@ func TestCaptureManager_UploadTraffic_RollingWindow(t *testing.T) {
 		t.Fatalf("count = %d, want %d (all accepted)", count, len(entries))
 	}
 
-	list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if err != nil {
 		t.Fatalf("ListSessionTraffic() = %v", err)
 	}
@@ -532,7 +532,7 @@ func TestCaptureManager_UploadTraffic_RollingWindow(t *testing.T) {
 	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID, entries[:1]); err != nil {
 		t.Fatalf("second UploadTraffic() = %v", err)
 	}
-	list, total, _ = m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	list, total, _ = m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if total != store.DefaultMaxSessionTrafficEntries {
 		t.Fatalf("total after second batch = %d, want %d", total, store.DefaultMaxSessionTrafficEntries)
 	}
@@ -563,7 +563,7 @@ func TestCaptureManager_ListSessionTraffic_PagingAndClear(t *testing.T) {
 	}
 
 	// Paging: limit 2, offset 1 -> entries 1..2 of 5.
-	list, total, err := m.ListSessionTraffic(ctx, s.ID, 2, 1)
+	list, total, err := m.ListSessionTraffic(ctx, s.ID, 2, 1, store.TrafficFilter{})
 	if err != nil {
 		t.Fatalf("ListSessionTraffic() = %v", err)
 	}
@@ -575,19 +575,19 @@ func TestCaptureManager_ListSessionTraffic_PagingAndClear(t *testing.T) {
 	}
 
 	// limit 0 = no limit.
-	list, total, _ = m.ListSessionTraffic(ctx, s.ID, 0, 3)
+	list, total, _ = m.ListSessionTraffic(ctx, s.ID, 0, 3, store.TrafficFilter{})
 	if len(list) != 2 || total != 5 {
 		t.Errorf("limit=0 offset=3: len=%d total=%d; want 2/5", len(list), total)
 	}
 
 	// offset beyond total -> empty.
-	list, total, _ = m.ListSessionTraffic(ctx, s.ID, 10, 99)
+	list, total, _ = m.ListSessionTraffic(ctx, s.ID, 10, 99, store.TrafficFilter{})
 	if len(list) != 0 || total != 5 {
 		t.Errorf("offset beyond: len=%d total=%d; want 0/5", len(list), total)
 	}
 
 	// Unknown session.
-	if _, _, err := m.ListSessionTraffic(ctx, "no-such-session", 0, 0); !errors.Is(err, store.ErrSessionNotFound) {
+	if _, _, err := m.ListSessionTraffic(ctx, "no-such-session", 0, 0, store.TrafficFilter{}); !errors.Is(err, store.ErrSessionNotFound) {
 		t.Errorf("ListSessionTraffic(unknown) = %v, want ErrSessionNotFound", err)
 	}
 
@@ -595,7 +595,7 @@ func TestCaptureManager_ListSessionTraffic_PagingAndClear(t *testing.T) {
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
-	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); err != nil {
+	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{}); err != nil {
 		t.Errorf("ListSessionTraffic(ended, within retention) = %v, want data", err)
 	}
 	gs, err := m.GetSession(ctx, s.ID)
@@ -624,11 +624,11 @@ func TestCaptureManager_Traffic_SessionIsolation(t *testing.T) {
 		t.Fatalf("UploadTraffic(s2) = %v", err)
 	}
 
-	list1, total1, _ := m.ListSessionTraffic(ctx, s1.ID, 0, 0)
+	list1, total1, _ := m.ListSessionTraffic(ctx, s1.ID, 0, 0, store.TrafficFilter{})
 	if total1 != 1 || len(list1) != 1 || list1[0].URL != "http://x/one" {
 		t.Errorf("session1 traffic = %d/%d (%q); want 1/1 one", len(list1), total1, list1[0].URL)
 	}
-	list2, total2, _ := m.ListSessionTraffic(ctx, s2.ID, 0, 0)
+	list2, total2, _ := m.ListSessionTraffic(ctx, s2.ID, 0, 0, store.TrafficFilter{})
 	if total2 != 1 || len(list2) != 1 || list2[0].URL != "http://x/two" {
 		t.Errorf("session2 traffic = %d/%d (%q); want 1/1 two", len(list2), total2, list2[0].URL)
 	}
@@ -662,7 +662,7 @@ func TestCaptureManager_HeartbeatTimeout_RetainsTraffic(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
-		entries, total, lerr := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+		entries, total, lerr := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 		if lerr == nil && total == 1 && len(entries) == 1 && entries[0].URL == "http://x/a" {
 			return // traffic retained after heartbeat-timeout end
 		}
@@ -686,7 +686,7 @@ func TestCaptureManager_ShareAfterSessionEnd(t *testing.T) {
 		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); err != nil {
 		t.Fatalf("UploadTraffic() = %v", err)
 	}
-	list, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	list, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if err != nil || len(list) != 1 {
 		t.Fatalf("ListSessionTraffic() = %d, %v; want 1 entry", len(list), err)
 	}
@@ -733,7 +733,7 @@ func TestCaptureManager_ShareAfterSessionEnd(t *testing.T) {
 	}
 
 	// O3: within the retention window the ended session IS listable with data.
-	list2, total2, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	list2, total2, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if err != nil || total2 != 1 || len(list2) != 1 {
 		t.Errorf("ListSessionTraffic(ended, within retention) = %d/%d, %v; want 1/1", len(list2), total2, err)
 	}
@@ -774,7 +774,7 @@ func TestCaptureManager_SharePersistsAcrossRestart(t *testing.T) {
 		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); err != nil {
 		t.Fatalf("UploadTraffic() = %v", err)
 	}
-	list, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	list, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if err != nil || len(list) != 1 {
 		t.Fatalf("ListSessionTraffic() = %d, %v; want 1 entry", len(list), err)
 	}
@@ -827,7 +827,7 @@ func TestCaptureManager_DeleteTraffic_AfterSessionEnd(t *testing.T) {
 			t.Fatalf("UploadTraffic() = %v", err)
 		}
 	}
-	list, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	list, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	delID, keepID := list[0].ID, list[1].ID
 
 	if err := m.EndSession(ctx, s.ID); err != nil {
@@ -883,7 +883,7 @@ func TestCaptureManager_ExpiredEndedSession_Purged(t *testing.T) {
 		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); err != nil {
 		t.Fatalf("UploadTraffic() = %v", err)
 	}
-	list, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	list, _, _ := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	id := list[0].ID
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
@@ -893,7 +893,7 @@ func TestCaptureManager_ExpiredEndedSession_Purged(t *testing.T) {
 	if _, err := m.GetTraffic(ctx, id); err != nil {
 		t.Fatalf("GetTraffic(within window) = %v", err)
 	}
-	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); err != nil {
+	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{}); err != nil {
 		t.Fatalf("ListSessionTraffic(within window) = %v", err)
 	}
 
@@ -903,7 +903,7 @@ func TestCaptureManager_ExpiredEndedSession_Purged(t *testing.T) {
 	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
 		t.Errorf("GetSession(after purge) = %v, want ErrSessionNotFound", err)
 	}
-	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0); !errors.Is(err, store.ErrSessionNotFound) {
+	if _, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{}); !errors.Is(err, store.ErrSessionNotFound) {
 		t.Errorf("ListSessionTraffic(after purge) = %v, want ErrSessionNotFound", err)
 	}
 	if _, err := m.GetTraffic(ctx, id); !errors.Is(err, store.ErrNotFound) {
@@ -979,7 +979,7 @@ func TestCaptureManager_RollingWindow_UsesConfiguredCap(t *testing.T) {
 		t.Fatalf("count = %d, want %d (all accepted)", count, len(entries))
 	}
 
-	list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0)
+	list, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if err != nil {
 		t.Fatalf("ListSessionTraffic() = %v", err)
 	}
@@ -1000,5 +1000,108 @@ func TestCaptureManager_RollingWindow_UsesConfiguredCap(t *testing.T) {
 	}
 	if got.RequestCount != len(entries) {
 		t.Errorf("RequestCount = %d, want %d (counts every upload)", got.RequestCount, len(entries))
+	}
+}
+
+// ============================================================================
+// M2-3: 服务端过滤下推（O2.2）
+// ============================================================================
+
+// TestCaptureManager_ListSessionTraffic_Filters asserts the server-side
+// filter (keyword / statusCode / from / to, ANDed) narrows the list BEFORE
+// paging: total reflects the filtered set and limit/offset page within it.
+func TestCaptureManager_ListSessionTraffic_Filters(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	if _, err := m.RegisterDevice(ctx, &capture.Device{App: "app", Did: "d1"}); err != nil {
+		t.Fatalf("RegisterDevice() = %v", err)
+	}
+	s, _, err := m.ActivateSession(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ActivateSession() = %v", err)
+	}
+
+	// 6 entries with distinct URLs, status codes and timestamps (ascending):
+	//   0 GET  http://x/api/users?q=alice  200  t0
+	//   1 POST http://x/api/orders         201  t1
+	//   2 GET  http://x/api/users?q=bob    404  t2
+	//   3 GET  http://x/health             200  t3
+	//   4 POST http://x/api/users?q=carol  200  t4
+	//   5 GET  http://x/api/orders/1       404  t5
+	base := time.Now().Add(-10 * time.Minute)
+	urls := []string{
+		"http://x/api/users?q=alice",
+		"http://x/api/orders",
+		"http://x/api/users?q=bob",
+		"http://x/health",
+		"http://x/api/users?q=carol",
+		"http://x/api/orders/1",
+	}
+	methods := []string{"GET", "POST", "GET", "GET", "POST", "GET"}
+	codes := []int{200, 201, 404, 200, 200, 404}
+	entries := make([]*capture.TrafficEntry, len(urls))
+	for i := range urls {
+		entries[i] = &capture.TrafficEntry{
+			Timestamp:  base.Add(time.Duration(i) * time.Minute),
+			Method:     methods[i],
+			URL:        urls[i],
+			Path:       urls[i],
+			StatusCode: codes[i],
+			DurationMs: 1,
+		}
+	}
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID, entries); err != nil {
+		t.Fatalf("UploadTraffic() = %v", err)
+	}
+
+	code404 := 404
+	code200 := 200
+	from := base.Add(90 * time.Second)             // after t0, before t1
+	to := base.Add(4*time.Minute + 30*time.Second) // after t4, before t5
+	cases := []struct {
+		name   string
+		filter store.TrafficFilter
+		want   []string // expected URLs, in arrival order
+	}{
+		{"no filter", store.TrafficFilter{}, urls},
+		{"keyword substring (case-insensitive)", store.TrafficFilter{Keyword: "USERS"},
+			[]string{urls[0], urls[2], urls[4]}},
+		{"keyword missing", store.TrafficFilter{Keyword: "nothing-here"}, nil},
+		{"statusCode 404", store.TrafficFilter{StatusCode: &code404}, []string{urls[2], urls[5]}},
+		{"from-only (>= 90s: t2..t5)", store.TrafficFilter{From: &from}, []string{urls[2], urls[3], urls[4], urls[5]}},
+		{"to-only (<= 270s: t0..t4)", store.TrafficFilter{To: &to}, []string{urls[0], urls[1], urls[2], urls[3], urls[4]}},
+		{"combined keyword+status+time", store.TrafficFilter{
+			Keyword:    "api/users",
+			StatusCode: &code200,
+			From:       &from,
+			To:         &to,
+		}, []string{urls[4]}}, // 0 is before From, 2 is 404
+	}
+
+	for _, tc := range cases {
+		got, total, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, tc.filter)
+		if err != nil {
+			t.Fatalf("%s: ListSessionTraffic() = %v", tc.name, err)
+		}
+		if total != len(tc.want) || len(got) != len(tc.want) {
+			t.Errorf("%s: total=%d len=%d, want %d", tc.name, total, len(got), len(tc.want))
+			continue
+		}
+		for i, w := range tc.want {
+			if got[i].URL != w {
+				t.Errorf("%s: entry[%d] = %q, want %q", tc.name, i, got[i].URL, w)
+			}
+		}
+	}
+
+	// Paging pages within the FILTERED set: keyword=api/users gives 3 hits;
+	// limit=1&offset=1 must return the 2nd hit (arrival order), total stays 3.
+	page, total, err := m.ListSessionTraffic(ctx, s.ID, 1, 1, store.TrafficFilter{Keyword: "api/users"})
+	if err != nil {
+		t.Fatalf("filtered paging: %v", err)
+	}
+	if total != 3 || len(page) != 1 || page[0].URL != urls[2] {
+		t.Errorf("filtered paging: total=%d len=%d entry=%q, want 3/1 %q", total, len(page), page[0].URL, urls[2])
 	}
 }

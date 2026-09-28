@@ -99,7 +99,7 @@ func TestEndSessionPreservesUploadedTrafficForRetention(t *testing.T) {
 		t.Fatalf("uploaded %d, want 3", n)
 	}
 
-	listed, total, err := m.ListSessionTraffic(ctx, sess.ID, 0, 0)
+	listed, total, err := m.ListSessionTraffic(ctx, sess.ID, 0, 0, store.TrafficFilter{})
 	if err != nil || total != 3 || len(listed) != 3 {
 		t.Fatalf("list before end: total=%d len=%d err=%v", total, len(listed), err)
 	}
@@ -118,7 +118,7 @@ func TestEndSessionPreservesUploadedTrafficForRetention(t *testing.T) {
 		}
 	}
 	// The ended session stays listable during the retention window.
-	if listed, total, err := m.ListSessionTraffic(ctx, sess.ID, 0, 0); err != nil || total != 3 || len(listed) != 3 {
+	if listed, total, err := m.ListSessionTraffic(ctx, sess.ID, 0, 0, store.TrafficFilter{}); err != nil || total != 3 || len(listed) != 3 {
 		t.Fatalf("list after end: total=%d len=%d err=%v; want 3/3 (O3 retention)", total, len(listed), err)
 	}
 	// Upload after end is rejected (record kept => ErrSessionEnded).
@@ -190,7 +190,7 @@ func TestConcurrentUploadAndEndSession(t *testing.T) {
 
 	// The end must fully win: the session is ended (record kept, O3) and its
 	// traffic stays listable; the janitor must not panic on the traffic map.
-	if _, _, err := m.ListSessionTraffic(ctx, sess.ID, 0, 0); err != nil {
+	if _, _, err := m.ListSessionTraffic(ctx, sess.ID, 0, 0, store.TrafficFilter{}); err != nil {
 		t.Fatalf("list after end: got %v, want data (O3 retention)", err)
 	}
 	m.PurgeExpiredEndedSessions(ctx)

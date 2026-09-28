@@ -200,10 +200,40 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// M2 (O2.2 服务端过滤下推): keyword / statusCode / from / to narrow the
+	// list server-side (ANDed); limit/offset page within the filtered set.
+	// from/to are RFC3339 timestamps, inclusive.
+	q := r.URL.Query()
+	filter := store.TrafficFilter{Keyword: q.Get("keyword")}
+	if raw := q.Get("statusCode"); raw != "" {
+		code, err := queryInt(r, "statusCode", 0)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_field", "statusCode must be an integer")
+			return
+		}
+		filter.StatusCode = &code
+	}
+	if raw := q.Get("from"); raw != "" {
+		ts, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_field", "from must be an RFC3339 timestamp")
+			return
+		}
+		filter.From = &ts
+	}
+	if raw := q.Get("to"); raw != "" {
+		ts, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_field", "to must be an RFC3339 timestamp")
+			return
+		}
+		filter.To = &ts
+	}
+
 	if _, ok := a.authorizeSessionAccess(w, r, r.PathValue("id")); !ok {
 		return
 	}
-	entries, total, err := a.captureManager.ListSessionTraffic(r.Context(), r.PathValue("id"), limit, offset)
+	entries, total, err := a.captureManager.ListSessionTraffic(r.Context(), r.PathValue("id"), limit, offset, filter)
 	if err != nil {
 		writeCaptureError(w, err)
 		return
