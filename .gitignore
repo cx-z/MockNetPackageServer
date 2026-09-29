@@ -113,6 +113,7 @@ benchmarks/results/*.txt
 # Runtime data
 tmp-data/
 .smoke-data*/
+mockd-data/
 
 # Generated shell completions (goreleaser before hook)
 completions/
