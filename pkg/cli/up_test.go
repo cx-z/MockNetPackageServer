@@ -217,7 +217,18 @@ engines:
 		t.Fatalf("loadProjectConfig discovery failed: %v", err)
 	}
 
-	if path != configPath {
+	// macOS: /var is a symlink to /private/var — t.TempDir() returns the /var
+	// form while discovery (os.Getwd) returns the resolved /private/var form,
+	// so a byte-for-byte comparison fails on this platform. Normalize both
+	// sides through EvalSymlinks before comparing; fall back to the literal
+	// comparison if normalization fails.
+	gotPath, gotErr := filepath.EvalSymlinks(path)
+	wantPath, wantErr := filepath.EvalSymlinks(configPath)
+	if gotErr == nil && wantErr == nil {
+		if gotPath != wantPath {
+			t.Errorf("discovered path = %q, want %q", path, configPath)
+		}
+	} else if path != configPath {
 		t.Errorf("discovered path = %q, want %q", path, configPath)
 	}
 
