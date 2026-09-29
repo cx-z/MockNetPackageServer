@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"syscall"
@@ -454,4 +455,54 @@ func TestFormatPortError(t *testing.T) {
 			t.Fatalf("unexpected message: %q", err.Error())
 		}
 	})
+}
+
+// M4: engineStartInUseError 必须同时暴露 HTTP 端口与 engine management 端口，
+// 避免把 management 端口冲突（常见真实根因）误导成 HTTP 端口报错。
+func TestEngineStartInUseError(t *testing.T) {
+	err := engineStartInUseError(4280, 4281)
+	msg := err.Error()
+	if !strings.Contains(msg, "4280") {
+		t.Fatalf("message must mention the HTTP port: %q", msg)
+	}
+	if !strings.Contains(msg, "4281") {
+		t.Fatalf("message must mention the engine management port: %q", msg)
+	}
+	if !strings.Contains(msg, "lsof -i :4280 -i :4281") {
+		t.Fatalf("message must give lsof guidance for both ports: %q", msg)
+	}
+	if !strings.Contains(msg, "management port is the common real conflict") {
+		t.Fatalf("message must point at the management port as the common conflict: %q", msg)
+	}
+}
+
+// M4: checkEngineManagementPort 在 management 端口被占时给出准确报错（端口名实）；
+// 0（动态分配）跳过；空闲端口通过。用动态端口构造占用，不依赖 4281 的环境状态。
+func TestCheckEngineManagementPort(t *testing.T) {
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	busyPort := ln.Addr().(*net.TCPAddr).Port
+	defer ln.Close()
+
+	if err := checkEngineManagementPort(busyPort); err == nil {
+		t.Fatal("expected error for a busy management port")
+	} else if !strings.Contains(err.Error(), fmt.Sprintf("%d", busyPort)) {
+		t.Fatalf("error must name the busy port %d: %q", busyPort, err.Error())
+	}
+
+	if err := checkEngineManagementPort(0); err != nil {
+		t.Fatalf("mgmtPort 0 (dynamic) must skip the check, got: %v", err)
+	}
+
+	free, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	freePort := free.Addr().(*net.TCPAddr).Port
+	_ = free.Close()
+	if err := checkEngineManagementPort(freePort); err != nil {
+		t.Fatalf("free port %d must pass, got: %v", freePort, err)
+	}
 }

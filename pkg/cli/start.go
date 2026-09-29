@@ -195,6 +195,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Build server configuration using shared builders
 	serverCfg := BuildServerConfig(&sf)
 
+	// Engine management port pre-check (M4): the engine binds this port itself
+	// (default 4281, config managementPort). A lingering mockd instance
+	// occupying it passes the HTTP/admin checks above yet fails server.Start()
+	// with a misleading "port <httpPort> already in use" error — check it here
+	// and report the real conflict. 0 means dynamic allocation (skip).
+	if err := checkEngineManagementPort(serverCfg.ManagementPort); err != nil {
+		return err
+	}
+
 	// Configure chaos if enabled
 	if chaosCfg := BuildChaosConfig(&sf); chaosCfg != nil {
 		serverCfg.Chaos = chaosCfg
@@ -236,7 +245,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// dual-write path (admin store + engine), not directly into the engine.
 	if err := server.Start(); err != nil {
 		if isAddrInUseError(err) {
-			return fmt.Errorf("port %d is already in use — try a different port with --port or check what's using it: lsof -i :%d", sf.Port, sf.Port)
+			// The engine management port (server.ManagementPort()) is the common
+			// real conflict — a lingering mockd instance occupies 4281 while the
+			// HTTP port is free; blaming only the HTTP port misdirects the user.
+			return engineStartInUseError(sf.Port, server.ManagementPort())
 		}
 		return fmt.Errorf("failed to start mock server: %w", err)
 	}
@@ -496,6 +508,28 @@ Suggestions:
   - Use a different port: mockd start --port %d
   - Check what's using the port: lsof -i :%d
   - Stop the other process and try again`, port, port+1, port)
+}
+
+// checkEngineManagementPort verifies the engine's management port is free.
+// The engine binds it itself (default 4281, config managementPort); a lingering
+// mockd instance occupying it is the classic failure where the HTTP/admin
+// pre-checks pass yet server.Start() dies with a misleading HTTP-port error
+// (M4). 0 means dynamic allocation (findFreePort) — nothing to pre-check.
+func checkEngineManagementPort(mgmtPort int) error {
+	if mgmtPort <= 0 {
+		return nil
+	}
+	if err := ports.Check(mgmtPort); err != nil {
+		return fmt.Errorf("engine management port %d is already in use — the engine binds it by default (managementPort); check what's using it: lsof -i :%d", mgmtPort, mgmtPort)
+	}
+	return nil
+}
+
+// engineStartInUseError formats a server.Start() addr-in-use failure,
+// surfacing the engine management port as the common real conflict instead of
+// blaming only the HTTP port (M4).
+func engineStartInUseError(httpPort, mgmtPort int) error {
+	return fmt.Errorf("startup failed: port %d (mock HTTP) or the engine management port %d is already in use — the management port is the common real conflict (a lingering mockd instance); check: lsof -i :%d -i :%d", httpPort, mgmtPort, httpPort, mgmtPort)
 }
 
 // printStartupMessage prints the server startup information.

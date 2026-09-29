@@ -476,6 +476,14 @@ func checkPortConflicts(f *serveFlags) error {
 			return formatPortError(f.mcpPort, err)
 		}
 	}
+	// Engine management port (default 4281, config managementPort): the engine
+	// binds it itself; a lingering mockd instance occupying it fails
+	// server.Start() with a misleading HTTP-port error after the checks above
+	// pass (M4). 4281 is the config default — keep in sync with
+	// config.ServerConfiguration.
+	if err := checkEngineManagementPort(4281); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -803,7 +811,10 @@ func startServers(sctx *serveContext) error {
 	// Start the mock server
 	if err := sctx.server.Start(); err != nil {
 		if isAddrInUseError(err) {
-			return fmt.Errorf("port %d is already in use — try a different port with --port or check what's using it: lsof -i :%d", f.port, f.port)
+			// The engine management port is the common real conflict — a
+			// lingering mockd instance occupies 4281 while the HTTP port is
+			// free; blaming only the HTTP port misdirects the user (M4).
+			return engineStartInUseError(f.port, sctx.server.ManagementPort())
 		}
 		return fmt.Errorf("failed to start mock server: %w", err)
 	}
