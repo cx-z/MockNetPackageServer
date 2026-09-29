@@ -21,8 +21,9 @@ async function loadRules() {
 }
 
 // O4.4 前端可管理性判定（UX 隐藏，非安全边界——服务端仍强制 403）。
-// --no-auth（authUser 为 null）下服务端无权限校验，全量渲染；已登录：
-// admin 全权；否则仅规则 owner 可管理。owner 空的存量规则仅 admin 可管理。
+// authUser 为 null（未登录；--no-auth 且未带 token）下服务端不校验权限，
+// 全量渲染；已登录（含 --no-auth 但带有效 token，M4）且非 admin：仅规则
+// owner 可管理。owner 空的存量规则仅 admin 可管理。
 function canManageRule(r) {
   if (!authUser) return true;
   if (authUser.role === "admin") return true;

@@ -111,15 +111,17 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Web full list: require a logged-in Bearer token (route is open for the SDK
-// incremental pull, so auth is enforced here, per-branch), then ownership.
-	// --no-auth smoke mode skips the token requirement, matching requireAuth.
-	if a.apiKeyConfig.Enabled {
-		u := a.authenticate(r)
-		if u == nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
-			return
-		}
+	// incremental pull, so auth is enforced here, per-branch). In auth mode a
+	// missing/invalid token is 401. In --no-auth smoke mode the token is
+	// optional: a valid one still injects the caller identity (M4), otherwise
+	// the request proceeds with caller=nil — identical to requireAuth, so the
+	// GET full list and PUT/DELETE never disagree on the caller.
+	u := a.authenticate(r)
+	if u != nil {
 		r = r.WithContext(context.WithValue(r.Context(), userCtxKey{}, u))
+	} else if a.apiKeyConfig.Enabled {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+		return
 	}
 	if !a.authorizeDeviceAccess(w, r, app, did) {
 		return

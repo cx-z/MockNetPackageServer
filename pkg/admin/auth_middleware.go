@@ -7,9 +7,12 @@
 // no credentials, its identity is (app, did), and unknown-did rejection
 // lands separately in M7.2.3.
 //
-// --no-auth (apiKeyConfig disabled) bypasses this middleware entirely for
-// local smoke tests; on real-device setups it is omitted and the Bearer
-// requirement is enforced.
+// --no-auth (apiKeyConfig disabled) does not force login: missing/invalid
+// tokens pass through (local smoke mode), but a request that DOES carry a
+// valid Bearer token is still resolved and injected (M4) — so a logged-in
+// browser on a --no-auth instance gets its identity (rule owner stamping,
+// permission checks) while anonymous callers keep full smoke-mode access.
+// In auth mode the Bearer requirement is enforced.
 
 package admin
 
@@ -30,8 +33,9 @@ type UserCtx struct {
 	Role     account.Role
 }
 
-// currentUser returns the authenticated caller injected by requireAuth, or
-// nil when the request bypassed auth (--no-auth smoke mode) or the route is
+// currentUser returns the authenticated caller injected by requireAuth (or by
+// the per-branch authenticate in shared routes), or nil when no valid Bearer
+// token was presented — including --no-auth smoke mode — or the route is
 // public.
 func currentUser(r *http.Request) *UserCtx {
 	v, _ := r.Context().Value(userCtxKey{}).(*UserCtx)
@@ -42,10 +46,15 @@ func currentUser(r *http.Request) *UserCtx {
 // valid token resolves to an AuthSession + User which is injected into the
 // request context. Missing/invalid/expired tokens get 401; role-based
 // 403 checks are opt-in via requireRole for future admin-only routes.
+// In --no-auth smoke mode login is not forced, but a valid token is still
+// resolved and injected (M4); anonymous requests proceed without a caller.
 func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// --no-auth: local smoke mode (same switch as the legacy API-key flag).
+		// --no-auth: no forced login, but honor a presented valid token.
 		if !a.apiKeyConfig.Enabled {
+			if u := a.authenticate(r); u != nil {
+				r = r.WithContext(context.WithValue(r.Context(), userCtxKey{}, u))
+			}
 			next(w, r)
 			return
 		}
@@ -87,14 +96,12 @@ func (a *API) requireRole(role account.Role, next http.HandlerFunc) http.Handler
 }
 
 // authenticate resolves the Bearer token to a *UserCtx without writing an
-// error response. Returns nil under --no-auth or when the token is
-// missing/invalid/expired. Used by handlers that mix an open SDK consumer and
-// an authenticated Web consumer on one route (e.g. GET mock-rules): the caller
-// decides which branch needs auth and writes the 401 itself.
+// error response. Returns nil when the token is missing/invalid/expired —
+// in any auth mode (M4: --no-auth also attempts resolution). Used by handlers
+// that mix an open SDK consumer and an authenticated Web consumer on one route
+// (e.g. GET mock-rules): the caller decides which branch needs auth and writes
+// the 401 itself.
 func (a *API) authenticate(r *http.Request) *UserCtx {
-	if !a.apiKeyConfig.Enabled {
-		return nil
-	}
 	token, ok := bearerToken(r)
 	if !ok {
 		return nil
