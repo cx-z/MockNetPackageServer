@@ -100,3 +100,39 @@ func TestAuthWebRuleListStillRequiresToken(t *testing.T) {
 	res, _ = doAuthJSON(t, http.MethodGet, base+"?sinceVersion=0", "", nil)
 	require.Equal(t, http.StatusOK, res.StatusCode)
 }
+
+// TestNoAuthInvalidTokenStillAnonymous（B 审缺口）：--no-auth 下带畸形或被
+// 篡改的 Bearer token 不得 401、不得 panic、不得注入错误身份——authenticate
+// 解析失败即回退匿名放行（caller=nil），创建的规则 owner 仍为空。过期 token
+// 与篡改 token 同属签名校验失败路径，这里覆盖两类代表。
+func TestNoAuthInvalidTokenStillAnonymous(t *testing.T) {
+	ts := newAuthTestAPI(t) // --no-auth
+
+	// 有效 token 先注册一台设备（设备 owner 归该账号；不影响下面写规则的 caller）。
+	valid := loginToken(t, ts, "noauthBad", "secret123")
+	res, _ := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/devices", valid,
+		map[string]string{"app": "com.example.integrating", "did": "noauth-bad", "name": "bad"})
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+
+	base := ts.URL + "/api/v1/devices/com.example.integrating/noauth-bad/mock-rules"
+
+	// 畸形 token（非 JWT 结构）→ 匿名放行 201，owner 空。
+	var created capture.MockRuleView
+	res, body := doAuthJSON(t, http.MethodPost, base, "not.a.jwt", ruleBody("POST", "/api/malformed", false))
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	require.NoError(t, json.Unmarshal(body, &created))
+	require.Empty(t, created.Owner)
+	require.Empty(t, created.UpdatedBy)
+
+	// 篡改签名的真实 token（末尾翻转一个字符）→ 同样匿名放行 201，owner 空。
+	flip := func(s string) string {
+		c := []rune(s)
+		c[len(c)-1] = '0'
+		return string(c)
+	}
+	res, body = doAuthJSON(t, http.MethodPost, base, flip(valid), ruleBody("POST", "/api/tampered", false))
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	require.NoError(t, json.Unmarshal(body, &created))
+	require.Empty(t, created.Owner)
+	require.Empty(t, created.UpdatedBy)
+}

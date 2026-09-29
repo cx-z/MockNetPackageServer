@@ -476,14 +476,11 @@ func checkPortConflicts(f *serveFlags) error {
 			return formatPortError(f.mcpPort, err)
 		}
 	}
-	// Engine management port (default 4281, config managementPort): the engine
-	// binds it itself; a lingering mockd instance occupying it fails
-	// server.Start() with a misleading HTTP-port error after the checks above
-	// pass (M4). 4281 is the config default — keep in sync with
-	// config.ServerConfiguration.
-	if err := checkEngineManagementPort(4281); err != nil {
-		return err
-	}
+	// Engine management port: the engine binds it itself and, when
+	// ManagementPort==0 (the only value the CLI wires today), picks a free port
+	// starting at 4281 — so a busy 4281 self-heals onto 4282 and must NOT be
+	// treated as fatal here. A real bind failure surfaces as
+	// engineStartInUseError with both ports named.
 	return nil
 }
 

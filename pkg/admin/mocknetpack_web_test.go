@@ -122,3 +122,26 @@ func TestMockNetPackWebExemptFromAPIKey(t *testing.T) {
 		t.Fatal("LAN /openapi.json with valid API key must not be 401")
 	}
 }
+
+// TestAuthMockNetPackNoSlashExempt（B 审缺口）：auth 模式 + LAN 下访问
+// /mocknetpack（无尾斜杠，ServeMux 会 301 到 /mocknetpack/）也不得被
+// api-key 中间件 401——验证目录路径的精确豁免与 301 重定向路径的组合。
+func TestAuthMockNetPackNoSlashExempt(t *testing.T) {
+	webDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(webDir, "index.html"), []byte("<html>mocknetpack-noslash</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	api := NewAPI(0, WithDataDir(t.TempDir()), WithAPIKey("test-api-key"), WithWebDir(webDir))
+	t.Cleanup(func() { api.Stop() })
+
+	req := httptest.NewRequest(http.MethodGet, "/mocknetpack", nil)
+	req.RemoteAddr = "192.168.25.18:12345" // LAN browser, not loopback
+	rec := serveAdmin(t, api, req)
+
+	// 关键断言：不得 401（豁免生效）。具体状态码应为 301（ServeMux 重定向到
+	// 带尾斜杠目录），此处只锁死「不被 api-key 拦截」这一不变量，不绑定 301/200。
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatalf("LAN GET /mocknetpack (no slash) = 401 missing_api_key, want exempt; body=%s", rec.Body.String())
+	}
+}

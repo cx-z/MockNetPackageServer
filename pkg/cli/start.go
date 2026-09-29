@@ -195,11 +195,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Build server configuration using shared builders
 	serverCfg := BuildServerConfig(&sf)
 
-	// Engine management port pre-check (M4): the engine binds this port itself
-	// (default 4281, config managementPort). A lingering mockd instance
-	// occupying it passes the HTTP/admin checks above yet fails server.Start()
-	// with a misleading "port <httpPort> already in use" error — check it here
-	// and report the real conflict. 0 means dynamic allocation (skip).
+	// Engine management port pre-check (M4): the engine binds this port itself.
+	// ManagementPort==0 means dynamic allocation (engine picks a free port from
+	// 4281, self-healing onto 4282+ when 4281 is busy) — skip then. The CLI
+	// does not expose ManagementPort today, so this check is a no-op until it
+	// does; a real bind failure surfaces as engineStartInUseError with both
+	// ports named.
 	if err := checkEngineManagementPort(serverCfg.ManagementPort); err != nil {
 		return err
 	}
