@@ -221,6 +221,16 @@ func (a *apiKeyAuth) isExempt(path string) bool {
 		return true
 	}
 
+	// MockNetPack web UI (M4): the static shell at /mocknetpack/ must load from a
+	// LAN browser before any account credentials exist — it is the login/console
+	// surface, guarded by the account Bearer system (requireAuth), not the API
+	// key. Exempting the prefix (with and without trailing slash) keeps the Web
+	// usable from a LAN browser while the legacy mockd admin API stays behind
+	// the API key.
+	if path == "/mocknetpack" || strings.HasPrefix(path, "/mocknetpack/") {
+		return true
+	}
+
 	// Dashboard static assets are exempt — they're the UI shell (like a login page).
 	// API routes use specific prefixes (/mocks, /config, etc.) so this only
 	// matches the SPA catch-all and its static files.

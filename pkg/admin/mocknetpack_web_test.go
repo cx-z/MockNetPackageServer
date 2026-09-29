@@ -69,3 +69,56 @@ func TestMockNetPackWebRoute(t *testing.T) {
 		t.Fatalf("GET /api/v1/devices = %d, want 200", res4.StatusCode)
 	}
 }
+
+// TestMockNetPackWebExemptFromAPIKey (M4) verifies the API-key middleware
+// exempts the /mocknetpack/ web shell for a LAN browser (non-loopback
+// RemoteAddr) with auth enabled, while the legacy mockd admin API stays
+// protected. Before this exemption every LAN /mocknetpack/ request was 401
+// missing_api_key because the directory URL has no static-asset extension.
+func TestMockNetPackWebExemptFromAPIKey(t *testing.T) {
+	webDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(webDir, "index.html"), []byte("<html>mocknetpack-lan</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(webDir, "app.js"), []byte("console.log('app')"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Auth mode (API key enabled) + LAN remote address: the browser shape that
+	// previously got 401 on the directory URL.
+	api := NewAPI(0, WithDataDir(t.TempDir()), WithAPIKey("test-api-key"), WithWebDir(webDir))
+	t.Cleanup(func() { api.Stop() })
+
+	lan := func(method, path string, apiKey string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req.RemoteAddr = "192.168.25.18:12345" // LAN browser, not loopback
+		if apiKey != "" {
+			req.Header.Set("X-API-Key", apiKey)
+		}
+		return serveAdmin(t, api, req)
+	}
+
+	// 1. Directory URL from LAN → 200 (the M4 fix; was 401 missing_api_key).
+	rec := lan(http.MethodGet, "/mocknetpack/", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("LAN /mocknetpack/ = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "<html>mocknetpack-lan</html>" {
+		t.Fatalf("LAN /mocknetpack/ body = %q, want index.html", got)
+	}
+
+	// 2. Static asset from LAN → 200.
+	if rec := lan(http.MethodGet, "/mocknetpack/app.js", ""); rec.Code != http.StatusOK {
+		t.Fatalf("LAN /mocknetpack/app.js = %d, want 200", rec.Code)
+	}
+
+	// 3. Legacy admin API from LAN without key → still 401 (protection intact).
+	if rec := lan(http.MethodGet, "/openapi.json", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("LAN /openapi.json without API key = %d, want 401", rec.Code)
+	}
+
+	// 4. Legacy admin API from LAN with valid API key → still reachable.
+	if rec := lan(http.MethodGet, "/openapi.json", "test-api-key"); rec.Code == http.StatusUnauthorized {
+		t.Fatal("LAN /openapi.json with valid API key must not be 401")
+	}
+}
