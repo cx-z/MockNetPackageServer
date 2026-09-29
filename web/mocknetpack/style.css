@@ -27,6 +27,9 @@ h1 { font-size: 20px; font-weight: 600; }
 .did .k { color: var(--text); background: #eef1f7; border-radius: 4px; padding: 0 5px; margin-right: 6px; font-size: 10px; font-weight: 600; letter-spacing: .5px; vertical-align: 1px; }
 .app-badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
              font-family: ui-monospace, Menlo, monospace; background: #eef1f7; color: #4a5568; }
+/* M4：管理员视图设备 cell 上的注册账号标签（淡蓝底，与 app-badge 区分） */
+.owner-badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
+             font-family: ui-monospace, Menlo, monospace; background: #e6f0fb; color: #2b6cb0; }
 .row2 { margin-top: 4px; font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
 .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
 .badge.idle { background: #f0f1f3; color: var(--idle); }

@@ -24,6 +24,10 @@ function render(devices) {
   devices.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9)
       || new Date(b.lastSeenAt || 0) - new Date(a.lastSeenAt || 0));
 
+  // M4：管理员视图在设备 cell 上展示注册账号（便于管理多用户设备）；
+  // 普通开发者只看得到自己的设备，保持现状不展示。
+  const isAdmin = authUser && authUser.role === "admin";
+
   const online = devices.filter((d) => d.status !== "offline").length;
   $("stats").textContent = `共 ${devices.length} 台设备 · ${online} 台在线 · 点击设备查看请求流`;
 
@@ -54,6 +58,7 @@ function render(devices) {
       '<div class="did"><span class="k">DID</span>' + esc(d.did) + "</div>" +
       '<div class="row2">' +
         '<span class="app-badge" title="App 标识（' + esc(d.app) + '）">' + esc(d.appName || d.app) + "</span>" +
+        (isAdmin && d.owner ? '<span class="owner-badge" title="设备注册账号（管理视图）">账号 ' + esc(d.owner) + "</span>" : "") +
         '<span class="badge ' + st.cls + '">' + st.label + "</span>" +
         '<span>最后活跃：' + relTime(d.lastSeenAt) + "</span>" +
         (d.currentSession ? '<span>会话：' + esc(shortId(d.currentSession.id)) + "</span>" : "") +
