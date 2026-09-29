@@ -7,15 +7,18 @@
 #   ./start.sh rebuild  重新编译二进制后再启动（代码变更后使用）
 #
 # 端口约定（见 .cursorrules）：mock=4280 / admin=4290（永不 8080）。
-# 数据目录：.smoke-data-m711（当前在用）。注意：指定 --data-dir 时必须显式
-#   传 --port/--admin-port，否则 mockd 默认把端口偏移到 14280/14290。
-# 二进制：/tmp/mockd-web（首次执行自动编译；代码变更后执行 ./start.sh rebuild）
+# 数据目录：mockd-data/（git 忽略，本机运行时数据）。注意：指定 --data-dir 时
+#   必须显式传 --port/--admin-port，否则 mockd 默认把端口偏移到 14280/14290。
+# 二进制：bin/mockd-bin（git 忽略；代码变更后执行 ./start.sh rebuild）
+# 鉴权：默认 auth 模式（不带 --no-auth）——/mocknetpack 与 /api/v1 走账号登录，
+#   上游管理面（/mocks /workspaces 等）由 api-key 保护，首次启动自动生成并
+#   打印到 stderr、存至 ~/.local/share/mockd/admin-api-key。
 # ============================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
 
-BIN="/tmp/mockd-web"
-DATA_DIR=".smoke-data-m711"
+BIN="bin/mockd-bin"
+DATA_DIR="mockd-data"
 PORT=4280
 ADMIN_PORT=4290
 PID_FILE="/tmp/mockd-web.pid"
@@ -51,7 +54,7 @@ fi
 echo "==> 启动 mock server（data-dir=${DATA_DIR}, mock=${PORT}, admin=${ADMIN_PORT}）..."
 "$BIN" start --detach --pid-file "$PID_FILE" --data-dir "$DATA_DIR" \
   --admin-port "$ADMIN_PORT" --port "$PORT" \
-  --capture-heartbeat-timeout 60 --no-auth
+  --capture-heartbeat-timeout 60
 
 # 4) 等待端口就绪（最多 20s）
 for i in $(seq 1 20); do
