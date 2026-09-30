@@ -71,13 +71,23 @@ function renderRules(data) {
     const effBadge = r.enabled
       ? (r.effective ? '<span class="badge eff">生效中</span>' : '<span class="badge stopped">冲突未生效</span>')
       : '<span class="badge stopped">已停用</span>';
+    // 回包体摘要：文本规则显示正文前 80 字符；二进制规则（bodyBase64）优先显示
+    // 抓包解码文本片段（M8.1 解码，仅展示），无解码时才显示 "[二进制 N 字节]"。
+    const respL = r.response || {};
+    let bodySnippet = "";
+    if (respL.bodyBase64) {
+      const decText = (r.source && r.source.responseBodyDecoded) || "";
+      bodySnippet = decText
+        ? " · " + esc(String(decText).slice(0, 80))
+        : " · [二进制 " + atob(respL.bodyBase64).length + " 字节]";
+    } else if (respL.body) {
+      bodySnippet = " · " + esc(String(respL.body).slice(0, 80));
+    }
     el.innerHTML =
       '<span class="method ' + methodCls(r.method) + '">' + esc(r.method) + "</span>" +
       '<div class="r-body">' +
         '<div class="r-line1">' + esc(r.path) + " " + effBadge + "</div>" +
-        '<div class="r-line2">回包 ' + (r.response && r.response.statusCode) +
-          (r.response && r.response.body ? " · " + esc(String(r.response.body).slice(0, 80)) : "") +
-          (r.response && r.response.bodyBase64 ? " · [二进制 " + atob(r.response.bodyBase64).length + " 字节]" : "") +
+        '<div class="r-line2">回包 ' + (r.response && r.response.statusCode) + bodySnippet +
           (r.source ? " · 来自抓包" : "") + "</div>" +
         '<div class="r-owner">' + ruleOwnersText(r) + "</div>" +
       "</div>";
@@ -127,11 +137,20 @@ function renderRuleDetail(r) {
     .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
       '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("");
   const resp = r.response || {};
-  let bodyDisp = resp.body || "";
-  if (resp.bodyBase64) {
-    bodyDisp = "[二进制 " + atob(resp.bodyBase64).length + " 字节，base64 已用于回放]";
-  }
   const src = r.source;
+  // 二进制规则（bodyBase64 存在）：SDK 回放仍按 bodyBase64 原始字节。详情里
+  // 优先展示来源快照的抓包解码文本（M8.1 解码，仅展示），让"Mock 此请求"创建
+  // 的规则无需进入编辑即可看到 JSON 详情；无解码文本时才回退二进制占位。
+  let bodyDisp = resp.body || "";
+  let bodyReplayNote = "";
+  if (resp.bodyBase64) {
+    if (src && src.responseBodyDecoded) {
+      bodyDisp = src.responseBodyDecoded;
+      bodyReplayNote = '<div class="sub" style="margin-top:6px">（原始回包为二进制，以上为抓包解码文本，仅用于展示；Mock 回放仍为原始字节）</div>';
+    } else {
+      bodyDisp = "[二进制 " + atob(resp.bodyBase64).length + " 字节，base64 已用于回放]";
+    }
+  }
 
   // 请求页签：来源快照的方法/路径 + 原始请求头 + 原始请求体
   const reqHeadersRows = (src && src.requestHeaders) ? Object.entries(src.requestHeaders)
@@ -153,7 +172,7 @@ function renderRuleDetail(r) {
         (r.note ? esc(r.note) : '<span style="color:var(--muted)">（未填写）</span>') + "</span></div>" +
       '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + "</span></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(resp.headers) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">回包体</div>' + bodyHtml(bodyDisp, { contentType: headerValue(resp.headers, "Content-Type"), base64: resp.bodyBase64 }) + "</div>";
+      '<div class="d-block"><div class="d-title">回包体</div>' + bodyHtml(bodyDisp, { contentType: headerValue(resp.headers, "Content-Type"), base64: resp.bodyBase64 }) + bodyReplayNote + "</div>";
 
   box.innerHTML =
     '<div class="detail-panel">' +
