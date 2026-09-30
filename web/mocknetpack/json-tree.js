@@ -8,51 +8,53 @@
 // ============================================================================
 const JSON_TREE_MAX_NODES = 5000; // 超过该节点数回退 pre，防大 JSON 渲染卡死
 
-/** 生成可折叠 JSON 树 HTML；非 JSON / 空 / 超节点数 → 返回 null（调用方回退 <pre>）。 */
+/** 生成可折叠 JSON 树 HTML；非 JSON / 空 / 超节点数 → 返回 null（调用方回退 <pre>）。
+ *  精度修复：解析用无损 jsonParseTree（数字保留原文 token，json-lossless.js），
+ *  不再经 JSON.parse→Number（19 位整数 ID 会舍入成 …5000）。 */
 function jsonTreeHtml(text) {
   if (text == null || text === "") return null;
   const s = String(text).trim();
   if (s === "" || (s[0] !== "{" && s[0] !== "[")) return null;
-  let parsed;
-  try { parsed = JSON.parse(s); } catch (e) { return null; }
+  const parsed = jsonParseTree(s);
+  if (parsed === null) return null;
   const stat = { nodes: 0 };
   jvCount(parsed, stat);
   if (stat.nodes > JSON_TREE_MAX_NODES) return null;
   return '<div class="jv-tree">' + jvNode(parsed) + "</div>";
 }
 
-/** 节点计数（纯遍历不生成字符串），超限即停。 */
+/** 节点计数（纯遍历不生成字符串），超限即停。适配无损节点树：
+ *  {t:'obj',kvs} / {t:'arr',items} / {t:'str'|'num'|'lit',text}。 */
 function jvCount(v, stat) {
   if (++stat.nodes > JSON_TREE_MAX_NODES) return;
-  if (v === null || typeof v !== "object") return;
-  if (Array.isArray(v)) {
-    for (let i = 0; i < v.length; i++) jvCount(v[i], stat);
-  } else {
-    for (const k in v) if (Object.prototype.hasOwnProperty.call(v, k)) jvCount(v[k], stat);
+  if (v.t === "arr") {
+    for (let i = 0; i < v.items.length; i++) jvCount(v.items[i], stat);
+  } else if (v.t === "obj") {
+    for (let i = 0; i < v.kvs.length; i++) jvCount(v.kvs[i][1], stat);
   }
+  // str/num/lit 为叶子
 }
 
-/** 渲染一个 JSON 值：叶子直接输出，对象/数组输出可折叠节点。 */
+/** 渲染一个 JSON 值：叶子直接输出，对象/数组输出可折叠节点。
+ *  数字/字符串/字面量节点使用无损解析保留的原文 text（数字含 19 位 ID 逐位不变）。 */
 function jvNode(v) {
-  if (v === null) return '<span class="jv-null">null</span>';
-  const t = typeof v;
-  if (t === "string") return '<span class="jv-str">' + esc(JSON.stringify(v)) + "</span>";
-  if (t === "number") return '<span class="jv-num">' + v + "</span>";
-  if (t === "boolean") return '<span class="jv-bool">' + v + "</span>";
-  const isArr = Array.isArray(v);
+  if (v.t === "lit") return '<span class="jv-' + (v.text === "null" ? "null" : "bool") + '">' + esc(v.text) + "</span>";
+  if (v.t === "str") return '<span class="jv-str">' + esc(v.text) + "</span>";
+  if (v.t === "num") return '<span class="jv-num">' + esc(v.text) + "</span>";
+  const isArr = v.t === "arr";
   const open = isArr ? "[" : "{";
   const close = isArr ? "]" : "}";
-  const keys = isArr ? null : Object.keys(v);
-  if ((isArr && v.length === 0) || (!isArr && keys.length === 0)) {
+  const items = isArr ? v.items : v.kvs;
+  if (items.length === 0) {
     return '<span class="jv-brace">' + open + close + "</span>";
   }
   const rows = isArr
-    ? v.map((x, i) => '<div class="jv-row">' + jvNode(x) +
-        (i < v.length - 1 ? '<span class="jv-comma">,</span>' : "") + "</div>").join("")
-    : keys.map((k, i) =>
-        '<div class="jv-row"><span class="jv-key">' + esc(JSON.stringify(k)) +
-        '</span><span class="jv-colon">: </span>' + jvNode(v[k]) +
-        (i < keys.length - 1 ? '<span class="jv-comma">,</span>' : "") + "</div>").join("");
+    ? v.items.map((x, i) => '<div class="jv-row">' + jvNode(x) +
+        (i < v.items.length - 1 ? '<span class="jv-comma">,</span>' : "") + "</div>").join("")
+    : v.kvs.map((kv, i) =>
+        '<div class="jv-row"><span class="jv-key">' + esc(kv[0]) +
+        '</span><span class="jv-colon">: </span>' + jvNode(kv[1]) +
+        (i < v.kvs.length - 1 ? '<span class="jv-comma">,</span>' : "") + "</div>").join("");
   return '<div class="jv-node">' +
     '<span class="jv-arrow" data-jv-toggle title="展开/折叠"></span>' +
     '<span class="jv-brace" data-jv-toggle>' + open + "</span>" +

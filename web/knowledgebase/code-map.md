@@ -7,6 +7,7 @@
 ```
 server/web/mocknetpack/
 ├── index.html          # single page shell — all views as divs
+├── json-lossless.js    # 无损 JSON 分词/美化/树解析（大整数 ID 精度修复；数字保留原文 token）
 ├── utils.js            # shared utilities ($, STATUS, time/escape/body helpers, newUuid)
 ├── api.js              # token storage + Authorization header, auth API calls
 ├── json-tree.js        # collapsible JSON tree viewer (request/response bodies)
@@ -21,14 +22,17 @@ server/web/mocknetpack/
 ├── share.js            # share-link creation + public share view
 ├── app.js              # shell: constants, state, hash routing, auth views, boot, wiring
 ├── style.css           # all styles
-└── lib/codemirror/     # vendored CodeMirror 5.65.18 (CSS + JS + addons, same-origin)
+├── lib/codemirror/     # vendored CodeMirror 5.65.18 (CSS + JS + addons, same-origin)
+└── tests/precision.test.js  # node 回归：19 位整数 ID 精度（编辑预填/保存/重载/树渲染）
 ```
 
 > The JS is split into classic scripts sharing one global scope. **Load order matters**
-> (see `index.html`): `utils.js` → `api.js` → `json-tree.js` → `devices.js` → `traffic.js`
-> → `rules.js` → `viewer.js` → `share.js` → `app.js` (boot last). All mutable state
-> (`viewers`, `pageLog`, `detail`, `trafficFilter`, …) is declared in `app.js` and only
-> accessed at runtime, so file order among the middle modules is free.
+> (see `index.html`): `json-lossless.js` → `utils.js` → `api.js` → `json-tree.js` →
+> `devices.js` → `traffic.js` → `rules.js` → `viewer.js` → `share.js` → `app.js`
+> (boot last). `json-lossless.js` 必须在 `utils.js`/`json-tree.js` 之前加载（
+> `formatBody`/`jsonTreeHtml` 依赖它）。All mutable state (`viewers`, `pageLog`,
+> `detail`, `trafficFilter`, …) is declared in `app.js` and only accessed at runtime,
+> so file order among the middle modules is free.
 
 ## `index.html` — page blocks
 
@@ -42,13 +46,14 @@ server/web/mocknetpack/
 | `detailView` | Device detail (two-column `.detail-grid`): |
 | — `.col-left` | `device-card` (`dDid`, `dStatus`, `dLastSeen`, `dToggleSession`), rules section (`rulesList`, `rulesConflict`), traffic section (`trafficClearBtn`, `trafficFilter`, `trafficList`) |
 | — `.col-right` | `ruleDetail`, `trafficDetail` (inline detail/editor) |
-| scripts | CodeMirror css/js + addons + qrcode.min.js, then (in order) `utils.js` → `api.js` → `json-tree.js` → `devices.js` → `scan-connect.js` (M9.3) → `traffic.js` → `rules.js` → `viewer.js` → `share.js` → `app.js` |
+| scripts | CodeMirror css/js + addons + qrcode.min.js, then (in order) `json-lossless.js` → `utils.js` → `api.js` → `json-tree.js` → `devices.js` → `scan-connect.js` (M9.3) → `traffic.js` → `rules.js` → `viewer.js` → `share.js` → `app.js` |
 
 ## JS modules — key functions
 
 | File | Key functions |
 |---|---|
-| `utils.js` | `$`, `STATUS`, `showError`, `relTime`, `clockTime`, `esc`, `formatBody`, `shortId`, `methodCls`, `newUuid` |
+| `json-lossless.js` | `jsonTokens`, `jsonParseTree`, `jsonPrettyPrint`（严格 JSON 分词 + 无损树解析/美化；数字字面量原文保留，用于编辑预填与详情/分享展示，修复 19 位整数 ID 精度） |
+| `utils.js` | `$`, `STATUS`, `showError`, `relTime`, `clockTime`, `esc`, `formatBody`（经 `jsonPrettyPrint` 无损美化）, `shortId`, `methodCls`, `newUuid` |
 | `api.js` | `getToken` / `setToken`, `apiFetch` (adds Bearer header), `doLogin`, `doRegister`, `doLogout` |
 | `json-tree.js` | `JSON_TREE_MAX_NODES`, `jsonTreeHtml`, `jvCount`, `jvNode`, `bodyHtml`, `bindJsonTree` |
 | `devices.js` | M1.6: `loadDevices`, `render` (status order, empty state, **三行式卡片：name / 完整 DID / app-badge + status + relTime；v0.9.0 app-badge 优先 `appName`（如 IntegratingApp）回退 bundle id**), `openDetail`, `connect`, `disconnect`, `deleteDevice`, `renameDevice` |
