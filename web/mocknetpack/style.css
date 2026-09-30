@@ -95,13 +95,18 @@ button.mini.active { background: var(--primary); color: #fff; }
 .detail-panel .d-block { margin-top: 10px; }
 .detail-panel .d-actions { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }
 .detail-panel .d-block .d-title { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-/* M8.7 收窄作用域：只读 JSON 预览的 <pre> 仅在 .d-block 内；
+/*  收窄作用域：只读 JSON 预览的 <pre> 仅在 .d-block 内；
    此前 `.detail-panel pre` 会命中编辑表单 CodeMirror 内部的 pre.CodeMirror-line，
    把 min-height:120px / padding / border 泄漏到每一行，导致行高暴涨到 120px+。 */
 .detail-panel .d-block pre { background: #f6f7f9; border: 1px solid var(--border); border-radius: 6px;
                     padding: 8px 10px; font-size: 12px; font-family: ui-monospace, Menlo, monospace;
                     white-space: pre-wrap; word-break: break-all; overflow: auto; flex: 1; min-height: 120px; }
 .detail-panel .d-err { color: var(--danger); }
+
+/* 图片响应预览：详情页/分享页/规则来源快照中的位图（Content-Type 白名单 + base64）内联展示 */
+.detail-panel .img-preview { flex: 1; display: flex; align-items: flex-start; min-height: 0; }
+.detail-panel .img-preview img { max-width: 100%; max-height: 420px; border: 1px solid var(--border);
+                      border-radius: 6px; background: #f6f7f9; object-fit: contain; }
 
 /* JSON 树查看器：请求体/响应体花括号展开/折叠（默认展开，折叠显示 { … }） */
 .detail-panel .d-block:has(.jv-tree) { flex: 1; }
@@ -126,7 +131,7 @@ button.mini.active { background: var(--primary); color: #fff; }
 .jv-tree .jv-null { color: var(--muted); font-style: italic; }
 .jv-tree .jv-colon, .jv-tree .jv-comma { color: var(--muted); }
 
-/* M8.4 详情页签（请求/响应） */
+/* 详情页签（请求/响应） */
 .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; flex: none; }
 .tabs .tab { padding: 6px 16px; font-size: 13px; cursor: pointer; border: 0; background: transparent;
              color: var(--muted); border-bottom: 2px solid transparent; border-radius: 0; }
@@ -138,7 +143,7 @@ button.mini.active { background: var(--primary); color: #fff; }
    !important：.auth-wrap 等后定义的 display 规则会覆盖普通 .hidden，必须强制隐藏。 */
 .hidden { display: none !important; }
 
-/* ===== M7.1.2 登录/注册门禁 ===== */
+/* ===== 登录/注册门禁 ===== */
 .auth-wrap { display: flex; justify-content: center; padding-top: 8vh; }
 .auth-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
              padding: 28px 32px; width: 100%; max-width: 380px; }
@@ -215,13 +220,13 @@ button.mini.active { background: var(--primary); color: #fff; }
   display: flex; flex-direction: column;
 }
 .edit-body-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-/* M8.9 修复"编辑器无法获得焦点"：此前 `.edit-body-wrap textarea { display:none }` 会把
+/* 修复"编辑器无法获得焦点"：此前 `.edit-body-wrap textarea { display:none }` 会把
    CodeMirror 内部的输入 textarea（.CodeMirror-textarea，键盘输入载体）也隐藏掉，
    导致点击编辑器后焦点仍留在其它输入框、输入文字跑偏。原 textarea（#editBody）
    由 CM fromTextArea 自行隐藏并仅作值载体，这里只需兜底隐藏 #editBody 本身。 */
 .edit-body-wrap textarea#editBody { display: none; }
 .edit-body-wrap .CodeMirror {
-  /* M8.7 修复行高异常：fromTextArea 没有中间包装 div，.CodeMirror 就是 .edit-body-wrap 的直接子元素；
+  /* 修复行高异常：fromTextArea 没有中间包装 div，.CodeMirror 就是 .edit-body-wrap 的直接子元素；
      此前 `.edit-body-wrap > div { display:flex; flex-direction:column }` 直接套到 CM 上，
      破坏其内部行高测量/渲染，导致每行被拉伸到 120px+。CM 自身必须保持块级布局，
      仅作为 edit-body-wrap（flex 列）的 flex 项撑满剩余高度。 */
@@ -244,8 +249,8 @@ button.mini.active { background: var(--primary); color: #fff; }
 .edit-body-wrap .CodeMirror-foldmarker { color: #1f5eff; background: #eef3ff; border-radius: 3px;
   padding: 0 3px; text-shadow: none; font-family: ui-monospace, Menlo, monospace; line-height: 1.4; }
 
-/* ===== M8.2 两列布局：左=规则+请求流，右=详情/编辑 ===== */
-/* M8.6：grid 行必须填满容器（minmax(0,1fr)），否则列只按内容高度（输入框"贴不到页面底部"的根因）。 */
+/* ===== 两列布局：左=规则+请求流，右=详情/编辑 ===== */
+/* grid 行必须填满容器（minmax(0,1fr)），否则列只按内容高度（输入框"贴不到页面底部"的根因）。 */
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
                grid-template-rows: minmax(0, 1fr);
                gap: 16px; align-items: stretch; margin-top: 0; height: calc(100vh - 110px); }

@@ -63,11 +63,49 @@ function jvNode(v) {
   "</div>";
 }
 
-/** 请求/响应体展示入口：能生成 JSON 树用树，否则美化文本 <pre>（空态显示「（空）」）。 */
-function bodyHtml(text) {
+// 位图预览白名单（仅 raster，排除 image/svg+xml 等可执行/易混淆类型，防 XSS）。
+const IMAGE_PREVIEW_TYPES = new Set([
+  "image/jpeg", "image/png", "image/gif", "image/webp",
+  "image/bmp", "image/avif", "image/x-icon", "image/heic", "image/heif",
+]);
+
+/** 请求/响应体展示入口：图片响应（Content-Type 白名单 + base64）→ 内联预览；
+ *  能生成 JSON 树用树，否则美化文本 <pre>（空态显示「（空）」）。
+ *  opts = { contentType, base64 }：二进制图片渲染；其余情况回退原逻辑。 */
+function bodyHtml(text, opts) {
+  const img = imagePreviewHtml(opts);
+  if (img) return img;
   const tree = jsonTreeHtml(text);
   if (tree) return tree;
   return "<pre>" + (esc(formatBody(text)) || "（空）") + "</pre>";
+}
+
+/** 图片内联预览：优先按 base64 字节嗅探真实格式（上游 Content-Type 可能与实际
+ *  内容不符，如声明 image/jpeg 实为 PNG，此时按声明 MIME 渲染会破图）；
+ *  嗅探失败再回退 Content-Type 白名单判定。非白名单/无 base64 → null。 */
+function imagePreviewHtml(opts) {
+  if (!opts) return null;
+  const b64 = opts.base64;
+  if (!b64) return null;
+  const sniffed = sniffImageType(b64);
+  const ct = sniffed ||
+    String(opts.contentType || "").split(";")[0].trim().toLowerCase();
+  if (!IMAGE_PREVIEW_TYPES.has(ct)) return null;
+  return '<div class="img-preview"><img src="data:' + ct + ";base64," + b64 +
+    '" alt="图片响应预览" loading="lazy"></div>';
+}
+
+/** 常见位图魔数嗅探（base64 前缀 → 真实类型）。返回 null 表示无法识别。 */
+function sniffImageType(b64) {
+  const s = String(b64);
+  if (s.startsWith("/9j/")) return "image/jpeg";            // FF D8 FF
+  if (s.startsWith("iVBORw0KGgo")) return "image/png";      // 89 50 4E 47 ...
+  if (s.startsWith("R0lGOD")) return "image/gif";           // 47 49 46 38
+  if (s.startsWith("UklGR")) return "image/webp";           // RIFF....WEBP
+  if (s.startsWith("Qk0")) return "image/bmp";              // 42 4D
+  if (s.startsWith("AAAB")) return "image/x-icon";          // 00 00 01 00
+  if (s.startsWith("AAAAGmZ0eXBhdmlm")) return "image/avif"; // ftypavif
+  return null;
 }
 
 /** 事件委托：点击箭头/花括号切换节点折叠。绑定在渲染容器（赋值覆盖，不累积监听器）。 */

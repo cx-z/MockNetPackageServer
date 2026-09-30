@@ -57,6 +57,20 @@ function formatBody(text) {
 }
 
 function shortId(id) { return id ? id.slice(0, 8) + "…" : ""; }
+// 从请求/响应头中取单值（map 键大小写不敏感，兼容多值取首个）。
+function headerValue(headers, name) {
+  if (!headers) return "";
+  const lower = String(name).toLowerCase();
+  for (const k in headers) {
+    if (!Object.prototype.hasOwnProperty.call(headers, k)) continue;
+    if (k.toLowerCase() !== lower) continue;
+    const v = headers[k];
+    if (v == null) return "";
+    return Array.isArray(v) ? String(v[0] || "") : String(v);
+  }
+  return "";
+}
+
 function methodCls(m) {
   const u = (m || "").toUpperCase();
   if (u === "GET") return "get";

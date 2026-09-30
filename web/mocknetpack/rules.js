@@ -142,7 +142,7 @@ function renderRuleDetail(r) {
       (src
         ? '<div class="d-block"><div class="d-title">原始请求头</div>' + (reqHeadersRows || '<div class="d-v">—</div>') + "</div>" +
           '<div class="d-block"><div class="d-title">原始请求体</div>' +
-            bodyHtml(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || ""))) + "</div>"
+            bodyHtml(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "")), { contentType: headerValue(src.requestHeaders, "Content-Type"), base64: src.requestBodyBase64 }) + "</div>"
         : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
 
   // 响应页签：状态/备注/回包状态码 + 响应头 + 回包体（不展示原始响应体）
@@ -153,7 +153,7 @@ function renderRuleDetail(r) {
         (r.note ? esc(r.note) : '<span style="color:var(--muted)">（未填写）</span>') + "</span></div>" +
       '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + "</span></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(resp.headers) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">回包体</div>' + bodyHtml(bodyDisp) + "</div>";
+      '<div class="d-block"><div class="d-title">回包体</div>' + bodyHtml(bodyDisp, { contentType: headerValue(resp.headers, "Content-Type"), base64: resp.bodyBase64 }) + "</div>";
 
   box.innerHTML =
     '<div class="detail-panel">' +
@@ -205,7 +205,7 @@ function openEditRuleForm(r) {
       (src
         ? '<div class="d-block"><div class="d-title">原始请求头（只读）</div>' + (editReqHeadersRows || '<div class="d-v">—</div>') + "</div>" +
           '<div class="d-block"><div class="d-title">原始请求体（只读）</div>' +
-            bodyHtml(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || ""))) + "</div>"
+            bodyHtml(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "")), { contentType: headerValue(src.requestHeaders, "Content-Type"), base64: src.requestBodyBase64 }) + "</div>"
         : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
 
   // 响应页签：回包状态码/响应头只读展示（与请求日志一致，不可修改），

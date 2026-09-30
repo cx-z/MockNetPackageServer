@@ -24,6 +24,15 @@ func (a *API) registerMockNetPackWeb(mux *http.ServeMux) {
 	if dir == "" {
 		dir = defaultMockNetPackWebDir
 	}
-	mux.Handle("GET /mocknetpack/",
-		http.StripPrefix("/mocknetpack/", http.FileServer(http.Dir(dir))))
+	fileServer := http.StripPrefix("/mocknetpack/", http.FileServer(http.Dir(dir)))
+
+	// 全局 SecurityHeadersMiddleware 的严格 "default-src 'self'"
+	// 会拦截详情页/分享页的 data: 图片预览（base64 内联），这里对
+	// MockNetPack Web 覆盖为放行 data: 图片的 CSP；style 放行 inline
+	// （前端细节样式内联），font 放行 data:（图标字体），其余保持同源。
+	mux.Handle("GET /mocknetpack/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:")
+		fileServer.ServeHTTP(w, r)
+	}))
 }
