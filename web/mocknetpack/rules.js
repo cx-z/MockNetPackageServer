@@ -40,6 +40,20 @@ function ruleOwnersText(r) {
   return "创建人 — · 最后编辑 " + esc(updater);
 }
 
+// M11 Step4（D7）：命中可见性徽章文案。创建时 LastUsedAt 与 CreatedAt 同刻
+// （7 天滑动清理基线需要），若二者时刻差 < 5s 说明这条规则创建后从未被命中/
+// 编辑/启停触动 → 灰字「从未命中」，提示开发者检查路径是否写错；否则显示
+// 最近命中的相对时间。
+function hitBadgeText(r) {
+  const lu = r.lastUsedAt;
+  if (!lu) return "从未命中 · 检查路径是否写对";
+  if (r.createdAt) {
+    const gap = Math.abs(new Date(lu).getTime() - new Date(r.createdAt).getTime());
+    if (Number.isFinite(gap) && gap < 5000) return "从未命中 · 检查路径是否写对";
+  }
+  return "最近命中：" + relTime(lu);
+}
+
 function renderRules(data) {
   const rules = data.rules || [];
   $("rulesInfo").textContent = "· 共 " + rules.length + " 条 · 版本 " + (data.version ?? 0);
@@ -58,7 +72,7 @@ function renderRules(data) {
 
   const box = $("rulesList");
   if (!rules.length) {
-    box.innerHTML = '<div class="empty">暂无规则。在下方请求流选中一条请求，点「Mock 此请求」一键创建。</div>';
+    box.innerHTML = '<div class="empty">暂无规则。点上方「新建 Mock 规则」手填接口，或在下方请求流选中一条请求点「Mock 此请求」一键创建。</div>';
     return;
   }
   box.innerHTML = "";
@@ -88,7 +102,8 @@ function renderRules(data) {
       '<div class="r-body">' +
         '<div class="r-line1">' + esc(r.path) + " " + effBadge + "</div>" +
         '<div class="r-line2">回包 ' + (r.response && r.response.statusCode) + bodySnippet +
-          (r.source ? " · 来自抓包" : "") + "</div>" +
+          (r.source ? " · 来自抓包" : "") +
+          ' <span class="sub"> · ' + esc(hitBadgeText(r)) + "</span></div>" +
         '<div class="r-owner">' + ruleOwnersText(r) + "</div>" +
       "</div>";
 
@@ -204,6 +219,27 @@ function renderRuleDetail(r) {
   bindJsonTree(box);
 }
 
+/** parseHeadersText 把「每行 Key: Value」的多行文本解析为对象；空行/无冒号行跳过。 */
+function parseHeadersText(text) {
+  const out = {};
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const idx = line.indexOf(":");
+    if (idx <= 0) continue;
+    const k = line.slice(0, idx).trim();
+    if (k) out[k] = line.slice(idx + 1).trim();
+  }
+  return out;
+}
+
+/** headersToText 把响应头对象拍平为「每行 Key: Value」多行文本（编辑表单预填用）。 */
+function headersToText(h) {
+  return Object.entries(h || {})
+    .map(([k, v]) => k + ": " + (Array.isArray(v) ? v.join(", ") : v))
+    .join("\n");
+}
+
 /** 编辑规则表单（M5）：回包体/备注可改；method/path 与回包状态码/响应头只读不可改。 */
 function openEditRuleForm(r) {
   const box = $("ruleDetail");
@@ -227,15 +263,23 @@ function openEditRuleForm(r) {
             bodyHtml(src.requestBodyDecoded || (src.requestBodyBase64 ? "[二进制 " + atob(src.requestBodyBase64).length + " 字节]" : (src.requestBody || "")), { contentType: headerValue(src.requestHeaders, "Content-Type"), base64: src.requestBodyBase64 }) + "</div>"
         : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
 
-  // 响应页签：回包状态码/响应头只读展示（与请求日志一致，不可修改），
-  // 备注/回退按钮在上，回包体 JSON 折叠编辑器在下并撑满剩余高度。
+  // 响应页签：备注/回退按钮在上，回包体 JSON 折叠编辑器在下并撑满剩余高度。
+  // M11 Step3（D3）：手填规则（无 source）的回包状态码/响应头可编辑（输入框/多行文本）；
+  // 日志规则（有 source）维持 M8.8 只读（与抓包快照绑定，只读 KV 展示）。
+  const handAuthored = !src;
   const respHeadersRows = (resp.headers) ? Object.entries(resp.headers)
     .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
       '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("") : "";
+  const metaFields = handAuthored
+    ? '<div class="edit-row"><label>回包状态码（100–599）</label>' +
+        '<input id="editStatusCode" type="number" min="100" max="599" class="filter-input" value="' + esc(String(resp.statusCode ?? 200)) + '" /></div>' +
+      '<div class="edit-row"><label>响应头（每行 Key: Value，可留空）</label>' +
+        '<textarea id="editHeaders" class="filter-input" rows="3">' + esc(headersToText(resp.headers)) + '</textarea></div>'
+    : '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + '</span></div>' +
+      '<div class="d-block"><div class="d-title">响应头（只读）</div>' + (respHeadersRows || '<div class="d-v">—</div>') + '</div>';
   const respTab =
       '<div class="edit-pane">' +
-      '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + "</span></div>" +
-      '<div class="d-block"><div class="d-title">响应头</div>' + (respHeadersRows || '<div class="d-v">—</div>') + "</div>" +
+      metaFields +
       '<div class="edit-row"><label>备注（必填）</label>' +
         '<input id="editNote" type="text" class="filter-input" placeholder="说明这条规则的用途/场景" value="' + esc(r.note || "") + '" /></div>' +
       (hasOriginal
@@ -336,13 +380,21 @@ function openEditRuleForm(r) {
 /** 收集编辑表单 → PUT /mock-rules/{id} → 刷新。前端先做 note 非空拦截。 */
 async function saveRuleEdit(rule) {
   if (!detail) return;
-  // M8.8：回包状态码/响应头为只读（与抓包一致），保存时原样回传，不再从表单输入读取。
   const storedResp = (rule && rule.response) || {};
-  const statusCode = Number(storedResp.statusCode) || 200;
-  if (!Number.isFinite(statusCode) || statusCode <= 0) {
-    showError("回包状态码必须是正整数"); return;
+  // M11 Step3（D3）：手填规则（无 source 快照）的回包状态码/响应头在编辑表单
+  // 里可改，保存时从表单输入读取；日志规则（有 source）维持 M8.8 只读语义——
+  // 与抓包快照绑定的状态码/响应头原样回传，不从表单读取。
+  const handAuthored = !rule.source;
+  let statusCode = Number(storedResp.statusCode) || 200;
+  let headers = storedResp.headers || {};
+  if (handAuthored) {
+    const scEl = $("editStatusCode");
+    if (scEl) statusCode = Number(scEl.value);
+    headers = parseHeadersText($("editHeaders") && $("editHeaders").value);
   }
-  const headers = storedResp.headers || {};
+  if (!Number.isFinite(statusCode) || statusCode < 100 || statusCode > 599) {
+    showError("回包状态码必须在 100–599 之间"); return;
+  }
   const note = $("editNote").value.trim();
   if (!note) { showError("备注必填，请填写后再保存"); return; }
 
@@ -490,3 +542,140 @@ async function mockThisRequest(e) {
     showError("创建规则失败：" + err.message);
   }
 }
+
+// ============================================================================
+// M11 Step2：从零创建 Mock 规则（空表单手填，无抓包背书）
+// ============================================================================
+
+/** 打开「新建 Mock 规则」空表单（右列 ruleDetail 面板）。与 openEditRuleForm
+ *  复用同一套 .edit-row/.edit-pane 样式与 CodeMirror 配置；提交不带 source。 */
+function openCreateRuleForm() {
+  if (!detail) return;
+  ruleBodyEditor = null;   // M8.6 离开编辑表单即释放 CM 引用
+  showDetailPane("rule");
+  detail._activeRule = null;
+  detail._activeTraffic = null;
+  document.querySelectorAll(".rule-row").forEach((el) => el.classList.remove("active"));
+
+  const methodOptions = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    .map((m) => '<option value="' + m + '"></option>').join("");
+
+  const box = $("ruleDetail");
+  box.innerHTML =
+    '<div class="detail-panel">' +
+      '<div class="d-title">新建 Mock 规则 <span class="sub">（手填接口与回包；创建后默认停用，需手动打开开关）</span></div>' +
+      '<div class="edit-pane">' +
+        '<div class="d-kv"><span class="d-k">生效设备</span><span class="d-v">' +
+          esc(detail.app) + " / " + esc(detail.did) +
+          ' <span class="sub">（自动绑定当前设备，不可改）</span></span></div>' +
+        '<div class="edit-row"><label>Method</label>' +
+          '<input id="createMethod" list="createMethodList" class="filter-input" placeholder="GET" autocomplete="off" />' +
+          '<datalist id="createMethodList">' + methodOptions + '</datalist></div>' +
+        '<div class="edit-row"><label>Path（必须以 / 开头，不含查询串 ?）</label>' +
+          '<input id="createPath" class="filter-input" placeholder="/api/hello" autocomplete="off" />' +
+          '<div class="sub">二进制接口（如 xcp 加密回包）建议从抓包一键创建</div></div>' +
+        '<div class="edit-row"><label>状态码</label>' +
+          '<input id="createStatus" type="number" min="100" max="599" class="filter-input" value="200" /></div>' +
+        '<div class="edit-row"><label>响应头（每行 Key: Value，可留空）</label>' +
+          '<textarea id="createHeaders" class="filter-input" rows="3" placeholder="Content-Type: application/json"></textarea></div>' +
+        '<div class="edit-row"><label>备注（必填：这条规则测什么）</label>' +
+          '<input id="createNote" class="filter-input" placeholder="例如：联调期模拟 /api/hello 的成功回包" /></div>' +
+        '<div class="edit-row edit-body-row"><label>回包体（UTF-8 文本；以 { 或 [ 开头时按 JSON 校验）</label>' +
+          '<div class="edit-body-wrap"><textarea id="createBody" class="filter-input"></textarea></div></div>' +
+      "</div>" +
+      '<div class="edit-actions">' +
+        '<button id="createCancelBtn" class="ghost small">取消</button>' +
+        '<button id="createSaveBtn" class="small">创建</button>' +
+      "</div>" +
+    "</div>";
+
+  // CodeMirror 接管回包体（与编辑表单同款配置）。
+  ruleBodyEditor = CodeMirror.fromTextArea($("createBody"), {
+    mode: { name: "javascript", json: true },
+    lineNumbers: true,
+    lineWrapping: true,
+    indentUnit: 2,
+    tabSize: 2,
+    foldGutter: true,
+    gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"],
+    matchBrackets: true,
+    autoCloseBrackets: true,
+    extraKeys: {
+      "Ctrl-Q": (cm) => cm.foldCode(cm.getCursor()),
+    },
+  });
+  ruleBodyEditor.refresh();
+
+  $("createCancelBtn").onclick = () => {
+    $("ruleDetail").innerHTML = '<div class="empty">点击左侧一条规则查看详情。</div>';
+  };
+  $("createSaveBtn").onclick = () => submitCreateRule();
+  $("createMethod").focus();
+}
+
+/** 收集新建表单 → POST /mock-rules（不带 source，默认停用）。前端先做必填/
+ *  path/JSON 校验，与服务端 Step1 规则对齐；服务端 400/409 时保留表单可修正。 */
+async function submitCreateRule() {
+  if (!detail) return;
+  const method = ($("createMethod").value || "").trim().toUpperCase();
+  if (!method) { showError("Method 不能为空"); return; }
+  const path = ($("createPath").value || "").trim();
+  if (!path) { showError("Path 不能为空"); return; }
+  if (!path.startsWith("/")) { showError("Path 必须以 / 开头"); return; }
+  if (path.indexOf("?") !== -1) { showError("Path 不得包含查询串 ?（查询参数不参与匹配）"); return; }
+  const statusCode = Number($("createStatus").value);
+  if (!Number.isFinite(statusCode) || statusCode < 100 || statusCode > 599) {
+    showError("状态码必须在 100–599 之间"); return;
+  }
+  const note = ($("createNote").value || "").trim();
+  if (!note) { showError("备注必填，请填写这条规则测什么"); return; }
+
+  // CodeMirror 内容先回写隐藏 textarea，再统一取值。
+  if (ruleBodyEditor) ruleBodyEditor.save();
+  const bodyText = $("createBody").value || "";
+  const trimmedBody = bodyText.trim();
+  if (trimmedBody && (trimmedBody.startsWith("{") || trimmedBody.startsWith("["))) {
+    try {
+      JSON.parse(trimmedBody);
+    } catch (e) {
+      showError("回包体不是合法 JSON，已阻止创建：" + String(e && e.message || "").slice(0, 80) +
+        "（常见原因：全角逗号/冒号、多余逗号）");
+      return;
+    }
+  }
+
+  // 响应头：每行 "Key: Value"，空行/无冒号行跳过。
+  const headers = parseHeadersText($("createHeaders") && $("createHeaders").value);
+
+  try {
+    const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
+      encodeURIComponent(detail.did) + "/mock-rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // D4 默认停用；从零创建不带 source（D1 统一模型，Source=nil）。
+      body: JSON.stringify({
+        method: method,
+        path: path,
+        response: { statusCode: statusCode, headers: headers, body: bodyText },
+        note: note,
+        enabled: false,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      showError((err && err.message) || "创建规则失败（HTTP " + res.status + "）");
+      return;   // 表单保留打开，可修正后重提
+    }
+    showError("已创建规则（默认停用，到左侧打开开关即可 Mock）");
+    await loadRules();
+    $("ruleDetail").innerHTML = '<div class="empty">已创建。点击左侧规则可查看详情。</div>';
+  } catch (e) {
+    showError("创建规则失败：" + e.message);
+  }
+}
+
+// M11 Step2：规则区头部「新建 Mock 规则」入口（脚本在 body 末尾加载，DOM 已就绪）。
+(function () {
+  const btn = document.getElementById("ruleCreateBtn");
+  if (btn) btn.onclick = openCreateRuleForm;
+})();

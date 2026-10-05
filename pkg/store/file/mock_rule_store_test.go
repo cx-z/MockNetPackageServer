@@ -12,10 +12,15 @@ import (
 
 func ruleInput(method, path string, enabled bool) *capture.MockRuleInput {
 	return &capture.MockRuleInput{
-		Method:  method,
-		Path:    path,
+		Method:   method,
+		Path:     path,
 		Response: capture.MockResponse{StatusCode: 200, Body: `{"ok":true}`},
-		Enabled: enabled,
+		Enabled:  enabled,
+		// M11 Step1: existing tests model capture-originated rules ("Mock 此
+		// 请求") — they carry a source snapshot and may omit the note (D6
+		// exempts source-bearing creates). Hand-authored rules are exercised
+		// explicitly in TestMockRule_HandAuthoredNoteRequired below.
+		Source: &capture.MockRuleSource{Method: method, Path: path},
 	}
 }
 
@@ -499,5 +504,60 @@ func TestMockRule_UpdateNoteAndKeepEnabled(t *testing.T) {
 	}
 	if views[0].Note != "debugging feed list" {
 		t.Errorf("listed note = %q", views[0].Note)
+	}
+}
+
+// --- M11 Step1: hand-authored rules (Source == nil) --------------------------
+
+func TestMockRule_HandAuthoredNoteRequired(t *testing.T) {
+	m, _ := newCaptureManager(t, 0)
+	ctx := context.Background()
+
+	// S2: hand-authored create with a blank note -> rejected (D6).
+	blank := &capture.MockRuleInput{
+		Method:   "GET",
+		Path:     "/api/hello",
+		Response: capture.MockResponse{StatusCode: 200, Body: `{"hello":"world"}`},
+	}
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", blank, nil); !errors.Is(err, store.ErrNoteRequired) {
+		t.Errorf("create no-source blank note = %v, want ErrNoteRequired", err)
+	}
+	// Whitespace-only note is also blank.
+	ws := *blank
+	ws.Note = "   "
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", &ws, nil); !errors.Is(err, store.ErrNoteRequired) {
+		t.Errorf("create no-source whitespace note = %v, want ErrNoteRequired", err)
+	}
+	// Rejected creates must leave no row and no version bump.
+	if views, _, v, err := m.ListMockRules(ctx, "app", "d1"); err != nil || len(views) != 0 || v != 0 {
+		t.Fatalf("after rejected creates: n=%d version=%d err=%v; want 0/0", len(views), v, err)
+	}
+
+	// S1: hand-authored create with a note -> succeeds, Source stays nil.
+	withNote := *blank
+	withNote.Note = "mock greeting endpoint for UI work"
+	view, ver, err := m.CreateMockRule(ctx, "app", "d1", &withNote, nil)
+	if err != nil {
+		t.Fatalf("create no-source with note = %v", err)
+	}
+	if view.Source != nil {
+		t.Errorf("hand-authored rule Source = %+v, want nil", view.Source)
+	}
+	if view.Note != "mock greeting endpoint for UI work" {
+		t.Errorf("note = %q, want round-tripped", view.Note)
+	}
+	if ver != 1 {
+		t.Errorf("version after first create = %d, want 1", ver)
+	}
+
+	// S2: capture-originated create (Source set) with a blank note still
+	// succeeds — the D6 exemption is the status quo.
+	logIn := ruleInput("GET", "/api/from-log", false)
+	if _, _, err := m.CreateMockRule(ctx, "app", "d1", logIn, nil); err != nil {
+		t.Errorf("create with source blank note = %v, want nil", err)
+	}
+	views, _, _, err := m.ListMockRules(ctx, "app", "d1")
+	if err != nil || len(views) != 2 {
+		t.Fatalf("List = %d rules (err=%v), want 2", len(views), err)
 	}
 }

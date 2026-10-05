@@ -73,7 +73,17 @@ func (m *CaptureManager) evaluateRules(ctx context.Context, app, did string) ([]
 // (O4.1: creator username, server-side field); nil caller (--no-auth) leaves
 // Owner empty, which M3-2 treats as a legacy rule (admin-manageable only).
 // Every developer may create rules; ownership is established by this stamp.
+//
+// M11 Step1 (D6): a hand-authored rule (Source == nil, created from the Web
+// blank form rather than captured traffic) must carry a non-blank note — with
+// no source snapshot the note is the only semantic anchor ("what does this rule
+// test?"). Capture-originated creates (Source != nil) are exempt. The guard
+// runs lock-side before the Mutate so a rejected create bumps no version and
+// leaves no partial row.
 func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in *capture.MockRuleInput, caller *RuleCaller) (*capture.MockRuleView, int, error) {
+	if in.Source == nil && strings.TrimSpace(in.Note) == "" {
+		return nil, 0, ErrNoteRequired
+	}
 	now := time.Now()
 	var created *capture.MockRule
 	version, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {

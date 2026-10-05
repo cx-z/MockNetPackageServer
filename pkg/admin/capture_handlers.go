@@ -197,7 +197,7 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrRuleConflict):
 		writeError(w, http.StatusConflict, "rule_conflict", store.MockRuleConflictMessage)
 	case errors.Is(err, store.ErrNoteRequired):
-		writeError(w, http.StatusBadRequest, "missing_field", "note is required when editing the canned response")
+		writeError(w, http.StatusBadRequest, "missing_field", "note is required")
 	case errors.Is(err, store.ErrPairingTokenInvalid):
 		writeError(w, http.StatusForbidden, "pairing_token_invalid", "Pairing token is invalid or expired")
 	case errors.Is(err, store.ErrAlreadyExists):

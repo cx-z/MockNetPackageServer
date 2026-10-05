@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/getmockd/mockd/pkg/account"
 	"github.com/getmockd/mockd/pkg/capture"
@@ -208,6 +209,12 @@ func (a *API) handleDeleteMockRule(w http.ResponseWriter, r *http.Request) {
 // validateMockRuleInput enforces the contract required fields (MockRuleInput:
 // method, path, response.statusCode). Returns false and writes a 400 when
 // invalid.
+//
+// M11 Step1: path must start with '/' and must not contain '?' — matching is
+// an exact Method+path comparison (决策 #19), so a query string pasted into
+// path could never hit and would silently drift. Applies uniformly to both
+// creation paths (评审结论 #2): capture-originated paths come from URL.path
+// and already satisfy this, so there is no regression.
 func validateMockRuleInput(w http.ResponseWriter, in *capture.MockRuleInput) bool {
 	if in.Method == "" {
 		writeError(w, http.StatusBadRequest, "missing_field", "method is required")
@@ -215,6 +222,10 @@ func validateMockRuleInput(w http.ResponseWriter, in *capture.MockRuleInput) boo
 	}
 	if in.Path == "" {
 		writeError(w, http.StatusBadRequest, "missing_field", "path is required")
+		return false
+	}
+	if !strings.HasPrefix(in.Path, "/") || strings.Contains(in.Path, "?") {
+		writeError(w, http.StatusBadRequest, "invalid_field", "path must start with '/' and must not contain '?' (query strings do not participate in matching)")
 		return false
 	}
 	if !validStatusCode(in.Response.StatusCode) {

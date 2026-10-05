@@ -106,8 +106,9 @@ func TestRulePermission_LegacyEmptyOwner_AdminOnly(t *testing.T) {
 
 	// 存量规则：owner 空。auth 模式下只能经 store 直插（handler 创建必带 owner）。
 	// 经 CaptureManager 以 nil caller 创建 = --no-auth 形态（owner 空）。
+	// M11 Step1: 存量行不能伪造 source，补一个 note 满足 D6（note 不影响 owner 语义）。
 	api.captureManager.CreateMockRule(ctx, "com.example.integrating", "legacy-dev",
-		&capture.MockRuleInput{Method: "POST", Path: "/api/legacy",
+		&capture.MockRuleInput{Method: "POST", Path: "/api/legacy", Note: "legacy row",
 			Response: capture.MockResponse{StatusCode: 200, Body: `{"legacy":true}`}}, nil)
 
 	// dev（owner 空 → 非 admin）PUT/DELETE → 403。

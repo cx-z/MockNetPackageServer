@@ -47,6 +47,9 @@ func TestMockRuleAPI_BigIntIDPrecisionPreserved(t *testing.T) {
 			"statusCode": 200,
 			"body":       exactBody,
 		},
+		// M11 Step1: this create models a capture-originated rule — D6
+		// exempts source-bearing creates from the hand-authored note rule.
+		"source": map[string]any{"method": "POST", "path": "/chat/sessions_v2"},
 	}
 	var created capture.MockRuleView
 	resp := doJSON(t, http.MethodPost, base, create, &created)

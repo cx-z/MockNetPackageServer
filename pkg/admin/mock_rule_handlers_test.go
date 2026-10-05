@@ -21,6 +21,10 @@ func ruleBody(method, path string, enabled bool) map[string]any {
 			"statusCode": 200,
 			"body":       `{"ok":true}`,
 		},
+		// M11 Step1: existing HTTP tests model capture-originated rules
+		// ("Mock 此请求") — they carry a source snapshot and may omit the
+		// note (D6 exempts source-bearing creates).
+		"source": map[string]any{"method": method, "path": path},
 	}
 }
 
@@ -268,4 +272,51 @@ func TestMockRuleAPI_OwnerFields_WebVsSDK(t *testing.T) {
 	assert.Equal(t, "POST", sdkList.Rules[0].Method)
 	assert.Equal(t, "/api/owned", sdkList.Rules[0].Path)
 	assert.True(t, sdkList.Rules[0].Effective)
+}
+
+// --- M11 Step1: zero-from-scratch (hand-authored) rule create validation ----
+
+func TestMockRuleAPI_HandAuthoredRules(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
+
+	// Hand-authored body: no "source" key (D6 path), always with a note unless
+	// the test deliberately omits it.
+	handBody := func(method, path, note string) map[string]any {
+		return map[string]any{
+			"method":  method,
+			"path":    path,
+			"enabled": false,
+			"note":    note,
+			"response": map[string]any{
+				"statusCode": 200,
+				"body":       `{"hello":"world"}`,
+			},
+		}
+	}
+
+	// S2': path not starting with '/' -> 400.
+	resp := doJSON(t, http.MethodPost, base, handBody("GET", "api/login", "memo"), nil)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "path without leading '/' must be rejected")
+	// S2': path containing '?' (query string pasted in) -> 400.
+	resp = doJSON(t, http.MethodPost, base, handBody("GET", "/api/login?x=1", "memo"), nil)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "path with query string must be rejected")
+	// S2: hand-authored create with no note key -> 400 (D6).
+	nosrc := handBody("GET", "/api/hello", "")
+	delete(nosrc, "note")
+	resp = doJSON(t, http.MethodPost, base, nosrc, nil)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "no source + blank note must be rejected")
+	// Whitespace-only note -> 400 as well.
+	resp = doJSON(t, http.MethodPost, base, handBody("GET", "/api/hello", "   "), nil)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "whitespace note must be rejected")
+
+	// S1: valid hand-authored create -> 201, response carries no source
+	// snapshot, note round-trips, default disabled (D4).
+	var created capture.MockRuleView
+	resp = doJSON(t, http.MethodPost, base, handBody("GET", "/api/hello", "mock greeting for UI dev"), &created)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "valid hand-authored create")
+	assert.Empty(t, created.Source, "hand-authored rule must have no source snapshot")
+	assert.Equal(t, "mock greeting for UI dev", created.Note)
+	assert.False(t, created.Enabled)
 }
