@@ -12,6 +12,9 @@
 //   · 二进制规则（bodyBase64 存在）：渲染 clearBodyBase64 勾选（默认勾选）；
 //     勾选 → PUT 不回传 bodyBase64（清除二进制、以文本回放）；
 //     取消勾选 → PUT 回传原 bodyBase64（保留原始字节）。
+//   · 一键回退：状态码/响应头恢复抓包快照；回包体回滚为抓包解码 JSON 原文
+//     （source.responseBodyDecoded）并以文本回放——有解码文本时不再恢复
+//     bodyBase64 密文；仅无解码文本的二进制接口才保留二进制快照原样回放。
 // ============================================================================
 
 const fs = require("fs");
@@ -178,7 +181,7 @@ function binaryRule(over) {
     check("W9 取消勾选：PUT 回传原 bodyBase64", body.response.bodyBase64 === "AQIDBA==", JSON.stringify(body.response));
   }
 
-  // ---- 8) 一键回退：恢复抓包快照的整个响应（状态码+响应头+回包体+二进制字节） ----
+  // ---- 8) 一键回退：恢复快照状态码/响应头；回包体回滚为抓包解码 JSON 原文（文本回放） ----
   // 日志规则（有 source，含多值响应头）：按钮渲染且回退 PUT 全量恢复
   r = logRule({ source: {
     method: "POST", path: "/api/session", url: "https://x/api/session", statusCode: 500,
@@ -208,7 +211,7 @@ function binaryRule(over) {
     check("W10 回退携带备注（表单值兜底）", body.note === "note", JSON.stringify(body.note));
   }
 
-  // 二进制规则回退：bodyBase64 原始字节一并恢复
+  // 二进制规则 + 有解码文本回退：回包体恢复为解码 JSON 原文、清除二进制密文（文本回放）
   r = binaryRule({ source: {
     method: "GET", path: "/api/bin", url: "https://x/api/bin", statusCode: 200,
     responseHeaders: { "Content-Type": ["application/x-protobuf"] },
@@ -221,7 +224,41 @@ function binaryRule(over) {
   check("W10 二进制回退发出 PUT", !!putCall && putCall.opts.method === "PUT", JSON.stringify(putCall));
   if (putCall) {
     const body = JSON.parse(putCall.opts.body);
-    check("W10 二进制回退恢复 bodyBase64 原始字节", body.response.bodyBase64 === "AQIDBA==", JSON.stringify(body.response));
+    check("W10 二进制回退：回包体恢复为解码 JSON 原文", body.response.body === "解码文本占位", JSON.stringify(body.response));
+    check("W10 二进制回退：不再携带 bodyBase64（转文本回放）", !("bodyBase64" in body.response), JSON.stringify(body.response));
+  }
+
+  // 二进制规则 + 无解码文本回退：保留二进制快照原样回放（无文本可回滚）
+  r = binaryRule({ source: {
+    method: "GET", path: "/api/bin", url: "https://x/api/bin", statusCode: 200,
+    responseHeaders: { "Content-Type": ["application/x-protobuf"] },
+    responseBody: "", responseBodyBase64: "AQIDBA==",
+  } });
+  detailBox.innerHTML = "";
+  ctx.openEditRuleForm(r);
+  putCall = null;
+  await selCache["#revertOriginalBtn"].onclick();
+  check("W10 无解码文本回退发出 PUT", !!putCall && putCall.opts.method === "PUT", JSON.stringify(putCall));
+  if (putCall) {
+    const body = JSON.parse(putCall.opts.body);
+    check("W10 无解码文本回退：保留 bodyBase64 二进制快照", body.response.bodyBase64 === "AQIDBA==", JSON.stringify(body.response));
+  }
+
+  // 文本规则（已转文本、body 被编辑）+ 有解码文本回退：body 回滚为解码 JSON 原文
+  r = logRule({ source: {
+    method: "POST", path: "/api/session", url: "https://x/api/session", statusCode: 500,
+    responseHeaders: { "Content-Type": ["application/json"] },
+    responseBody: "[binary 3888 bytes]", responseBodyBase64: "AQIDBA==", responseBodyDecoded: '{"orig":1}',
+  } });
+  detailBox.innerHTML = "";
+  ctx.openEditRuleForm(r);
+  putCall = null;
+  await selCache["#revertOriginalBtn"].onclick();
+  check("W10 文本规则回退发出 PUT", !!putCall && putCall.opts.method === "PUT", JSON.stringify(putCall));
+  if (putCall) {
+    const body = JSON.parse(putCall.opts.body);
+    check("W10 文本规则回退：body 回滚为解码 JSON 原文", body.response.body === '{"orig":1}', JSON.stringify(body.response));
+    check("W10 文本规则回退：不携带 bodyBase64", !("bodyBase64" in body.response), JSON.stringify(body.response));
   }
 
   if (failures) {

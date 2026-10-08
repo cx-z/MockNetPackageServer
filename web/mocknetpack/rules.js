@@ -289,7 +289,7 @@ function openEditRuleForm(r) {
       (hasOriginal
         ? '<div class="edit-row" style="margin-top:12px">' +
             '<button id="revertOriginalBtn" class="ghost small" type="button">一键回退为原始响应</button>' +
-            '<span class="sub" style="margin-left:8px">（恢复抓包快照的状态码/响应头/回包体，直接生效）</span>' +
+            '<span class="sub" style="margin-left:8px">（恢复抓包快照的状态码/响应头；回包体回滚为抓包解码 JSON 原文，以文本回放）</span>' +
           '</div>'
         : '') +
       '<div class="edit-row edit-body-row"><label>回包体（UTF-8 文本）' +
@@ -354,18 +354,21 @@ function openEditRuleForm(r) {
   });
   ruleBodyEditor.refresh();
 
-  // 一键回退：恢复抓包快照的整个响应（状态码+响应头+回包体，含二进制字节），
-  // 直接 PUT 保存生效。恢复目标 = mockThisRequest 创建时的快照值。
+  // 一键回退：回滚到抓包快照。状态码/响应头恢复原始值；回包体回滚为抓包
+  // 解码 JSON 原文（source.responseBodyDecoded）并保持文本回放——有解码文本
+  // 时不再恢复 bodyBase64 二进制密文（避免旧 key 解不开导致 App 报"无网络"）；
+  // 无解码文本（无解码器的二进制接口）才保留二进制快照原样回放。
   const revertBtn = box.querySelector("#revertOriginalBtn");
   if (revertBtn) {
     revertBtn.onclick = async () => {
       if (!src) return;
       try {
+        const decText = (src.responseBodyDecoded) || "";
         const newResp = {
           statusCode: src.statusCode ?? 200,
           headers: flatHeaders(src.responseHeaders),
-          body: src.responseBody || "",
-          ...(src.responseBodyBase64 ? { bodyBase64: src.responseBodyBase64 } : {}),
+          body: decText || src.responseBody || "",
+          ...((src.responseBodyBase64 && !decText) ? { bodyBase64: src.responseBodyBase64 } : {}),
         };
         // 回退不改备注：服务端在响应变化时要求 note 非空，取表单当前备注兜底。
         const note = ($("editNote") && $("editNote").value.trim()) || r.note || "";
