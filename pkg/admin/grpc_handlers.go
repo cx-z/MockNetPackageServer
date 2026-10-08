@@ -58,12 +58,12 @@ func (a *API) handleListGRPCStreams(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, GRPCStreamListResponse{
 		Streams: streams,
 		Stats: engineclient.GRPCStats{
-			ActiveStreams:      stats.ActiveStreams,
-			TotalStreams:       stats.TotalStreams,
-			TotalRPCs:          stats.TotalRPCs,
-			TotalMessagesSent:  stats.TotalMessagesSent,
-			TotalMessagesRecv:  stats.TotalMessagesRecv,
-			StreamsByMethod:    byMethod,
+			ActiveStreams:     stats.ActiveStreams,
+			TotalStreams:      stats.TotalStreams,
+			TotalRPCs:         stats.TotalRPCs,
+			TotalMessagesSent: stats.TotalMessagesSent,
+			TotalMessagesRecv: stats.TotalMessagesRecv,
+			StreamsByMethod:   byMethod,
 		},
 	})
 }
@@ -168,12 +168,12 @@ func (p *grpcStatsProvider) GetStats(ctx context.Context) (interface{}, error) {
 	}
 
 	return engineclient.GRPCStats{
-		ActiveStreams:      stats.ActiveStreams,
-		TotalStreams:       stats.TotalStreams,
-		TotalRPCs:          stats.TotalRPCs,
-		TotalMessagesSent:  stats.TotalMessagesSent,
-		TotalMessagesRecv:  stats.TotalMessagesRecv,
-		StreamsByMethod:    byMethod,
+		ActiveStreams:     stats.ActiveStreams,
+		TotalStreams:      stats.TotalStreams,
+		TotalRPCs:         stats.TotalRPCs,
+		TotalMessagesSent: stats.TotalMessagesSent,
+		TotalMessagesRecv: stats.TotalMessagesRecv,
+		StreamsByMethod:   byMethod,
 	}, nil
 }
 

@@ -215,8 +215,14 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 
 	// M2 (O2.2 服务端过滤下推): keyword / statusCode / from / to narrow the
 	// list server-side (ANDed); limit/offset page within the filtered set.
-	// from/to are RFC3339 timestamps, inclusive.
+	// from/to are RFC3339 timestamps, inclusive. M12 adds method / scheme /
+	// since (per-session seq) and the compact projection.
 	q := r.URL.Query()
+	projection := q.Get("projection")
+	if projection != "" && projection != "compact" {
+		writeError(w, http.StatusBadRequest, "invalid_field", "projection must be \"compact\"")
+		return
+	}
 	filter := store.TrafficFilter{Keyword: q.Get("keyword")}
 	if raw := q.Get("statusCode"); raw != "" {
 		code, err := queryInt(r, "statusCode", 0)
@@ -242,6 +248,20 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 		}
 		filter.To = &ts
 	}
+	if raw := q.Get("method"); raw != "" {
+		filter.Method = raw // case-insensitive match in store layer
+	}
+	if raw := q.Get("scheme"); raw != "" {
+		filter.Scheme = raw
+	}
+	if raw := q.Get("since"); raw != "" {
+		since, err := queryInt(r, "since", 0)
+		if err != nil || since < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_field", "since must be a non-negative integer")
+			return
+		}
+		filter.Since = int64(since)
+	}
 
 	if _, ok := a.authorizeSessionAccess(w, r, r.PathValue("id")); !ok {
 		return
@@ -249,6 +269,28 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 	entries, total, err := a.captureManager.ListSessionTraffic(r.Context(), r.PathValue("id"), limit, offset, filter)
 	if err != nil {
 		writeCaptureError(w, err)
+		return
+	}
+	if projection == "compact" {
+		// M12: compact projection — the machine-facing field set for traffic
+		// pull/export (id/timestamp/method/url/path/statusCode/durationMs/
+		// mocked). The default (no projection) still returns full entries, so
+		// the Web experience is untouched (S4).
+		views := make([]CompactTrafficView, 0, len(entries))
+		for _, e := range entries {
+			views = append(views, CompactTrafficView{
+				ID:         e.ID,
+				Seq:        e.Seq,
+				Timestamp:  e.Timestamp,
+				Method:     e.Method,
+				URL:        e.URL,
+				Path:       e.Path,
+				StatusCode: e.StatusCode,
+				DurationMs: e.DurationMs,
+				Mocked:     e.Mocked,
+			})
+		}
+		writeJSON(w, http.StatusOK, TrafficCompactListResponse{Entries: views, Total: total})
 		return
 	}
 	writeJSON(w, http.StatusOK, TrafficListResponse{Entries: entries, Total: total})

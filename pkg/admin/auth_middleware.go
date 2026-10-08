@@ -13,6 +13,10 @@
 // browser on a --no-auth instance gets its identity (rule owner stamping,
 // permission checks) while anonymous callers keep full smoke-mode access.
 // In auth mode the Bearer requirement is enforced.
+//
+// M12: the Bearer credential may be either a login session token (M7.1,
+// 32 random bytes hex) or a long-lived API key (prefixed "mnpk_"). Both are
+// resolved to the same UserCtx; a request passes when either is valid.
 
 package admin
 
@@ -46,6 +50,8 @@ func currentUser(r *http.Request) *UserCtx {
 // valid token resolves to an AuthSession + User which is injected into the
 // request context. Missing/invalid/expired tokens get 401; role-based
 // 403 checks are opt-in via requireRole for future admin-only routes.
+// M12: the Bearer credential may be a session token OR a long-lived API key
+// (both resolve via authenticate).
 // In --no-auth smoke mode login is not forced, but a valid token is still
 // resolved and injected (M4); anonymous requests proceed without a caller.
 func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -58,25 +64,16 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		token, ok := bearerToken(r)
-		if !ok {
+		if _, ok := bearerToken(r); !ok {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 			return
 		}
-		sess, err := a.authSessions.GetByToken(r.Context(), token)
-		if err != nil || !sess.Valid(time.Now()) {
+		u := a.authenticate(r) // session token or API key
+		if u == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 			return
 		}
-		u, err := a.users.GetByUsername(r.Context(), sess.Username)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
-			return
-		}
-		ctx := context.WithValue(r.Context(), userCtxKey{}, &UserCtx{
-			Username: u.Username,
-			Role:     u.Role,
-		})
+		ctx := context.WithValue(r.Context(), userCtxKey{}, u)
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -101,16 +98,38 @@ func (a *API) requireRole(role account.Role, next http.HandlerFunc) http.Handler
 // that mix an open SDK consumer and an authenticated Web consumer on one route
 // (e.g. GET mock-rules): the caller decides which branch needs auth and writes
 // the 401 itself.
+//
+// M12: the credential may be a session token or a long-lived API key. API
+// keys carry the "mnpk_" prefix, so the lookup is routed without a store
+// probe; either path resolves to the same UserCtx.
 func (a *API) authenticate(r *http.Request) *UserCtx {
 	token, ok := bearerToken(r)
 	if !ok {
 		return nil
+	}
+	if account.IsAPIKey(token) {
+		return a.authenticateAPIKey(r, token)
 	}
 	sess, err := a.authSessions.GetByToken(r.Context(), token)
 	if err != nil || !sess.Valid(time.Now()) {
 		return nil
 	}
 	u, err := a.users.GetByUsername(r.Context(), sess.Username)
+	if err != nil {
+		return nil
+	}
+	return &UserCtx{Username: u.Username, Role: u.Role}
+}
+
+// authenticateAPIKey resolves a long-lived API key (M12) to its owning user.
+// The stored key holds only the SHA-256 hash; the plaintext is never kept or
+// logged. Expired keys (non-zero ExpiresAt in the past) fail closed.
+func (a *API) authenticateAPIKey(r *http.Request, plain string) *UserCtx {
+	k, err := a.apiKeys.GetByHash(r.Context(), account.HashAPIKey(plain))
+	if err != nil || !k.Valid(time.Now()) {
+		return nil
+	}
+	u, err := a.users.GetByUsername(r.Context(), k.Username)
 	if err != nil {
 		return nil
 	}

@@ -18,9 +18,9 @@ import (
 // the current monotonic version. Conflicts is only populated for the Web full
 // list (omitted on the SDK incremental pull).
 type MockRuleListResponse struct {
-	Version   int                         `json:"version"`
-	Rules     []*capture.MockRuleView     `json:"rules"`
-	Conflicts []capture.MockRuleConflict  `json:"conflicts,omitempty"`
+	Version   int                        `json:"version"`
+	Rules     []*capture.MockRuleView    `json:"rules"`
+	Conflicts []capture.MockRuleConflict `json:"conflicts,omitempty"`
 }
 
 // ruleCaller builds the O4 permission identity for a rule mutation from the
@@ -179,7 +179,7 @@ func (a *API) handleUpdateMockRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validStatusCode(in.Response.StatusCode) {
-		writeError(w, http.StatusBadRequest, "invalid_field", "response.statusCode must be in 100–599")
+		writeInvalidStatusCode(w, in.Response.StatusCode)
 		return
 	}
 
@@ -229,10 +229,25 @@ func validateMockRuleInput(w http.ResponseWriter, in *capture.MockRuleInput) boo
 		return false
 	}
 	if !validStatusCode(in.Response.StatusCode) {
-		writeError(w, http.StatusBadRequest, "invalid_field", "response.statusCode must be in 100–599")
+		writeInvalidStatusCode(w, in.Response.StatusCode)
 		return false
 	}
 	return true
+}
+
+// writeInvalidStatusCode returns a 400 with a diagnosis that names the failing
+// field and the phase (create vs. update) so MCP/CLI callers can self-correct.
+// A zero value on PUT means the caller did not send a full canned response —
+// the update is a full replace (M5/M7), so a pure toggle must re-send the
+// complete response (read-modify-write).
+func writeInvalidStatusCode(w http.ResponseWriter, code int) {
+	if code == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_field",
+			"response.statusCode 缺失或为 0：PUT 为整体覆盖更新，必须携带完整 response（statusCode 100–599）。纯启停请先查询规则（GET mock-rules）再整体回写")
+		return
+	}
+	writeError(w, http.StatusBadRequest, "invalid_field",
+		"response.statusCode="+strconv.Itoa(code)+" 不在合法范围 100–599")
 }
 
 // validStatusCode reports whether code is a legal HTTP status code (4.17):

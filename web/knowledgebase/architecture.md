@@ -114,6 +114,16 @@ doLogout   → POST /auth/logout (server-side revoke) → clear token/state/poll
              back to list view + showAuth()
 ```
 
+### 7. M12 机器通道（v0.13.0）对 Web 的影响
+
+- **请求流不回归**：`pollTraffic` 仍走默认（无 projection）的完整条目响应，服务端保证
+  缺省响应形状与 v0.11.0 完全一致（Web 登录态仍用会话 token）；M12.3 在 mocked 条目上
+  新增 `matchedRuleId`（仅机器通道消费，Web 请求流展示不受影响）。
+- **新增 M12.1「API Key 管理」入口**：已登录用户头部可见「API Key」按钮 → 弹窗内
+  创建（明文仅创建时展示一次，可一键复制）、查看列表（仅 keyPrefix + 创建/过期时间）、
+  吊销（二次确认，立即失效）。前端 `apikey.js` 复用 `apiFetch`（Bearer session token），
+  调用服务端 `/auth/keys` 三端点；明文只存在内存变量、关闭弹窗即清除，不落 localStorage。
+
 ## UX / error patterns
 
 | Pattern | Behavior |

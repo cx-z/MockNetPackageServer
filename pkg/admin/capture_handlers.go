@@ -158,6 +158,31 @@ type TrafficListResponse struct {
 	Total   int                     `json:"total"`
 }
 
+// CompactTrafficView is the M12 compact projection of a traffic entry — the
+// machine-facing field set for traffic pull/export (contract v0.12.0):
+// id/timestamp/method/url/path/statusCode/durationMs/mocked (+ seq for
+// incremental `since` cursor). Deliberately excludes headers/bodies/query so
+// an Agent's traffic listing stays small and cheap.
+type CompactTrafficView struct {
+	ID         string    `json:"id"`
+	Seq        int64     `json:"seq"`
+	Timestamp  time.Time `json:"timestamp"`
+	Method     string    `json:"method"`
+	URL        string    `json:"url"`
+	Path       string    `json:"path,omitempty"`
+	StatusCode int       `json:"statusCode,omitempty"`
+	DurationMs int       `json:"durationMs"`
+	Mocked     bool      `json:"mocked,omitempty"`
+}
+
+// TrafficCompactListResponse is the response of ?projection=compact on the
+// traffic list endpoint (M12). The default (no projection) response keeps
+// TrafficListResponse with full entries — the Web never changes shape.
+type TrafficCompactListResponse struct {
+	Entries []CompactTrafficView `json:"entries"`
+	Total   int                  `json:"total"`
+}
+
 // UpdateDeviceNameRequest is the M7.2.2 rename payload.
 type UpdateDeviceNameRequest struct {
 	Name string `json:"name"`

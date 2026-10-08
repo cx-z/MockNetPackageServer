@@ -190,6 +190,11 @@ type ViewerLease struct {
 type TrafficEntry struct {
 	// ID is a server-generated traffic record ID.
 	ID string `json:"id,omitempty"`
+	// Seq is the server-assigned per-session monotonic sequence number (M12).
+	// The server stamps entries at upload time in arrival order; `since=<seq>`
+	// incremental queries filter on it. It is a server-side + query-side
+	// concern only — the SDK never sends it and never consumes it.
+	Seq int64 `json:"seq,omitempty"`
 	// SessionID is the capture session this traffic belongs to.
 	SessionID string `json:"sessionId,omitempty"`
 	// Timestamp is when the request was initiated (RFC3339).
@@ -235,6 +240,10 @@ type TrafficEntry struct {
 	// Mocked marks whether this request hit a mock rule (M3 onward; the Web
 	// request stream labels it "Mock 命中").
 	Mocked bool `json:"mocked,omitempty"`
+	// MatchedRuleID is the ID of the mock rule that served this request (M12.3
+	// P1-1): populated by the SDK on mock hits so Agents can confirm which rule
+	// actually matched; empty for real (unmocked) traffic.
+	MatchedRuleID string `json:"matchedRuleId,omitempty"`
 }
 
 // ============================================================================

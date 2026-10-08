@@ -93,7 +93,6 @@ func TestRulePermission_Matrix(t *testing.T) {
 	assert.Equal(t, "root", list.Rules[0].Owner)
 }
 
-
 func TestRulePermission_LegacyEmptyOwner_AdminOnly(t *testing.T) {
 	api, ts := newAuthRequiredTestAPI(t)
 	ctx := context.Background()

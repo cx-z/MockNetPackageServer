@@ -355,3 +355,11 @@ button.mini.active { background: var(--primary); color: #fff; }
 .history-list { flex: 1; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 6px; min-height: 120px; }
 .history-more { align-self: center; }
 .history-empty { color: #999; font-size: 13px; padding: 24px 0; text-align: center; }
+
+/* M12.1: API Key 管理（已登录用户入口） */
+.api-key-fresh { margin: 12px 0; padding: 10px 12px; background: #f6f8fa; border: 1px solid #dde3e8; border-radius: 6px; }
+.api-key-row { display: flex; align-items: center; gap: 8px; }
+.api-key-code { flex: 1; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; background: #eef2f5; padding: 6px 8px; border-radius: 4px; user-select: all; }
+.key-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #eef1f4; }
+.key-row .sub { flex: 1; }
+.api-key-prefix { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: #eef2f5; padding: 2px 6px; border-radius: 4px; }

@@ -118,6 +118,15 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 		m.trafficMu.Unlock()
 		return 0, ErrSessionNotFound
 	}
+	// M12: stamp per-session monotonic sequence numbers (arrival order). The
+	// SDK never sends Seq; it is a server-side + query-side field consumed by
+	// `since=<seq>` incremental queries only.
+	seq := m.trafficSeq[sessionID]
+	for _, e := range stored {
+		seq++
+		e.Seq = seq
+	}
+	m.trafficSeq[sessionID] = seq
 	m.traffic[sessionID] = append(m.traffic[sessionID], stored...)
 	// 4.10: bound per-session storage. Once the cap is hit, drop the oldest
 	// entries (rolling window) so a long capture cannot grow memory without
@@ -253,6 +262,17 @@ type TrafficFilter struct {
 	// From/To bound the entry timestamp inclusively (nil = open bound).
 	From *time.Time
 	To   *time.Time
+	// Method matches the entry's HTTP method, case-insensitive (M12; the SDK
+	// uploads uppercase, but a lowercase query stays forgiving). Empty = no
+	// filter.
+	Method string
+	// Scheme matches the entry's URL scheme exactly (M12: parsed from the URL
+	// prefix before "://", e.g. https). Empty = no filter.
+	Scheme string
+	// Since returns only entries with Seq > Since (M12 incremental pulls).
+	// Negative or zero means no sequence filter. Requires the server-assigned
+	// Seq (see TrafficEntry.Seq); combined with every other filter via AND.
+	Since int64
 }
 
 // matches reports whether the entry satisfies every set filter.
@@ -269,7 +289,27 @@ func (f TrafficFilter) matches(e *capture.TrafficEntry) bool {
 	if f.To != nil && e.Timestamp.After(*f.To) {
 		return false
 	}
+	if f.Method != "" && !strings.EqualFold(e.Method, f.Method) {
+		return false
+	}
+	if f.Scheme != "" && !strings.EqualFold(SchemeOf(e.URL), f.Scheme) {
+		return false
+	}
+	if f.Since > 0 && e.Seq <= f.Since {
+		return false
+	}
 	return true
+}
+
+// SchemeOf extracts the URL scheme from the prefix before "://" (M12). URLs
+// without a scheme delimiter yield "" (no match for a scheme filter). This is
+// deliberately a prefix parse — capture URLs may be non-standard, and a full
+// url.Parse would fail closed on malformed input.
+func SchemeOf(raw string) string {
+	if i := strings.Index(raw, "://"); i >= 0 {
+		return raw[:i]
+	}
+	return ""
 }
 
 // ListSessionTraffic returns a session's traffic entries in arrival order
@@ -306,7 +346,8 @@ func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID strin
 
 	// O2.2: server-side filter first, then page within the filtered set.
 	filtered := entries
-	if filter.Keyword != "" || filter.StatusCode != nil || filter.From != nil || filter.To != nil {
+	if filter.Keyword != "" || filter.StatusCode != nil || filter.From != nil || filter.To != nil ||
+		filter.Method != "" || filter.Scheme != "" || filter.Since > 0 {
 		filtered = make([]*capture.TrafficEntry, 0, len(entries))
 		for _, e := range entries {
 			if filter.matches(e) {
@@ -516,6 +557,7 @@ func (m *CaptureManager) purgeRetainedBefore(ctx context.Context, cutoff time.Ti
 		if _, err := m.sessions.Get(ctx, sid); err != nil {
 			m.unindexTraffic(m.traffic[sid]) // 4.22
 			delete(m.traffic, sid)
+			delete(m.trafficSeq, sid) // M12: release the seq counter with its session
 		}
 	}
 }

@@ -130,6 +130,14 @@ Query     GET /api/v1/sessions/{id}/traffic?limit&offset        [requireAuth]
             → ended session: [] + total 0 (record is gone)
           GET /api/v1/traffic/{id}                              [requireAuth]
             → live session OR retained store of ended session (M8.6)
+          M12 机器通道（v0.12.0）：
+            ?projection=compact → CompactTrafficView 瘦身视图（8 字段，不含
+              headers/bodies/query；每条带 seq 每会话自增到达序号）——MCP/CLI 低带宽拉取
+            ?since=N → 只返回 seq > N（增量游标；ID 为 ULID，同毫秒字典序不严格单调，
+              故新增独立 seq；since 先过滤再分页）
+            ?method=GET&scheme=https → 过滤（method 大小写不敏感；scheme 按 URL 前缀）
+            （过滤与既有 keyword/statusCode/from/to AND 组合）
+            （缺省无 projection 时响应形状与 v0.11.0 完全一致——Web UI 不回归）
 
 Delete    DELETE /api/v1/traffic/{id}                           [requireAuth]
             → per-row delete; RequestCount decremented best-effort
@@ -181,12 +189,51 @@ Login     POST /api/v1/auth/login      → verify PBKDF2; issue AuthSession
 Logout    POST /api/v1/auth/logout     → delete session server-side (revocation)
 Me        GET  /api/v1/auth/me         → current user (page refresh)
 
-Middleware requireAuth: Bearer token → UserCtx; invalid/expired ⇒ 401
+M12 长效 API Key（v0.12.0，机器原生通道凭证）：
+Create    POST /api/v1/auth/keys                     [requireAuth]
+            → 为当前用户签发 mnpk_ 前缀 key；明文仅在创建响应返回一次
+            → store 只落 SHA-256 哈希；日志（访问日志）不落 Authorization/key 明文
+List      GET  /api/v1/auth/keys                     [requireAuth]
+            → 当前用户 key 列表（id/keyPrefix/createdAt/expiresAt，无明文无哈希）
+Revoke    DELETE /api/v1/auth/keys/{id}              [requireAuth + owner/admin]
+            → 吊销即失效；非 owner 非 admin 统一 404（不泄露 key 存在性）
+认证      authenticate() 双识别：session token 与 mnpk_ API Key 前缀分流；
+            API Key 归属用户角色，401/403 语义与会话 token 一致
+
+Middleware requireAuth: Bearer token|API Key → UserCtx; invalid/expired ⇒ 401
           (skipped when --no-auth, smoke only)
 Ownership authorizeDeviceAccess: admin OK; dev requires device.owner == username;
           otherwise 404 (no existence leak)
           authorizeSessionAccess: resolve session → owning device → same check
 Admin creation: CLI only — mockd start --create-admin <user> --admin-password <pass>
+```
+
+### 5.1 机器通道（M12，v0.13.0）
+
+MCP Server 与 CLI 是同一契约的两种消费端，共用 `pkg/mnpapi` 客户端：
+
+```
+MCP（cmd/mocknetpack-mcp，HTTP 网关 `--http-addr :PORT`，Bearer 直通逐 key 校验，12 tools）  CLI（cmd/mocknetpack，10 叶子命令）
+  list_devices            ───────────────▶ devices list
+  get_device_traffic      ───────────────▶ traffic list --app --did [--since --method --scheme --compact]
+  get_traffic             ───────────────▶ traffic get <id>
+  create_mock_rule_from_traffic ─────────▶ rule create-from-traffic <id> --app --did --note
+  create_mock_rule        ───────────────▶ rule create --app --did --method --path ...
+  create_share            ───────────────▶ share create <trafficId>
+  get_share               ───────────────▶ share get <shareId>
+  set_mock_rule_enabled   ───────────────▶ rule set-enabled <ruleId> --enable|--disable
+  update_mock_rule        ───────────────▶ rule update <ruleId> ...（支持 clearBodyBase64）
+  list_mock_rules         ───────────────▶ rule list --app --did [--path]  （M12.3）
+  get_mock_rule           ───────────────▶ rule get <ruleId>             （M12.3）
+  delete_mock_rule        ───────────────▶ rule delete <ruleId>          （M12.3）
+```
+
+共同约定：
+  - 鉴权：Authorization: Bearer <MOCKNETPACK_API_KEY>（长效 API Key）
+  - 流量拉取默认 projection=compact + since 增量游标（低带宽、可续拉）
+  - 错误响应带「给 AI 的指引」：401→配置 API Key；404/409/403→原因 + 下一步
+  - CLI：stdout 纯 JSON、错误走 stderr、退出码 0 成功/1 业务错误/2 用法错误；
+    traffic export -o 落盘 JSON 数组供 jq/grep 二次消费
 ```
 
 ### 6. Share links (M8.5)

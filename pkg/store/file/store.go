@@ -88,6 +88,11 @@ type storeData struct {
 	// read-only copies of a single traffic entry; they persist so a share link
 	// keeps its full 7-day validity across server restarts.
 	Shares []*store.ShareSnapshot `json:"shares,omitempty"`
+
+	// MockNetPack long-lived API keys (M12, contract v0.12.0). Only the
+	// SHA-256 hash is persisted — the plaintext exists at creation time only
+	// and is never stored. Keys survive restarts until revoked or expired.
+	APIKeys []*account.APIKey `json:"apiKeys,omitempty"`
 }
 
 // New creates a new FileStore with the given configuration.
@@ -397,6 +402,11 @@ func (s *FileStore) PairingTokens() store.PairingTokenStore {
 // Shares returns the request share snapshot store (MockNetPack M8.5).
 func (s *FileStore) Shares() store.ShareStore {
 	return &shareStore{fs: s}
+}
+
+// APIKeys returns the long-lived API key store (MockNetPack M12).
+func (s *FileStore) APIKeys() store.APIKeyStore {
+	return &apiKeyStore{fs: s}
 }
 
 // Begin starts a transaction (snapshot-based for file store).

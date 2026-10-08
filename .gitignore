@@ -126,3 +126,6 @@ pkg/admin/dashboard/dist/index.html
 
 # Runtime app catalog (hot-reloaded by loadAllowedApps; never committed)
 .allowed-apps.local
+
+# Root-level build artifact from manual go build (M12)
+/mocknetpack-mcp

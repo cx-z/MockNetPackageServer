@@ -135,6 +135,12 @@ type CaptureManager struct {
 	trafficMu sync.RWMutex
 	traffic   map[string][]*capture.TrafficEntry
 
+	// trafficSeq holds the per-session monotonic sequence counter used to
+	// stamp TrafficEntry.Seq at upload time (M12). Guarded by trafficMu —
+	// UploadTraffic assigns seq under the same lock. Keyed by session ID and
+	// cleaned up together with orphaned traffic keys.
+	trafficSeq map[string]int64
+
 	// retainedMu guards retainedTraffic: the traffic of ended sessions, kept
 	// for RetainedTrafficTTL so records the user saw on the page can still be
 	// shared after disconnect. M9 list semantics are unchanged — ended sessions
@@ -197,6 +203,7 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules 
 		log:           slog.Default(),
 		viewers:       make(map[string]map[string]capture.ViewerLease),
 		traffic:       make(map[string][]*capture.TrafficEntry),
+		trafficSeq:    make(map[string]int64),
 		retained:      make(map[string]*retainedSession),
 		trafficIndex:  make(map[string]*trafficIndexEntry),
 		stopCh:        make(chan struct{}),

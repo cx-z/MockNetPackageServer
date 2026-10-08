@@ -63,6 +63,10 @@ type API struct {
 	users        store.UserStore
 	authSessions store.AuthSessionStore
 
+	// MockNetPack long-lived API keys (M12): machine credentials for scripts /
+	// Agent tooling, authenticated through the same Bearer header.
+	apiKeys store.APIKeyStore
+
 	// loginThrottle (4.16): failure-based lockout for the login endpoint,
 	// per-username and per-IP (loopback exempt).
 	loginThrottle *loginThrottle
@@ -209,9 +213,11 @@ func NewAPI(port int, opts ...Option) *API {
 	api.captureManager.SetDataFilePath(filepath.Join(dataStore.DataDir(), "data.json"))
 
 	// Initialize the MockNetPack account stores (M7.1): users and session
-	// tokens share the same persistent FileStore.
+	// tokens share the same persistent FileStore. Long-lived API keys (M12)
+	// persist the same way.
 	api.users = dataStore.Users()
 	api.authSessions = dataStore.AuthSessions()
+	api.apiKeys = dataStore.APIKeys()
 
 	// Initialize rate limiter with defaults if not provided via options
 	if api.rateLimiter == nil {

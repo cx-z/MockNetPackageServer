@@ -2,9 +2,15 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.11.0
+  version: 0.13.0
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
+    - AI 接入层（M12，v0.12.0）：为 Agent 工具与脚本/CLI 提供机器原生通道——
+      (1) 长效 API Key（POST/GET /api/v1/auth/keys、DELETE /api/v1/auth/keys/{id}）：创建时明文仅返回一次，
+      服务端只存 SHA-256 哈希；`Authorization: Bearer <apiKey>` 与登录会话 token 并存，鉴权语义一致；
+      (2) 流量数据体验补强：GET /sessions/{id}/traffic 新增 projection=compact（8 字段瘦身视图 +
+      每会话自增 seq 增量游标）、since（seq 增量拉取）、method/scheme 过滤，默认（非 compact）响应形状不变，
+      人类 Web UI 体验不回归；(3) 错误响应按「给 AI 的指引」：401 提示配置 API Key、404/409/403 说明原因与下一步。
     - 权限与分享（O4/O5，v0.11.0）：MockRule 新增 owner（创建者用户名，服务端从当前会话用户写入，
       创建时设）与 updatedBy（最后修改者，每次 PUT 更新）两个纯服务端字段——Web 全量列表下发展示；
       SDK 增量拉取（sinceVersion）只返回 SDK 消费字段（id/method/path/response/enabled/effective），
@@ -470,7 +476,7 @@ paths:
     get:
       tags: [traffic]
       x-milestone: m2
-      summary: 会话内流量列表（实时 / 历史日志，O2.2 过滤下推 + O2.3 分页）
+      summary: 会话内流量列表（实时 / 历史日志，O2.2 过滤下推 + O2.3 分页 + M12 机器通道）
       description: |
         Web 请求流数据源（实时）与历史日志查询共用本接口（O3，v0.10.0）：
         - 实时：Web 每 2s 轮询本接口实现秒级可见（需求决策 #5），limit 拉取最新条目并按 id 本地去重。
@@ -480,6 +486,11 @@ paths:
           from、to（RFC3339，含边界）可任意组合（AND）；非法参数 400 invalid_field。
         - 分页（O2.3）：先过滤后分页——total 为过滤后集合大小；Web「加载更多」用 offset 累加。
         排序：按 timestamp 升序返回（请求时间线）；Web 展示可自行倒序。
+        - 机器通道（M12，v0.12.0）：projection=compact 返回瘦身视图 CompactTrafficView（8 字段，
+          不含 headers/bodies/query 等大字段），并为每条补 seq（每会话自增增量游标，ID 字典序不严格单调，
+          故新增独立 seq）；since 按 seq 增量拉取（since=0 全量）；method（大小写不敏感）/
+          scheme（URL 前缀 http|https）过滤。默认无 projection 时响应形状与 v0.11.0 完全一致
+          （TrafficListResponse 完整字段），人类 Web UI 不回归。
       operationId: listSessionTraffic
       parameters:
         - $ref: '#/components/parameters/SessionIdPath'
@@ -518,21 +529,49 @@ paths:
             type: string
             format: date-time
           description: 时间范围终点（RFC3339，含边界）
+        - name: projection
+          in: query
+          schema:
+            type: string
+            enum: [compact]
+          description: |
+            M12：compact 时返回瘦身视图（CompactTrafficView 数组，含 seq 增量游标），
+            供 MCP/CLI 等机器通道低带宽拉取；缺省时返回完整 TrafficEntry（v0.11.0 形状不变）。
+        - name: since
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: |
+            M12：增量游标——只返回 seq > since 的条目（跨请求批次单调递增），
+            用于 MCP/CLI 轮询增量拉取；since=0（缺省）返回全量。与 offset 组合时先按 since 过滤再分页。
+        - name: method
+          in: query
+          schema:
+            type: string
+          description: M12：HTTP 方法精确过滤（大小写不敏感，如 GET/post）
+        - name: scheme
+          in: query
+          schema:
+            type: string
+          description: M12：URL scheme 过滤（http|https，按 URL 前缀匹配，忽略大小写）
       responses:
         '200':
-          description: 流量列表（entries + 过滤后 total）
+          description: 流量列表（默认完整条目；projection=compact 时为瘦身条目；均含过滤后 total）
           content:
             application/json:
               schema:
-                type: object
-                required: [entries, total]
-                properties:
-                  entries:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/TrafficEntry'
-                  total:
-                    type: integer
+                oneOf:
+                  - type: object
+                    required: [entries, total]
+                    properties:
+                      entries:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TrafficEntry'
+                      total:
+                        type: integer
+                  - $ref: '#/components/schemas/TrafficCompactListResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -1070,6 +1109,92 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  # --------------------------------------------------------------------------
+  # 6.1 长效 API Key（M12，v0.12.0）——机器原生通道凭证
+  # 明文仅在创建响应返回一次；服务端只存 SHA-256 哈希；日志不落 key 明文。
+  # 语义：API Key 等价于所属用户（角色同源）；非 owner 且非 admin 对他人 key 的
+  # 吊销一律 404（不泄露存在性，与 mock-rules 403 语义的防枚举原则一致）。
+  # --------------------------------------------------------------------------
+  /auth/keys:
+    post:
+      tags: [auth]
+      x-milestone: m12
+      summary: 创建长效 API Key（明文仅本次返回）
+      description: |
+        为当前用户签发一个长效 API Key（前缀 mnpk_，服务端存 SHA-256 哈希）。
+        明文 key 只在创建响应中出现一次，之后任何接口（含列表）都不再返回；
+        store 只落 hash。API Key 无过期（expiresAt 恒为 null，预留扩展）。
+        与登录会话 token 并存：`Authorization: Bearer <apiKey>` 与 `<token>` 均可通过鉴权。
+      operationId: createApiKey
+      responses:
+        '201':
+          description: 创建成功（key 字段为明文，仅本次返回）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAPIKeyResponse'
+        '401':
+          description: 缺少或无效的 Bearer 凭证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [auth]
+      x-milestone: m12
+      summary: 当前用户的 API Key 列表（不含明文）
+      description: |
+        返回当前用户已创建且未吊销的 API Key（id/keyPrefix/createdAt/expiresAt）；
+        永不包含 key 明文或哈希。admin 可查看全部用户的 key（owner 校验），dev 仅自己。
+      operationId: listApiKeys
+      responses:
+        '200':
+          description: Key 列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAPIKeysResponse'
+        '401':
+          description: 缺少或无效的 Bearer 凭证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/keys/{id}:
+    delete:
+      tags: [auth]
+      x-milestone: m12
+      summary: 吊销 API Key
+      description: |
+        吊销指定 API Key（立即失效，不可恢复）。仅 key 的 owner 与 admin 可吊销；
+        非 owner 且非 admin 一律 404（不泄露 key 存在性）。成功返回 204。
+        幂等：吊销后再次吊销同一 id 返回 404（已不存在）。
+      operationId: revokeApiKey
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyIdPath'
+      responses:
+        '204':
+          description: 已吊销
+        '401':
+          description: 缺少或无效的 Bearer 凭证
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: key 不存在，或当前用户无权吊销（统一 404）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1077,8 +1202,12 @@ components:
       scheme: bearer
       bearerFormat: Token
       description: |
-        登录（POST /auth/login）签发、服务端持久化的会话 token；Web 每次请求携带
-        `Authorization: Bearer <token>`。有效期 7 天（服务端配置项）；登出即服务端吊销。
+        两种凭证并存（M12，v0.12.0）：
+        - 会话 token：登录（POST /auth/login）签发、服务端持久化；Web 每次请求携带
+          `Authorization: Bearer <token>`。有效期 7 天（服务端配置项）；登出即服务端吊销。
+        - 长效 API Key：POST /auth/keys 创建，`Authorization: Bearer <mnpk_...>`；无过期，
+          明文仅创建时返回一次，服务端只存 SHA-256 哈希（S3：任何日志不落 Authorization/key 明文）。
+        两者权限等价（API Key 归属用户角色），401/403 语义一致。
 
   parameters:
     AppPath:
@@ -1141,6 +1270,13 @@ components:
       schema:
         type: string
       description: 流量记录 ID
+    ApiKeyIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: API Key ID（创建响应返回的 id，ULID）
 
   responses:
     BadRequest:
@@ -1572,6 +1708,116 @@ components:
           type: boolean
           default: false
           description: 是否命中 Mock（M2 恒为 false；M3 起标记，Web 请求流标注"Mock 命中"）
+        matchedRuleId:
+          type: string
+          description: >-
+            命中的 Mock 规则 ID（v0.13.0，M12.3 P1-1）：仅 mocked=true 时非空，
+            用于确认该请求究竟命中哪一条规则；真实流量为空/缺省。
+        seq:
+          type: integer
+          description: |
+            每会话自增的到达序号（M12，v0.12.0）：服务端按上传到达顺序从 1 递增，
+            供增量拉取（since）使用——ID 为 ULID，同毫秒内字典序不严格单调，故新增独立 seq。
+            仅服务端与查询方（MCP/CLI/Web）消费，SDK 不感知、不消费。
+
+    # ------------------------------------------------- M12 机器通道（v0.12.0）
+    CompactTrafficView:
+      type: object
+      required: [id, seq, timestamp, method, url, durationMs]
+      description: |
+        流量瘦身视图（?projection=compact，M12）：供 MCP/CLI 低带宽增量拉取，
+        不含 headers/bodies/query/requestBody* 等大字段；seq 为每会话增量游标。
+      properties:
+        id:
+          type: string
+          description: 流量记录 ID
+        seq:
+          type: integer
+          description: 每会话自增到达序号（增量游标）
+        timestamp:
+          type: string
+          format: date-time
+          description: 请求发起时间（RFC3339）
+        method:
+          type: string
+        url:
+          type: string
+        path:
+          type: string
+          description: URL 路径（用于 Mock 匹配）
+        statusCode:
+          type: integer
+          description: 响应状态码（请求失败时缺省）
+        durationMs:
+          type: integer
+          description: 请求耗时（毫秒）
+        mocked:
+          type: boolean
+          description: 是否命中 Mock
+
+    TrafficCompactListResponse:
+      type: object
+      required: [entries, total]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompactTrafficView'
+        total:
+          type: integer
+          description: 过滤后集合大小
+
+    APIKeyView:
+      type: object
+      required: [id, keyPrefix, username, createdAt]
+      description: API Key 列表项——永不包含明文或哈希。
+      properties:
+        id:
+          type: string
+          description: Key ID（ULID）
+        keyPrefix:
+          type: string
+          description: 明文 key 前缀（mnpk_ 开头的展示片段，用于区分，不可恢复全文）
+        username:
+          type: string
+          description: 所属用户名
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 过期时间（当前恒为 null，预留）
+
+    CreateAPIKeyResponse:
+      type: object
+      required: [id, key, createdAt]
+      description: 创建响应——key 字段为明文，仅在创建时返回一次。
+      properties:
+        id:
+          type: string
+        key:
+          type: string
+          description: 明文 API Key（mnpk_ 前缀）；之后任何接口不再返回
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ListAPIKeysResponse:
+      type: object
+      required: [keys, total]
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/APIKeyView'
+        total:
+          type: integer
 
     TrafficUploadRequest:
       type: object

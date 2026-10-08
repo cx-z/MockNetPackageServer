@@ -147,6 +147,45 @@ func TestMockRuleAPI_ValidationAndNotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
+// TestMockRuleAPI_InvalidStatusDiagnosis asserts the 400 diagnosis names the
+// failing field and phase (M12.2): a zero statusCode on PUT must explain the
+// full-replace semantics; an out-of-range value must carry the actual number.
+// The message must never echo Authorization/API-key material (only statusCode).
+func TestMockRuleAPI_InvalidStatusDiagnosis(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
+	var created capture.MockRuleView
+	resp2 := doJSON(t, http.MethodPost, base, ruleBody("GET", "/api/diag", false), &created)
+	require.Equal(t, http.StatusCreated, resp2.StatusCode)
+
+	// PUT with an empty response (pure toggle sent as {enabled:true}).
+	var errResp struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	resp := doJSON(t, http.MethodPut, base+"/"+created.ID, map[string]any{"enabled": true}, &errResp)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, "invalid_field", errResp.Error)
+	assert.Contains(t, errResp.Message, "response.statusCode")
+	assert.Contains(t, errResp.Message, "整体覆盖更新", "zero statusCode on PUT must explain full-replace semantics")
+
+	// POST with an out-of-range value.
+	resp = doJSON(t, http.MethodPost, base, map[string]any{
+		"method": "GET", "path": "/z", "response": map[string]any{"statusCode": 700},
+	}, &errResp)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, errResp.Message, "700")
+	assert.Contains(t, errResp.Message, "100–599")
+
+	// PUT with an out-of-range value.
+	resp = doJSON(t, http.MethodPut, base+"/"+created.ID, map[string]any{
+		"response": map[string]any{"statusCode": 99},
+	}, &errResp)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, errResp.Message, "99")
+}
+
 func TestMockRuleAPI_HeartbeatCarriesRulesVersion(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	seedMockRuleDevice(t, srv)

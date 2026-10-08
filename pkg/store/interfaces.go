@@ -446,3 +446,25 @@ type ShareStore interface {
 	// rejected lazily on Get, so this is housekeeping only).
 	DeleteExpired(ctx context.Context, now time.Time) (int, error)
 }
+
+// APIKeyStore handles persistence for long-lived API keys (M12, contract
+// v0.12.0). Keys persist across restarts so a script/Agent configured once
+// keeps working until the key is revoked or expires. Only the SHA-256 hash is
+// stored — the plaintext exists at creation time only and is never persisted.
+type APIKeyStore interface {
+	// Create adds a new API key. Returns store.ErrAlreadyExists if the ID
+	// already exists (astronomically unlikely).
+	Create(ctx context.Context, k *account.APIKey) error
+	// GetByID returns a single key by its stable ID.
+	GetByID(ctx context.Context, id string) (*account.APIKey, error)
+	// GetByHash resolves a key by its SHA-256 hash (auth lookup). Returns
+	// store.ErrNotFound when no key matches.
+	GetByHash(ctx context.Context, hash string) (*account.APIKey, error)
+	// ListByUsername returns every key of one account (creation order).
+	ListByUsername(ctx context.Context, username string) ([]*account.APIKey, error)
+	// Delete revokes a key by ID. Returns store.ErrNotFound if missing.
+	Delete(ctx context.Context, id string) error
+	// DeleteExpired removes every expired key and returns the number deleted
+	// (housekeeping; expired keys are also rejected lazily at auth time).
+	DeleteExpired(ctx context.Context, now time.Time) (int, error)
+}

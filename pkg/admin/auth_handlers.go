@@ -154,11 +154,16 @@ func (a *API) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 
 // handleAuthLogout handles POST /api/v1/auth/logout — server-side revocation
 // of the presented token: the session record is deleted, so the token is
-// immediately invalid even if it lingers in the client.
+// immediately invalid even if it lingers in the client. M12: an API key is
+// not a session, so there is nothing to revoke — idempotent 204.
 func (a *API) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	token, ok := bearerToken(r)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+		return
+	}
+	if account.IsAPIKey(token) {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if _, err := a.authSessions.GetByToken(r.Context(), token); err != nil {
@@ -173,24 +178,20 @@ func (a *API) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAuthMe handles GET /api/v1/auth/me — the current user behind the
-// presented token, for the Web to decide login state and role.
+// presented token, for the Web to decide login state and role. M12: session
+// tokens and long-lived API keys both resolve to their owning user.
 func (a *API) handleAuthMe(w http.ResponseWriter, r *http.Request) {
-	token, ok := bearerToken(r)
-	if !ok {
+	u := a.authenticate(r)
+	if u == nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
-	sess, err := a.authSessions.GetByToken(r.Context(), token)
-	if err != nil || !sess.Valid(time.Now()) {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
-		return
-	}
-	u, err := a.users.GetByUsername(r.Context(), sess.Username)
+	user, err := a.users.GetByUsername(r.Context(), u.Username)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
 		return
 	}
-	writeJSON(w, http.StatusOK, toAuthUser(u))
+	writeJSON(w, http.StatusOK, toAuthUser(user))
 }
 
 // CreateAdminUser creates an admin account — the only admin creation path

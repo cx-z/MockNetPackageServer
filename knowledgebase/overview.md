@@ -1,7 +1,7 @@
 # MockNetPack Server — Overview (L1)
 
 > KB layer L1. Next: [`architecture.md`](architecture.md) → [`code-map.md`](code-map.md).
-> Product source of truth: `tasks/需求文档.md` v1.2, contract `openapi/mocknetpack.yaml` v0.7.0.
+> Product source of truth: `tasks/需求文档.md` v1.4, contract `openapi/mocknetpack.yaml` v0.12.0.
 
 ## What the server is
 
@@ -23,9 +23,10 @@ The server **never proxies business traffic**: it only records and manages. Requ
 | `pkg/capture` | Device / CaptureSession / TrafficEntry / MockRule model layer (platform-neutral) | custom |
 | `pkg/store` (+ `pkg/store/file`) | `CaptureManager` runtime semantics + persistent stores (devices, sessions, rules, accounts, sessions) over the file-backed store | custom (reuses upstream `internal/storage`/store infra) |
 | `pkg/account` | User + AuthSession model, PBKDF2 password hashing, session token primitives (M7) | custom |
-| `pkg/admin` (subset) | `/api/v1` capture handlers, auth handlers/middleware, mock-rule handlers, share handlers, Web static serving | custom (rest of `pkg/admin` is upstream) |
+| `pkg/admin` (subset) | `/api/v1` capture handlers, auth handlers/middleware, mock-rule handlers, share handlers, API Key handlers（M12）, Web static serving | custom (rest of `pkg/admin` is upstream) |
 | `pkg/cli/start.go` | `mockd start` wiring for capture config, `--no-auth`, `--create-admin`, `--web-dir` | modified |
-| `openapi/mocknetpack.yaml` | The `/api/v1` contract (currently v0.7.0) | custom |
+| `pkg/mnpapi` / `cmd/mocknetpack-mcp` / `cmd/mocknetpack` + `pkg/mnpcli` | AI 接入层（M12）：MCP/CLI 共享 HTTP 客户端、MCP 网关（HTTP 远程 /mcp，12 tools，Bearer 直通逐 key 校验）、CLI（10 叶子命令）——机器原生通道 | custom |
+| `openapi/mocknetpack.yaml` | The `/api/v1` contract (currently v0.12.0) | custom |
 
 > How to tell custom from upstream quickly: custom code references `mocknetpack` or the `capture`/`account` packages, or appears in the git log as `M3.5`…`M8.6` commits. Upstream code is everything else (engine, mcp, matching, proxy, …).
 
@@ -47,7 +48,7 @@ The server **never proxies business traffic**: it only records and manages. Requ
 
 | Item | Value |
 |---|---|
-| Contract | `server/openapi/mocknetpack.yaml` **v0.7.0**, base path `/api/v1` |
+| Contract | `server/openapi/mocknetpack.yaml` **v0.12.0**, base path `/api/v1` |
 | Heartbeat interval / timeout | 20s / 60s defaults; SDK gets dynamic interval (3s capturing / 5s idle) from M8.2/M8.3 |
 | Viewer lease TTL | 120s (web renews at ~60s) |
 | Mock rule retention | 7 days sliding (since last use); janitor hourly |
@@ -63,6 +64,8 @@ The server **never proxies business traffic**: it only records and manages. Requ
 - **Login** (`POST /api/v1/auth/login`) → server-issued session token (32 random bytes hex, 7d TTL, server-side revocation).
 - **Logout** revokes server-side; `GET /auth/me` restores the session on page refresh.
 - **Middleware**: Web-facing `/api/v1` routes require `Authorization: Bearer <token>` (`requireAuth`); SDK-facing routes (register, heartbeat, traffic upload, mock-rules pull) stay **open** (the SDK carries no credentials; the did is its identity). `--no-auth` bypasses for local smoke only.
+- **API Keys (M12)**: `POST /auth/keys` issues long-lived `mnpk_` keys for scripts/Agent tooling; plaintext returned once, store keeps SHA-256 hash only, logs never carry the key; `Bearer <apiKey>` and session token authenticate identically (same ownership/role semantics). Revocation `DELETE /auth/keys/{id}` — non-owner/admin gets 404 (no existence leak).
+- **Machine channels (M12)**: MCP gateway (`cmd/mocknetpack-mcp`, HTTP remote only, endpoint `/mcp`, 12 tools, per-account Bearer passthrough validated by mockd) and CLI (`cmd/mocknetpack`, 10 leaf commands, stdout pure JSON, exit 0/1/2) share `pkg/mnpapi`; traffic pulls default to `projection=compact` + `since` incremental cursor.
 - **Ownership**: devs see/operate only devices with `owner == username`; admins everything. Unknown device ⇒ 404 (no existence leak).
 
 ## See also

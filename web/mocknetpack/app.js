@@ -72,6 +72,9 @@ function enterApp() {
     ? (u.username + " · " + (u.role === "admin" ? "管理员" : "开发者"))
     : "";
   $("logoutBtn").classList.remove("hidden");
+  // M12.1: 已登录用户可见 API Key 管理入口（创建/列表/吊销）
+  $("apiKeyBtn").classList.remove("hidden");
+  initApiKeyUI();
 
   $("backBtn").onclick = backToList;
   const clearBtn = $("trafficClearBtn");

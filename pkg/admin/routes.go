@@ -352,6 +352,13 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/logout", a.handleAuthLogout)
 	mux.HandleFunc("GET "+captureAPIPrefix+"/auth/me", a.handleAuthMe)
 
+	// M12 (contract v0.12.0): long-lived API keys for scripts / Agent tooling.
+	// Create returns the plaintext exactly once; list carries only prefixes;
+	// delete revokes immediately. All require the caller's own auth.
+	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/keys", a.requireAuth(a.handleCreateAPIKey))
+	mux.HandleFunc("GET "+captureAPIPrefix+"/auth/keys", a.requireAuth(a.handleListAPIKeys))
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/auth/keys/{id}", a.requireAuth(a.handleDeleteAPIKey))
+
 	// M8.5: request share links. POST creates a snapshot (auth required);
 	// GET is public (no auth) — anyone with the link can view the read-only snapshot.
 	mux.HandleFunc("POST "+captureAPIPrefix+"/shares", a.requireAuth(a.handleCreateShare))
