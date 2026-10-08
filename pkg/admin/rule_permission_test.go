@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// O4.2/O4.3 权限矩阵（auth 模式）。设备隔离（M7.2.2）仍生效——这里"他人规则"
+// / 权限矩阵（auth 模式）。设备隔离仍生效——这里"他人规则"
 // 指同一设备上其他用户创建的规则（规则对所有设备可见者共享，但只有 owner/admin 可改）。
 
 // seedRulePermDevice 注册权限测试设备并返回 base URL。
@@ -105,7 +105,7 @@ func TestRulePermission_LegacyEmptyOwner_AdminOnly(t *testing.T) {
 
 	// 存量规则：owner 空。auth 模式下只能经 store 直插（handler 创建必带 owner）。
 	// 经 CaptureManager 以 nil caller 创建 = --no-auth 形态（owner 空）。
-	// M11 Step1: 存量行不能伪造 source，补一个 note 满足 D6（note 不影响 owner 语义）。
+	//  Step1: 存量行不能伪造 source，补一个 note 满足 D6（note 不影响 owner 语义）。
 	api.captureManager.CreateMockRule(ctx, "com.example.integrating", "legacy-dev",
 		&capture.MockRuleInput{Method: "POST", Path: "/api/legacy", Note: "legacy row",
 			Response: capture.MockResponse{StatusCode: 200, Body: `{"legacy":true}`}}, nil)
@@ -122,7 +122,7 @@ func TestRulePermission_LegacyEmptyOwner_AdminOnly(t *testing.T) {
 	res, _ = doAuthJSON(t, http.MethodPut, base+"/"+legacyID, devA,
 		updateBody(`{"x":1}`, "legacy edit", nil))
 	require.Equal(t, http.StatusForbidden, res.StatusCode)
-	// devB 非设备 owner → 设备隔离（M7.2.2）先于规则权限：404 而非 403。
+	// devB 非设备 owner → 设备隔离先于规则权限：404 而非 403。
 	res, _ = doAuthJSON(t, http.MethodDelete, base+"/"+legacyID, devB, nil)
 	require.Equal(t, http.StatusNotFound, res.StatusCode)
 
@@ -144,7 +144,7 @@ func TestRulePermission_CreateByAnyDev_StampsOwner(t *testing.T) {
 	baseB := seedRulePermDevice(t, ts, devB, "com.example.integrating", "create-dev-b")
 	_ = seedRulePermDevice(t, ts, devA, "com.example.integrating", "create-dev-a")
 
-	// devB 访问 devA 的设备 → 404（设备隔离，M7.2.2，与规则权限无关）。
+	// devB 访问 devA 的设备 → 404（设备隔离，与规则权限无关）。
 	res, _ := doAuthJSON(t, http.MethodPost,
 		ts.URL+"/api/v1/devices/com.example.integrating/create-dev-a/mock-rules",
 		devB, ruleBody("PUT", "/api/created", false))

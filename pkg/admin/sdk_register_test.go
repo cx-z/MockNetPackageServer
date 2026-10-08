@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSDKRegisterUnknownDevice404: M7.2.3 retires SDK auto-registration. An
+// TestSDKRegisterUnknownDevice404:  retires SDK auto-registration. An
 // unknown did must get a technical 404 (no user-facing "register in Web" copy
 // on the SDK channel); a known device refreshes metadata with 200.
 func TestSDKRegisterUnknownDevice404(t *testing.T) {
@@ -28,7 +28,7 @@ func TestSDKRegisterUnknownDevice404(t *testing.T) {
 		RegisterDeviceRequest{App: "com.example.integrating", Did: "known-dev", SDKVersion: "0.3.0"}, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// Heartbeat for an unknown did -> 404 (already enforced pre-M7.2.3).
+	// Heartbeat for an unknown did -> 404 (already enforced pre-).
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.integrating/ghost/heartbeat", nil, &errResp)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, "device_not_registered", errResp.Error)

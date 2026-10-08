@@ -1,4 +1,4 @@
-// MockNetPack QR pairing token API (M9, contract v0.8.0): a logged-in Web
+// MockNetPack QR pairing token API : a logged-in Web
 // user issues a short-lived pairing token for an app; the SDK presents it in
 // POST /devices/register to auto-register the scanned device under that user.
 
@@ -80,7 +80,7 @@ func (a *API) handleCreatePairingToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // PairingTokenStatusResponse is the GET /pairing-tokens/{token} reply
-// (M9.3-fix, contract v0.8.2): the Web polls it while the QR modal is open
+// : the Web polls it while the QR modal is open
 // to detect that a device registered with this token, then auto-closes the
 // modal and asks the user to name the device.
 type PairingTokenStatusResponse struct {

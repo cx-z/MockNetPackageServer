@@ -9,7 +9,7 @@ import (
 	"github.com/getmockd/mockd/pkg/store"
 )
 
-// O4.1 模型：MockRule.owner/updatedBy 写入与 data.json 持久化（M3-1）。
+//  模型：MockRule.owner/updatedBy 写入与 data.json 持久化。
 
 func TestMockRule_OwnerStampOnCreate(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
@@ -42,7 +42,7 @@ func TestMockRule_OwnerStampOnCreate(t *testing.T) {
 		t.Errorf("r2.Owner = %q, want %q", r2.Owner, "bob")
 	}
 
-	// --no-auth（caller=nil）→ owner 为空（存量规则形态，M3-2 仅 admin 可管理）。
+	// --no-auth（caller=nil）→ owner 为空（存量规则形态， 仅 admin 可管理）。
 	r3, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("DELETE", "/api/legacy", false), nil)
 	if err != nil {
 		t.Fatalf("CreateMockRule(nil) = %v", err)
@@ -79,7 +79,7 @@ func TestMockRule_UpdatedByStampOnUpdate(t *testing.T) {
 		t.Errorf("owner changed on update = %q, want %q (owner is immutable)", u1.Owner, "alice")
 	}
 
-	// admin 修改 → updatedBy 记录最后修改者（owner 不变；M3-2 权限：非 owner 需 admin）。
+	// admin 修改 → updatedBy 记录最后修改者（owner 不变； 权限：非 owner 需 admin）。
 	u2, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID,
 		updateInput(`{"v":3}`, "edit by bob", boolPtr(false)),
 		&store.RuleCaller{Username: "bob", IsAdmin: true})
@@ -94,7 +94,7 @@ func TestMockRule_UpdatedByStampOnUpdate(t *testing.T) {
 	}
 }
 
-// O4.1 data.json 持久化：owner/updatedBy 随规则落盘，重启后仍在（纯服务端字段
+//  data.json 持久化：owner/updatedBy 随规则落盘，重启后仍在（纯服务端字段
 // 也要跨重启存活，权限语义依赖它）。
 func TestMockRule_OwnerPersistsAcrossRestart(t *testing.T) {
 	dir := t.TempDir()

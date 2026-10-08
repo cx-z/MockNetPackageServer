@@ -24,7 +24,7 @@ const captureAPIPrefix = "/api/v1"
 // ============================================================================
 
 // RegisterDeviceRequest is the SDK registration payload (contract schema,
-// M9/v0.8.0 adds optional pairingToken + deviceName for QR auto-registration).
+// /v0.8.0 adds optional pairingToken + deviceName for QR auto-registration).
 type RegisterDeviceRequest struct {
 	App        string           `json:"app"`
 	Did        string           `json:"did"`
@@ -35,7 +35,7 @@ type RegisterDeviceRequest struct {
 	// AppName is the app display name reported by the SDK (CFBundleDisplayName,
 	// e.g. "IntegratingApp"; v0.9.0). Optional; Web falls back to app (bundle id).
 	AppName string `json:"appName,omitempty"`
-	// PairingToken is the QR pairing token from the scanned code (M9): when
+	// PairingToken is the QR pairing token from the scanned code : when
 	// present and valid, an unknown (app, did) is auto-registered under the
 	// token's user instead of rejected with 404.
 	PairingToken string `json:"pairingToken,omitempty"`
@@ -44,7 +44,7 @@ type RegisterDeviceRequest struct {
 	DeviceName string `json:"deviceName,omitempty"`
 }
 
-// CreateDeviceRequest is the Web manual-registration payload (M7.2.1): pick an
+// CreateDeviceRequest is the Web manual-registration payload : pick an
 // app from the fixed catalog, type the SDK did, and give the device a name.
 type CreateDeviceRequest struct {
 	App  string `json:"app"`
@@ -158,7 +158,7 @@ type TrafficListResponse struct {
 	Total   int                     `json:"total"`
 }
 
-// CompactTrafficView is the M12 compact projection of a traffic entry — the
+// CompactTrafficView is the  compact projection of a traffic entry — the
 // machine-facing field set for traffic pull/export (contract v0.12.0):
 // id/timestamp/method/url/path/statusCode/durationMs/mocked (+ seq for
 // incremental `since` cursor). Deliberately excludes headers/bodies/query so
@@ -176,14 +176,14 @@ type CompactTrafficView struct {
 }
 
 // TrafficCompactListResponse is the response of ?projection=compact on the
-// traffic list endpoint (M12). The default (no projection) response keeps
+// traffic list endpoint . The default (no projection) response keeps
 // TrafficListResponse with full entries — the Web never changes shape.
 type TrafficCompactListResponse struct {
 	Entries []CompactTrafficView `json:"entries"`
 	Total   int                  `json:"total"`
 }
 
-// UpdateDeviceNameRequest is the M7.2.2 rename payload.
+// UpdateDeviceNameRequest is the  rename payload.
 type UpdateDeviceNameRequest struct {
 	Name string `json:"name"`
 }
@@ -235,7 +235,7 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 }
 
 // ============================================================================
-// M8.5: Request share links
+// : Request share links
 // ============================================================================
 
 // shareRequest is the POST /shares body: which traffic entry to snapshot.

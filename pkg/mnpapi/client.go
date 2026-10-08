@@ -1,10 +1,10 @@
 // Package mnpapi is the shared HTTP client for the MockNetPack admin API
-// (M12): the MCP server and the `mocknetpack` CLI both talk to the server
+// : the MCP server and the `mocknetpack` CLI both talk to the server
 // through it, so the two machine-native channels share one set of endpoint
 // semantics, error handling and "for the AI" guidance.
 //
 // Authentication: every request carries `Authorization: Bearer <apiKey>`
-// (long-lived API key, M12). 401 responses surface as APIError with a
+// (long-lived API key). 401 responses surface as APIError with a
 // self-explanatory message (configure an API key), 403/404/409 keep their
 // ownership/conflict semantics from the server contract.
 package mnpapi
@@ -124,7 +124,7 @@ func (c *Client) ListDevices(ctx context.Context) ([]capture.DeviceView, error) 
 	return out.Devices, nil
 }
 
-// TrafficQuery mirrors the M12 query parameters of the traffic list endpoint.
+// TrafficQuery mirrors the  query parameters of the traffic list endpoint.
 type TrafficQuery struct {
 	Method  string
 	Scheme  string
@@ -256,7 +256,7 @@ func (c *Client) GetMockRule(ctx context.Context, app, did, ruleID string) (*cap
 }
 
 // CreateMockRule creates a hand-authored rule (note required when the body
-// starts with "{" or "[" — server-side JSON check, M11 semantics).
+// starts with "{" or "[" — server-side JSON check,  semantics).
 func (c *Client) CreateMockRule(ctx context.Context, app, did string, in *capture.MockRuleInput) (*capture.MockRuleView, error) {
 	var out capture.MockRuleView
 	if err := c.do(ctx, http.MethodPost, "/api/v1/devices/"+url.PathEscape(app)+"/"+url.PathEscape(did)+"/mock-rules", nil, in, &out); err != nil {
@@ -267,7 +267,7 @@ func (c *Client) CreateMockRule(ctx context.Context, app, did string, in *captur
 
 // CreateMockRuleFromTraffic implements the two-step orchestration
 // GET /traffic/{id} → POST /devices/{app}/{did}/mock-rules with a source
-// snapshot frozen from the captured entry (M8 "Mock 此请求").
+// snapshot frozen from the captured entry ( "Mock 此请求").
 func (c *Client) CreateMockRuleFromTraffic(ctx context.Context, app, did, trafficID, note string) (*capture.MockRuleView, error) {
 	e, err := c.GetTraffic(ctx, trafficID)
 	if err != nil {

@@ -21,17 +21,17 @@ func ruleBody(method, path string, enabled bool) map[string]any {
 			"statusCode": 200,
 			"body":       `{"ok":true}`,
 		},
-		// M11 Step1: existing HTTP tests model capture-originated rules
+		//  Step1: existing HTTP tests model capture-originated rules
 		// ("Mock 此请求") — they carry a source snapshot and may omit the
 		// note (D6 exempts source-bearing creates).
 		"source": map[string]any{"method": method, "path": path},
 	}
 }
 
-// updateBody builds an edit payload (M5 UpdateMockRuleInput). No method/path:
+// updateBody builds an edit payload ( UpdateMockRuleInput). No method/path:
 // the match key is immutable on edit. note is required when the canned response
 // actually changes (editing); a pure toggle (response echoed unchanged) may
-// leave it blank (M7). enabled may be omitted (nil) to leave the switch
+// leave it blank . enabled may be omitted (nil) to leave the switch
 // untouched.
 func updateBody(body, note string, enabled *bool) map[string]any {
 	m := map[string]any{
@@ -48,7 +48,7 @@ func updateBody(body, note string, enabled *bool) map[string]any {
 }
 
 // seedMockRuleDevice registers the default com.example.integrating/dev-1 device so the
-// mock-rule ownership check (M7.2.2) has a device to authorize.
+// mock-rule ownership check  has a device to authorize.
 func seedMockRuleDevice(t *testing.T, srv *httptest.Server) {
 	t.Helper()
 	mustSeedDevice(t, srv, "com.example.integrating", "dev-1")
@@ -148,7 +148,7 @@ func TestMockRuleAPI_ValidationAndNotFound(t *testing.T) {
 }
 
 // TestMockRuleAPI_InvalidStatusDiagnosis asserts the 400 diagnosis names the
-// failing field and phase (M12.2): a zero statusCode on PUT must explain the
+// failing field and phase : a zero statusCode on PUT must explain the
 // full-replace semantics; an out-of-range value must carry the actual number.
 // The message must never echo Authorization/API-key material (only statusCode).
 func TestMockRuleAPI_InvalidStatusDiagnosis(t *testing.T) {
@@ -208,7 +208,7 @@ func TestMockRuleAPI_HeartbeatCarriesRulesVersion(t *testing.T) {
 	assert.Equal(t, 1, hb.RulesVersion, "heartbeat reports bumped rule version")
 }
 
-// --- M5: note validation & immutable match key ------------------------------
+// --- : note validation & immutable match key ------------------------------
 
 func TestMockRuleAPI_EditNoteValidation(t *testing.T) {
 	srv := newCaptureTestAPI(t)
@@ -218,7 +218,7 @@ func TestMockRuleAPI_EditNoteValidation(t *testing.T) {
 	var created capture.MockRuleView
 	doJSON(t, http.MethodPost, base, ruleBody("POST", "/api/a", false), &created)
 
-	// Pure toggle (response unchanged) with blank note -> 200 (M7): rules
+	// Pure toggle (response unchanged) with blank note -> 200 : rules
 	// created from a capture carry no note and must be enableable directly.
 	var toggled capture.MockRuleView
 	resp := doJSON(t, http.MethodPut, base+"/"+created.ID, updateBody(`{"ok":true}`, "", boolPtr(true)), &toggled)
@@ -261,7 +261,7 @@ func TestMockRuleAPI_EditOmitsEnabledKeepsSwitch(t *testing.T) {
 	assert.False(t, updated.Effective)
 }
 
-// O4.1 序列化出口：Web 全量列表下发 owner/updatedBy；SDK 增量拉取（同一路由
+//  序列化出口：Web 全量列表下发 owner/updatedBy；SDK 增量拉取（同一路由
 // ?sinceVersion 分支）绝不携带 owner/updatedBy 及 source/note/lastUsedAt 等
 // 纯服务端/Web-only 字段（契约 v0.11.0：SDK 只关心 method/path/response/enabled/effective）。
 func TestMockRuleAPI_OwnerFields_WebVsSDK(t *testing.T) {
@@ -269,7 +269,7 @@ func TestMockRuleAPI_OwnerFields_WebVsSDK(t *testing.T) {
 	devA := freshDevToken(t, ts, "ownerA")
 	base := ts.URL + "/api/v1/devices/com.example.integrating/rule-owner-dev/mock-rules"
 
-	// 设备由 devA 注册（M7.2.2 数据隔离：devA 可见自己的设备）。
+	// 设备由 devA 注册（ 数据隔离：devA 可见自己的设备）。
 	res, _ := doAuthJSON(t, http.MethodPost, ts.URL+"/api/v1/devices", devA,
 		map[string]string{"app": "com.example.integrating", "did": "rule-owner-dev", "name": "A"})
 	require.Equal(t, http.StatusCreated, res.StatusCode)
@@ -313,7 +313,7 @@ func TestMockRuleAPI_OwnerFields_WebVsSDK(t *testing.T) {
 	assert.True(t, sdkList.Rules[0].Effective)
 }
 
-// --- M11 Step1: zero-from-scratch (hand-authored) rule create validation ----
+// ---  Step1: zero-from-scratch (hand-authored) rule create validation ----
 
 func TestMockRuleAPI_HandAuthoredRules(t *testing.T) {
 	srv := newCaptureTestAPI(t)
@@ -341,7 +341,7 @@ func TestMockRuleAPI_HandAuthoredRules(t *testing.T) {
 	// S2': path containing '?' (query string pasted in) -> 400.
 	resp = doJSON(t, http.MethodPost, base, handBody("GET", "/api/login?x=1", "memo"), nil)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "path with query string must be rejected")
-	// S2: hand-authored create with no note key -> 400 (D6).
+	// S2: hand-authored create with no note key -> 400 .
 	nosrc := handBody("GET", "/api/hello", "")
 	delete(nosrc, "note")
 	resp = doJSON(t, http.MethodPost, base, nosrc, nil)
@@ -351,7 +351,7 @@ func TestMockRuleAPI_HandAuthoredRules(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "whitespace note must be rejected")
 
 	// S1: valid hand-authored create -> 201, response carries no source
-	// snapshot, note round-trips, default disabled (D4).
+	// snapshot, note round-trips, default disabled .
 	var created capture.MockRuleView
 	resp = doJSON(t, http.MethodPost, base, handBody("GET", "/api/hello", "mock greeting for UI dev"), &created)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "valid hand-authored create")

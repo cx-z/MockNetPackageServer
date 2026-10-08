@@ -1,11 +1,11 @@
-// MockNetPack account system (M7.1, contract v0.6.0): open registration (dev
+// MockNetPack account system : open registration (dev
 // only), login (server-issued session token), logout (server-side revocation)
 // and the current-user endpoint. All routes live under /api/v1/auth.
 //
 // The admin role is NOT registered here — the only creation path is the CLI
-// `mockd start --create-admin` (M7.1 拍板). Role-based access control (403)
+// `mockd start --create-admin` ( 拍板). Role-based access control (403)
 // and wiring auth into the existing device/session/traffic/rule endpoints land
-// in M7.1.3; this milestone delivers the account model, the auth API and the
+// in ; this milestone delivers the account model, the auth API and the
 // session-token lifecycle.
 
 package admin
@@ -24,7 +24,7 @@ import (
 )
 
 // authSessionTTL is how long a server-issued session token stays valid before
-// expiring. Fixed 7 days, no sliding renewal (M7.1 拍板: 服务端吊销 + 7 天).
+// expiring. Fixed 7 days, no sliding renewal ( 拍板: 服务端吊销 + 7 天).
 const authSessionTTL = 7 * 24 * time.Hour
 
 // AuthUser is the API output shape for an account (contract User schema):
@@ -154,7 +154,7 @@ func (a *API) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 
 // handleAuthLogout handles POST /api/v1/auth/logout — server-side revocation
 // of the presented token: the session record is deleted, so the token is
-// immediately invalid even if it lingers in the client. M12: an API key is
+// immediately invalid even if it lingers in the client. : an API key is
 // not a session, so there is nothing to revoke — idempotent 204.
 func (a *API) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	token, ok := bearerToken(r)
@@ -178,7 +178,7 @@ func (a *API) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAuthMe handles GET /api/v1/auth/me — the current user behind the
-// presented token, for the Web to decide login state and role. M12: session
+// presented token, for the Web to decide login state and role. : session
 // tokens and long-lived API keys both resolve to their owning user.
 func (a *API) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 	u := a.authenticate(r)
@@ -195,7 +195,7 @@ func (a *API) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateAdminUser creates an admin account — the only admin creation path
-// (CLI `mockd start --create-admin <user> --admin-password <pass>`, M7.1
+// (CLI `mockd start --create-admin <user> --admin-password <pass>`, 
 // 拍板). Returns store.ErrAlreadyExists when the username is taken.
 func (a *API) CreateAdminUser(ctx context.Context, username, password string) error {
 	if msg := validateCredentials(username, password); msg != "" {

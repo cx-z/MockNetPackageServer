@@ -1,7 +1,7 @@
 "use strict";
 const API = "/api/v1";
 const POLL_MS = 5000;        // 设备列表轮询
-const TRAFFIC_POLL_MS = 2000; // 请求流轮询（决策 D-M2-1：轮询 2s，秒级可见）
+const TRAFFIC_POLL_MS = 2000; // 请求流轮询（轮询 2s，秒级可见）
 const TRAFFIC_PAGE = 100;    // 每页条数（契约 limit 上限 500，取 100 最新）
 const RENEW_MS = 60000;      // viewer 续租（TTL 120s 的一半）
 
@@ -13,9 +13,9 @@ let detailPollTimer = null;        // 列表轮询
 let trafficTimer = null;     // 请求流轮询
 let detail = null;           // { app, did, sessionId }
 let ruleStore = [];          // 当前规则列表（供详情/删除使用）
-let ruleBodyEditor = null;   // M8.6 编辑表单回包体 CodeMirror 实例（保存前 save() 回写 textarea）
-let trafficFilter = "";      // 展示规则：页面级字符串过滤（刷新即清空，F3.6/决策16）
-let pageLog = [];            // M9.4 页面级日志缓冲（详情页停留期间跨会话累积，离开页面清空）
+let ruleBodyEditor = null;   //  编辑表单回包体 CodeMirror 实例（保存前 save() 回写 textarea）
+let trafficFilter = "";      // 展示规则：页面级字符串过滤（刷新即清空）
+let pageLog = [];            //  页面级日志缓冲（详情页停留期间跨会话累积，离开页面清空）
 const LOG_CAP = 300;         // 页面日志上限（防止长时间抓包内存/DOM 过大）
 // hash 路由：#/device/{app}/{did} 或 #/share/{id}
 window.addEventListener("hashchange", () => {
@@ -36,7 +36,7 @@ window.addEventListener("hashchange", () => {
   shareViewActive = false;
 });
 // ============================================================================
-// 启动（M7.1.2：登录门禁 → enterApp）
+// 启动（：登录门禁 → enterApp）
 // ============================================================================
 
 function showAuth() {
@@ -72,14 +72,14 @@ function enterApp() {
     ? (u.username + " · " + (u.role === "admin" ? "管理员" : "开发者"))
     : "";
   $("logoutBtn").classList.remove("hidden");
-  // M12.1: 已登录用户可见 API Key 管理入口（创建/列表/吊销）
+  // : 已登录用户可见 API Key 管理入口（创建/列表/吊销）
   $("apiKeyBtn").classList.remove("hidden");
   initApiKeyUI();
 
   $("backBtn").onclick = backToList;
   const clearBtn = $("trafficClearBtn");
   if (clearBtn) clearBtn.onclick = clearTrafficLog;
-  // M2 (O3.3): 历史日志视图（最近 48h 已结束会话，服务端过滤 + 分页）
+  //  : 历史日志视图（最近 48h 已结束会话，服务端过滤 + 分页）
   const historyBtn = $("historyBtn");
   if (historyBtn) historyBtn.onclick = openHistory;
   const historyCloseBtn = $("historyCloseBtn");
@@ -122,7 +122,7 @@ async function boot() {
     $("switchToRegister").classList.remove("hidden");
   });
 
-  // M8.5: share 链接免登录直接渲染
+  // : share 链接免登录直接渲染
   const sm = location.hash.match(/^#\/share\/(.+)$/);
   if (sm) {
     shareViewActive = true;
@@ -147,7 +147,7 @@ async function boot() {
   showAuth();
 }
 boot();
-// M4.6 展示规则：页面级字符串过滤，仅当前页面、刷新即清空（F3.6/决策16）。
+//  展示规则：页面级字符串过滤，仅当前页面、刷新即清空（/）。
 (function () {
   const box = $("trafficFilter");
   if (box) box.addEventListener("input", (ev) => {
@@ -156,7 +156,7 @@ boot();
   });
 })();
 
-// M9.3: wire scan-connect modal buttons（签发/刷新/关闭）
+// : wire scan-connect modal buttons（签发/刷新/关闭）
 (function () {
   const openBtn = document.getElementById("scanConnectBtn");
   if (openBtn) openBtn.onclick = openScanConnectModal;
@@ -169,7 +169,7 @@ boot();
   if (cancel) cancel.onclick = closeScanConnectModal;
 })();
 
-// M9.3-fix (v0.8.2): wire device-naming modal（保存 + 回车提交）
+//  (v0.8.2): wire device-naming modal（保存 + 回车提交）
 (function () {
   const submit = document.getElementById("deviceNameSubmit");
   if (submit) submit.onclick = submitDeviceName;

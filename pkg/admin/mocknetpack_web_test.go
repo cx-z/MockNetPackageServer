@@ -70,7 +70,7 @@ func TestMockNetPackWebRoute(t *testing.T) {
 	}
 }
 
-// TestMockNetPackWebExemptFromAPIKey (M4) verifies the API-key middleware
+// TestMockNetPackWebExemptFromAPIKey  verifies the API-key middleware
 // exempts the /mocknetpack/ web shell for a LAN browser (non-loopback
 // RemoteAddr) with auth enabled, while the legacy mockd admin API stays
 // protected. Before this exemption every LAN /mocknetpack/ request was 401
@@ -98,7 +98,7 @@ func TestMockNetPackWebExemptFromAPIKey(t *testing.T) {
 		return serveAdmin(t, api, req)
 	}
 
-	// 1. Directory URL from LAN → 200 (the M4 fix; was 401 missing_api_key).
+	// 1. Directory URL from LAN → 200 (the  fix; was 401 missing_api_key).
 	rec := lan(http.MethodGet, "/mocknetpack/", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("LAN /mocknetpack/ = %d, want 200; body=%s", rec.Code, rec.Body.String())

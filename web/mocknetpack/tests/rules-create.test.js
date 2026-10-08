@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// MockNetPack web: M11 Step2 从零创建规则表单测试（node，无浏览器依赖）。
+// MockNetPack web:  Step2 从零创建规则表单测试（node，无浏览器依赖）。
 // 运行：node tests/rules-create.test.js（在 web/mocknetpack 目录下）。
 // ============================================================================
 // 覆盖 W1–W4：入口按钮存在；空表单六控件渲染；前端必填/path/状态码/JSON
@@ -151,7 +151,7 @@ async function expectBlocked(name, mutate, expectHint) {
       fetchCalls[0].url === "/devices/com.example.app/dev-1/mock-rules", fetchCalls[0].url);
   }
 
-  // ---- 6) M11 Step4：命中徽章两分支（W9） ----
+  // ---- 6)  Step4：命中徽章两分支（W9） ----
   (() => {
     const fakeRow = () => ({
       innerHTML: "", textContent: "", className: "", dataset: {}, onclick: null,

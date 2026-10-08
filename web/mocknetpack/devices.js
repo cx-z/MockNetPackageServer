@@ -3,7 +3,7 @@
 // MockNetPack web: device list, connect/disconnect, back-to-list and
 // device ops (add/rename/delete). Pure move from app.js.
 // ============================================================================
-// 设备列表（M1.6）
+// 设备列表
 // ============================================================================
 
 async function loadDevices() {
@@ -24,7 +24,7 @@ function render(devices) {
   devices.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9)
       || new Date(b.lastSeenAt || 0) - new Date(a.lastSeenAt || 0));
 
-  // M4：管理员视图在设备 cell 上展示注册账号（便于管理多用户设备）；
+  // ：管理员视图在设备 cell 上展示注册账号（便于管理多用户设备）；
   // 普通开发者只看得到自己的设备，保持现状不展示。
   const isAdmin = authUser && authUser.role === "admin";
 
@@ -64,7 +64,7 @@ function render(devices) {
         (d.currentSession ? '<span>会话：' + esc(shortId(d.currentSession.id)) + "</span>" : "") +
       "</div>";
 
-    // M7.2.2 rename button
+    //  rename button
     const renameBtn = meta.querySelector(".rename-btn");
     if (renameBtn) {
       renameBtn.onclick = (e) => { e.stopPropagation(); renameDevice(d); };
@@ -100,7 +100,7 @@ async function connect(d) {
       await registerViewer(session, "设备列表页");
     }
     if (detail && detail.app === d.app && detail.did === d.did) {
-      // M9：loadDetail 直接绑定当前会话并启动轮询，无需显式选中。
+      // ：loadDetail 直接绑定当前会话并启动轮询，无需显式选中。
       await loadDetail();
     } else {
       await loadDevices();
@@ -118,7 +118,7 @@ async function disconnect(d) {
     if (!res.ok && res.status !== 404) { showError("断开失败（HTTP " + res.status + "）"); return; }
     stopViewer(s.id);
     if (detail && detail.sessionId === s.id) {
-      // M9.4：会话已删，loadDetail 绑定空会话 → 停轮询；页面日志保留展示（离开页面才清空）。
+      // ：会话已删，loadDetail 绑定空会话 → 停轮询；页面日志保留展示（离开页面才清空）。
       await loadDetail();
     } else {
       await loadDevices();
@@ -133,7 +133,7 @@ function backToList() {
   if (detailPollTimer) { clearInterval(detailPollTimer); detailPollTimer = null; }
   if (detail && detail.sessionId) stopViewer(detail.sessionId);
   detail = null;
-  pageLog = [];        // M9.4 诉求 4：返回设备列表清空页面日志
+  pageLog = [];        //  诉求 4：返回设备列表清空页面日志
   trafficFilter = "";
   location.hash = "";
   $("detailView").classList.add("hidden");
@@ -145,7 +145,7 @@ function backToList() {
   loadDevices();
 }
 
-// M8.5: 删除设备（含其 mock rules）
+// : 删除设备（含其 mock rules）
 async function deleteDevice(d) {
   if (!confirm("确定删除设备 " + (d.name || d.app) + "？\n\n将同时删除该设备的所有 Mock 规则。此操作不可撤销。")) return;
   try {

@@ -64,32 +64,32 @@ type storeData struct {
 	// MockNetPack capture entities (devices and capture sessions).
 	// Devices persist fully; capture sessions persist their summary
 	// (times/status/counts). Temporary per-session traffic is stored
-	// elsewhere (M2) and cleared when a session ends.
+	// elsewhere  and cleared when a session ends.
 	Devices          []*capture.Device          `json:"devices,omitempty"`
 	CaptureSessions  []*capture.CaptureSession  `json:"captureSessions,omitempty"`
 
-	// MockNetPack mock rules (M3) and the per-device rule-set version counter
+	// MockNetPack mock rules  and the per-device rule-set version counter
 	// (keyed by app + "\x00" + did). Rules persist; the runtime Effective flag
 	// is computed by the manager and never stored.
 	MockRules    []*capture.MockRule `json:"mockRules,omitempty"`
 	RuleVersions map[string]int      `json:"ruleVersions,omitempty"`
 
-	// MockNetPack accounts (M7.1): users and server-issued session tokens.
+	// MockNetPack accounts : users and server-issued session tokens.
 	// Sessions persist so a logged-in Web page survives a server restart until
 	// the token expires or is revoked.
 	Users        []*account.User        `json:"users,omitempty"`
 	AuthSessions []*account.AuthSession `json:"authSessions,omitempty"`
 
-	// MockNetPack QR pairing tokens (M9, contract v0.8.0). Tokens persist so a
+	// MockNetPack QR pairing tokens . Tokens persist so a
 	// just-scanned QR survives a server restart until its 10-minute TTL expires.
 	PairingTokens []*account.PairingToken `json:"pairingTokens,omitempty"`
 
-	// MockNetPack request share snapshots (M8.5). Shares are independent
+	// MockNetPack request share snapshots . Shares are independent
 	// read-only copies of a single traffic entry; they persist so a share link
 	// keeps its full 7-day validity across server restarts.
 	Shares []*store.ShareSnapshot `json:"shares,omitempty"`
 
-	// MockNetPack long-lived API keys (M12, contract v0.12.0). Only the
+	// MockNetPack long-lived API keys . Only the
 	// SHA-256 hash is persisted — the plaintext exists at creation time only
 	// and is never stored. Keys survive restarts until revoked or expired.
 	APIKeys []*account.APIKey `json:"apiKeys,omitempty"`
@@ -379,32 +379,32 @@ func (s *FileStore) CaptureSessions() store.CaptureSessionStore {
 	return &captureSessionStore{fs: s}
 }
 
-// MockRules returns the mock rule store (MockNetPack M3).
+// MockRules returns the mock rule store (MockNetPack ).
 func (s *FileStore) MockRules() store.MockRuleStore {
 	return &mockRuleStore{fs: s}
 }
 
-// Users returns the account store (MockNetPack M7.1).
+// Users returns the account store (MockNetPack ).
 func (s *FileStore) Users() store.UserStore {
 	return &userStore{fs: s}
 }
 
-// AuthSessions returns the auth session store (MockNetPack M7.1).
+// AuthSessions returns the auth session store (MockNetPack ).
 func (s *FileStore) AuthSessions() store.AuthSessionStore {
 	return &authSessionStore{fs: s}
 }
 
-// PairingTokens returns the QR pairing token store (MockNetPack M9).
+// PairingTokens returns the QR pairing token store (MockNetPack ).
 func (s *FileStore) PairingTokens() store.PairingTokenStore {
 	return &pairingTokenStore{fs: s}
 }
 
-// Shares returns the request share snapshot store (MockNetPack M8.5).
+// Shares returns the request share snapshot store (MockNetPack ).
 func (s *FileStore) Shares() store.ShareStore {
 	return &shareStore{fs: s}
 }
 
-// APIKeys returns the long-lived API key store (MockNetPack M12).
+// APIKeys returns the long-lived API key store (MockNetPack ).
 func (s *FileStore) APIKeys() store.APIKeyStore {
 	return &apiKeyStore{fs: s}
 }

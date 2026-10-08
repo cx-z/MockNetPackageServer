@@ -74,7 +74,7 @@ func runConcurrent(t *testing.T, name string, fnA, fnB func() error) {
 	wg.Wait()
 }
 
-// TestEndSessionPreservesUploadedTrafficForRetention locks the P0-3 + O3
+// TestEndSessionPreservesUploadedTrafficForRetention locks the P0-3 + 
 // semantics: entries uploaded before EndSession stay in the session (still
 // resolvable by ID for share creation, and listable during the 48h window),
 // and an upload after the end must be rejected with ErrSessionEnded.
@@ -111,7 +111,7 @@ func TestEndSessionPreservesUploadedTrafficForRetention(t *testing.T) {
 	if err := m.EndSession(ctx, sess.ID); err != nil {
 		t.Fatal(err)
 	}
-	// O3: each entry stays resolvable by ID (session record kept).
+	// : each entry stays resolvable by ID (session record kept).
 	for _, id := range ids {
 		if _, err := m.GetTraffic(ctx, id); err != nil {
 			t.Fatalf("entry %s lost after end: %v", id, err)
@@ -119,7 +119,7 @@ func TestEndSessionPreservesUploadedTrafficForRetention(t *testing.T) {
 	}
 	// The ended session stays listable during the retention window.
 	if listed, total, err := m.ListSessionTraffic(ctx, sess.ID, 0, 0, store.TrafficFilter{}); err != nil || total != 3 || len(listed) != 3 {
-		t.Fatalf("list after end: total=%d len=%d err=%v; want 3/3 (O3 retention)", total, len(listed), err)
+		t.Fatalf("list after end: total=%d len=%d err=%v; want 3/3 ( retention)", total, len(listed), err)
 	}
 	// Upload after end is rejected (record kept => ErrSessionEnded).
 	if _, err := m.UploadTraffic(ctx, "com.example.integrating", "race-did", sess.ID, entries[:1]); !errors.Is(err, store.ErrSessionEnded) {
@@ -188,10 +188,10 @@ func TestConcurrentUploadAndEndSession(t *testing.T) {
 		}
 	}
 
-	// The end must fully win: the session is ended (record kept, O3) and its
+	// The end must fully win: the session is ended (record kept) and its
 	// traffic stays listable; the janitor must not panic on the traffic map.
 	if _, _, err := m.ListSessionTraffic(ctx, sess.ID, 0, 0, store.TrafficFilter{}); err != nil {
-		t.Fatalf("list after end: got %v, want data (O3 retention)", err)
+		t.Fatalf("list after end: got %v, want data ( retention)", err)
 	}
 	m.PurgeExpiredEndedSessions(ctx)
 }

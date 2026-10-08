@@ -13,7 +13,7 @@ import (
 )
 
 // slogCapture is a minimal slog.Handler that records emitted records so tests
-// can assert on the level/message of the O2.4 storage-watermark log line.
+// can assert on the level/message of the  storage-watermark log line.
 type slogCapture struct {
 	mu      sync.Mutex
 	records []slog.Record
@@ -46,7 +46,7 @@ func withLogCapture(t *testing.T) *slogCapture {
 	return c
 }
 
-// O2.4 存储水位监控：启动/每小时输出一行 data.json 体积，超 500MB WARN、
+//  存储水位监控：启动/每小时输出一行 data.json 体积，超 500MB WARN、
 // 未超 INFO、文件缺失报 size 0、空路径（未接线）不输出。
 func TestCaptureManager_LogDataFileSize(t *testing.T) {
 	cap := withLogCapture(t)

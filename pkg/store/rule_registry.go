@@ -14,11 +14,11 @@ import (
 // Mock rules: CRUD, Effective/conflict evaluation, version, retention janitor,
 // disable-on-session-end (pure move from capture_registry.go).
 // ============================================================================
-// Mock rules (M3)
+// Mock rules 
 // ============================================================================
 
 // interfaceKey identifies a mockable endpoint by Method + URL path (Query/Body
-// do not participate in matching, requirement 决策 #19).
+// do not participate in matching, requirement ).
 type interfaceKey struct {
 	method string
 	path   string
@@ -70,11 +70,11 @@ func (m *CaptureManager) evaluateRules(ctx context.Context, app, did string) ([]
 // same Method+Path it returns ErrRuleConflict (409). The conflict check, the
 // insert and the rule-set version bump run in ONE store lock (4.9) — no reader
 // can observe the rule without its version. caller stamps the rule's Owner
-// (O4.1: creator username, server-side field); nil caller (--no-auth) leaves
-// Owner empty, which M3-2 treats as a legacy rule (admin-manageable only).
+// (: creator username, server-side field); nil caller (--no-auth) leaves
+// Owner empty, which  treats as a legacy rule (admin-manageable only).
 // Every developer may create rules; ownership is established by this stamp.
 //
-// M11 Step1 (D6): a hand-authored rule (Source == nil, created from the Web
+//  Step1 : a hand-authored rule (Source == nil, created from the Web
 // blank form rather than captured traffic) must carry a non-blank note — with
 // no source snapshot the note is the only semantic anchor ("what does this rule
 // test?"). Capture-originated creates (Source != nil) are exempt. The guard
@@ -131,10 +131,10 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 	return &capture.MockRuleView{MockRule: created, Effective: in.Enabled}, version, nil
 }
 
-// canManageRule reports whether caller may mutate rule r (O4.2/O4.3). nil
+// canManageRule reports whether caller may mutate rule r (/). nil
 // caller (--no-auth smoke mode) always passes, mirroring the requireAuth
 // bypass; admins pass; otherwise only the rule's owner passes. A rule with an
-// empty owner is a legacy rule (pre-O4) — admin-manageable only (O4.3).
+// empty owner is a legacy rule (pre-) — admin-manageable only .
 func canManageRule(caller *RuleCaller, r *capture.MockRule) bool {
 	if caller == nil {
 		return true
@@ -146,12 +146,12 @@ func canManageRule(caller *RuleCaller, r *capture.MockRule) bool {
 }
 
 // UpdateMockRule edits a rule's canned response, note, and/or enabled switch
-// (M5). The match key (Method+Path) and the source snapshot are immutable —
+// . The match key (Method+Path) and the source snapshot are immutable —
 // the input type UpdateMockRuleInput deliberately omits them. Turning the switch
 // on is rejected with ErrRuleConflict if another enabled rule already matches
 // the rule's (frozen) interface. An absent Enabled pointer leaves the current
 // switch untouched. The update and the version bump run in ONE store lock (4.9).
-// O4.2: only the rule's owner or an admin may edit/toggle; any other caller
+// : only the rule's owner or an admin may edit/toggle; any other caller
 // gets ErrRuleForbidden. For non-admin callers a missing ruleID also returns
 // ErrRuleForbidden (not ErrRuleNotFound) so rule existence cannot be probed.
 func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID string, in *capture.UpdateMockRuleInput, caller *RuleCaller) (*capture.MockRuleView, int, error) {
@@ -171,12 +171,12 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 			}
 			return nil, false, ErrRuleNotFound
 		}
-		// O4.2 权限矩阵：编辑/启停仅 owner 与 admin。
+		//  权限矩阵：编辑/启停仅 owner 与 admin。
 		if !canManageRule(caller, existing) {
 			return nil, false, ErrRuleForbidden
 		}
 
-		// M7: note is required only when the PUT actually edits the canned
+		// : note is required only when the PUT actually edits the canned
 		// response (statusCode/headers/body changed). A pure toggle echoes the
 		// stored response unchanged and may leave the note blank — rules created
 		// from a capture ("Mock 此请求") carry no note and enabling them must not
@@ -202,9 +202,9 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 			c.Enabled = *in.Enabled
 		}
 		c.UpdatedAt = time.Now()
-		// Editing a rule or toggling it counts as "used" (M4 sliding window).
+		// Editing a rule or toggling it counts as "used" ( sliding window).
 		c.LastUsedAt = c.UpdatedAt
-		// O4.1: stamp the last modifier from the current session user.
+		// : stamp the last modifier from the current session user.
 		if caller != nil {
 			c.UpdatedBy = caller.Username
 		}
@@ -237,7 +237,7 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 
 // DeleteMockRule removes a rule by ID (scoped to app/did). The delete and the
 // version bump run in ONE store lock (4.9) so the SDK always sees the rule-set
-// version advance together with the removal. O4.2: only the rule's owner or an
+// version advance together with the removal. : only the rule's owner or an
 // admin may delete; other callers get ErrRuleForbidden (and, like Update, a
 // missing ruleID is masked as ErrRuleForbidden for non-admin callers).
 func (m *CaptureManager) DeleteMockRule(ctx context.Context, app, did, ruleID string, caller *RuleCaller) (int, error) {
@@ -296,12 +296,12 @@ func (m *CaptureManager) RuleVersion(ctx context.Context, app, did string) (int,
 }
 
 // ============================================================================
-// Rule retention janitor (M4)
+// Rule retention janitor 
 // ============================================================================
 
 // ruleUsageTime picks the sliding-window baseline for a rule: LastUsedAt,
 // falling back to UpdatedAt (and then CreatedAt) for legacy rows that predate
-// M4 and have no LastUsedAt persisted yet.
+//  and have no LastUsedAt persisted yet.
 func ruleUsageTime(r *capture.MockRule) time.Time {
 	if !r.LastUsedAt.IsZero() {
 		return r.LastUsedAt
@@ -348,7 +348,7 @@ func (m *CaptureManager) PurgeExpiredRules(ctx context.Context) {
 }
 
 // disableDeviceRules flips every enabled mock rule of a device off when its
-// capture session ends (M4, F4.5/决策13). Rules are NOT deleted — they remain
+// capture session ends . Rules are NOT deleted — they remain
 // in the Web rule history — but they are no longer effective; on the next
 // capture session the user must re-enable each one manually. The whole disable
 // set and the version bump run in ONE store lock (4.9) so the SDK drops them

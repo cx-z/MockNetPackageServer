@@ -1,4 +1,4 @@
-// MockNetPack mock-rule API handlers (M3): Web CRUD / toggle and the SDK
+// MockNetPack mock-rule API handlers : Web CRUD / toggle and the SDK
 // incremental rule snapshot pull. Routes live under /api/v1/devices/{app}/{did}.
 package admin
 
@@ -23,7 +23,7 @@ type MockRuleListResponse struct {
 	Conflicts []capture.MockRuleConflict `json:"conflicts,omitempty"`
 }
 
-// ruleCaller builds the O4 permission identity for a rule mutation from the
+// ruleCaller builds the  permission identity for a rule mutation from the
 // authenticated request. nil under --no-auth (smoke mode): no session user.
 func ruleCaller(r *http.Request) *store.RuleCaller {
 	u := currentUser(r)
@@ -33,7 +33,7 @@ func ruleCaller(r *http.Request) *store.RuleCaller {
 	return &store.RuleCaller{Username: u.Username, IsAdmin: u.Role == account.RoleAdmin}
 }
 
-// sdkRuleView is the SDK incremental-pull wire format (O4.1): only the fields
+// sdkRuleView is the SDK incremental-pull wire format : only the fields
 // the SDK consumes. owner/updatedBy (and other Web-only fields such as
 // source/note/lastUsedAt) are pure server-side fields and must never reach the
 // SDK — the contract guarantees the pull leaks nothing beyond the match key,
@@ -84,7 +84,7 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 
 	raw := r.URL.Query().Get("sinceVersion")
 	if raw != "" {
-		// SDK incremental pull (M7 拍板 #6): SDK channel like register/heartbeat/traffic
+		// SDK incremental pull ( ): SDK channel like register/heartbeat/traffic
 		// upload — no Web Bearer auth. SDK identity is (app, did); unknown-did rejection
 		// lands in ListActiveMockRules.
 		since, err := strconv.Atoi(raw)
@@ -98,7 +98,7 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// SDK wire format: strip owner/updatedBy and other Web-only fields
-		// (O4.1 — pure server-side fields must not leave the server).
+		// ( — pure server-side fields must not leave the server).
 		sdkRules := toSDKRules(active)
 		if sdkRules == nil {
 			sdkRules = []sdkRuleView{}
@@ -114,7 +114,7 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 	// Web full list: require a logged-in Bearer token (route is open for the SDK
 	// incremental pull, so auth is enforced here, per-branch). In auth mode a
 	// missing/invalid token is 401. In --no-auth smoke mode the token is
-	// optional: a valid one still injects the caller identity (M4), otherwise
+	// optional: a valid one still injects the caller identity , otherwise
 	// the request proceeds with caller=nil — identical to requireAuth, so the
 	// GET full list and PUT/DELETE never disagree on the caller.
 	u := a.authenticate(r)
@@ -168,10 +168,10 @@ func (a *API) handleCreateMockRule(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateMockRule handles PUT /api/v1/devices/{app}/{did}/mock-rules/{ruleId}.
-// Edits the canned response and note (match key Method+Path is immutable, M5);
+// Edits the canned response and note (match key Method+Path is immutable);
 // optionally flips the enabled switch. Enabling against another enabled rule on
 // the same interface returns 409. note must be non-blank only when the PUT
-// actually changes the canned response (M7); a pure toggle may leave it blank.
+// actually changes the canned response ; a pure toggle may leave it blank.
 func (a *API) handleUpdateMockRule(w http.ResponseWriter, r *http.Request) {
 	var in capture.UpdateMockRuleInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -210,8 +210,8 @@ func (a *API) handleDeleteMockRule(w http.ResponseWriter, r *http.Request) {
 // method, path, response.statusCode). Returns false and writes a 400 when
 // invalid.
 //
-// M11 Step1: path must start with '/' and must not contain '?' — matching is
-// an exact Method+path comparison (决策 #19), so a query string pasted into
+//  Step1: path must start with '/' and must not contain '?' — matching is
+// an exact Method+path comparison (), so a query string pasted into
 // path could never hit and would silently drift. Applies uniformly to both
 // creation paths (评审结论 #2): capture-originated paths come from URL.path
 // and already satisfy this, so there is no regression.
@@ -238,7 +238,7 @@ func validateMockRuleInput(w http.ResponseWriter, in *capture.MockRuleInput) boo
 // writeInvalidStatusCode returns a 400 with a diagnosis that names the failing
 // field and the phase (create vs. update) so MCP/CLI callers can self-correct.
 // A zero value on PUT means the caller did not send a full canned response —
-// the update is a full replace (M5/M7), so a pure toggle must re-send the
+// the update is a full replace (/), so a pure toggle must re-send the
 // complete response (read-modify-write).
 func writeInvalidStatusCode(w http.ResponseWriter, code int) {
 	if code == 0 {

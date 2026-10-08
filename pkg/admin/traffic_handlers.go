@@ -1,6 +1,6 @@
 // MockNetPack session / traffic / share API handlers (pure move from
 // capture_handlers.go): session lifecycle and viewer leases, traffic upload,
-// query, delete/clear, and M8.5 share links.
+// query, delete/clear, and  share links.
 package admin
 
 import (
@@ -58,7 +58,7 @@ func (a *API) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		writeCaptureError(w, err)
 		return
 	}
-	// O3 / v0.10.0: expired-ended sessions (past RetainUntil) are not listed
+	//  / v0.10.0: expired-ended sessions (past RetainUntil) are not listed
 	// even before the janitor purges them — same expiry-first semantics as
 	// GetSession / ListSessionTraffic. The Web history view's client-side
 	// retainUntil filter becomes belt-and-suspenders.
@@ -168,7 +168,7 @@ func (a *API) handleUploadTraffic(w http.ResponseWriter, r *http.Request) {
 
 // handleGetTraffic handles GET /api/v1/traffic/{id} (single request detail).
 // The entry may live in an active session or in the retained store of an ended
-// session (M8.6); ownership is checked against the owning device either way.
+// session ; ownership is checked against the owning device either way.
 func (a *API) handleGetTraffic(w http.ResponseWriter, r *http.Request) {
 	app, did, err := a.captureManager.GetTrafficWithOwner(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -188,7 +188,7 @@ func (a *API) handleGetTraffic(w http.ResponseWriter, r *http.Request) {
 
 // handleListSessionTraffic handles GET /api/v1/sessions/{id}/traffic (Web
 // request stream — the 2s-polling push channel; no extra push endpoint is
-// needed, decision D-M2-1). limit defaults to 100 and must be 1..500 (0 means
+// needed, decision D-). limit defaults to 100 and must be 1..500 (0 means
 // default); offset defaults to 0.
 func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 	limit, err := queryInt(r, "limit", 100)
@@ -213,9 +213,9 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// M2 (O2.2 服务端过滤下推): keyword / statusCode / from / to narrow the
+	//  ( 服务端过滤下推): keyword / statusCode / from / to narrow the
 	// list server-side (ANDed); limit/offset page within the filtered set.
-	// from/to are RFC3339 timestamps, inclusive. M12 adds method / scheme /
+	// from/to are RFC3339 timestamps, inclusive.  adds method / scheme /
 	// since (per-session seq) and the compact projection.
 	q := r.URL.Query()
 	projection := q.Get("projection")
@@ -272,7 +272,7 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if projection == "compact" {
-		// M12: compact projection — the machine-facing field set for traffic
+		// : compact projection — the machine-facing field set for traffic
 		// pull/export (id/timestamp/method/url/path/statusCode/durationMs/
 		// mocked). The default (no projection) still returns full entries, so
 		// the Web experience is untouched (S4).
@@ -297,12 +297,12 @@ func (a *API) handleListSessionTraffic(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeleteTraffic handles DELETE /api/v1/traffic/{id} (Web per-row
-// "删除"; M9.5). 204 on success; 404 not_found for an unknown entry — the Web
+// "删除"; ). 204 on success; 404 not_found for an unknown entry — the Web
 // treats delete as best-effort (the entry may belong to an already-deleted
 // session).
 func (a *API) handleDeleteTraffic(w http.ResponseWriter, r *http.Request) {
 	// Resolve the owning device the same way share creation does: an ended
-	// session's record is gone (M9), so ownership must come from the retained
+	// session's record is gone , so ownership must come from the retained
 	// store instead of authorizeSessionAccess (4.11). Deleting a retained row
 	// must not 404 just because the session no longer exists.
 	app, did, err := a.captureManager.GetTrafficWithOwner(r.Context(), r.PathValue("id"))
@@ -321,7 +321,7 @@ func (a *API) handleDeleteTraffic(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleClearSessionTraffic handles DELETE /api/v1/sessions/{id}/traffic
-// (Web "清空日志"; M9.5). 204 on success; 404 session_not_found for an unknown
+// (Web "清空日志"; ). 204 on success; 404 session_not_found for an unknown
 // session.
 func (a *API) handleClearSessionTraffic(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.authorizeSessionAccess(w, r, r.PathValue("id")); !ok {
@@ -337,7 +337,7 @@ func (a *API) handleClearSessionTraffic(w http.ResponseWriter, r *http.Request) 
 // handleCreateShare handles POST /api/v1/shares (authenticated). It snapshots
 // a single traffic entry into an independent share store so the share survives
 // session/traffic deletion. The entry may live in an active session or in the
-// retained store of an ended session (M8.6 断开后可分享); in both cases the
+// retained store of an ended session ( 断开后可分享); in both cases the
 // caller must own the entry's device.
 func (a *API) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	var req shareRequest
@@ -350,7 +350,7 @@ func (a *API) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Resolve the owning device: for an ended session the session record is
-	// gone (M9), so ownership must come from the retained store instead of
+	// gone , so ownership must come from the retained store instead of
 	// authorizeSessionAccess.
 	app, did, err := a.captureManager.GetTrafficWithOwner(r.Context(), req.TrafficID)
 	if err != nil {

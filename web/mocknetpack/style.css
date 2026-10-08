@@ -27,7 +27,7 @@ h1 { font-size: 20px; font-weight: 600; }
 .did .k { color: var(--text); background: #eef1f7; border-radius: 4px; padding: 0 5px; margin-right: 6px; font-size: 10px; font-weight: 600; letter-spacing: .5px; vertical-align: 1px; }
 .app-badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
              font-family: ui-monospace, Menlo, monospace; background: #eef1f7; color: #4a5568; }
-/* M4：管理员视图设备 cell 上的注册账号标签（淡蓝底，与 app-badge 区分） */
+/* ：管理员视图设备 cell 上的注册账号标签（淡蓝底，与 app-badge 区分） */
 .owner-badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
              font-family: ui-monospace, Menlo, monospace; background: #e6f0fb; color: #2b6cb0; }
 .row2 { margin-top: 4px; font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
@@ -44,7 +44,7 @@ button:disabled { background: #c9cdd4; cursor: not-allowed; }
 .empty { color: var(--muted); text-align: center; padding: 40px 0; }
 .updated { color: var(--muted); font-size: 12px; margin-top: 8px; }
 
-/* ===== M2.5 设备详情 + 请求流 ===== */
+/* =====  设备详情 + 请求流 ===== */
 button.ghost { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
 button.ghost:hover { background: #eef3ff; }
 button.small { padding: 3px 10px; font-size: 12px; }
@@ -82,7 +82,7 @@ button.mini.active { background: var(--primary); color: #fff; }
 .st-5xx { color: #c92a2a; }
 .st-err { color: #8a9099; }
 .t-dur, .t-time { flex: none; color: var(--muted); font-size: 12px; }
-/* M9.5 单条日志删除按钮 */
+/*  单条日志删除按钮 */
 .t-del { flex: none; border: 0; background: transparent; color: var(--muted);
          font-size: 13px; line-height: 1; padding: 2px 6px; cursor: pointer; border-radius: 4px; }
 .t-del:hover { color: var(--danger); background: #fdeee8; }
@@ -162,7 +162,7 @@ button.mini.active { background: var(--primary); color: #fff; }
 #userInfo { margin-left: auto; color: var(--muted); }
 #logoutBtn { flex: none; }
 
-/* ===== M3.5 Mock 规则 ===== */
+/* =====  Mock 规则 ===== */
 .rule-row { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
             padding: 10px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
 .rule-row.disabled { opacity: .65; }
@@ -192,7 +192,7 @@ button.mini.active { background: var(--primary); color: #fff; }
 .conflict .c-title { font-weight: 600; margin-bottom: 4px; }
 .conflict .c-item { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 
-/* M4.6 页面级请求过滤框 */
+/*  页面级请求过滤框 */
 .filter-input {
   width: 100%;
   box-sizing: border-box;
@@ -203,18 +203,18 @@ button.mini.active { background: var(--primary); color: #fff; }
   font-size: 13px;
 }
 
-/* M5.3 规则编辑表单 */
+/*  规则编辑表单 */
 .edit-row { margin-bottom: 10px; }
 .edit-row label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
 .edit-row textarea.filter-input { font-family: ui-monospace, Menlo, monospace; font-size: 12px;
   resize: vertical; }
 .edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
-/* M8.6 编辑表单：回包体 JSON 折叠编辑器
+/*  编辑表单：回包体 JSON 折叠编辑器
    响应页签内容纵向铺满剩余高度，编辑器底部贴近页面底部（取消/保存仍在最下方）。 */
 .edit-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .edit-pane .edit-row { flex: none; }
-.edit-pane > .d-kv, .edit-pane > .d-block { flex: none; }  /* M8.8 只读状态码/响应头不参与 flex 拉伸 */
+.edit-pane > .d-kv, .edit-pane > .d-block { flex: none; }  /* 只读状态码/响应头不参与 flex 拉伸 */
 .edit-pane .edit-body-row {
   flex: 1; min-height: 160px; margin-bottom: 0;   /* min-height 兜底：窗口过矮时编辑器不塌缩为 0 */
   display: flex; flex-direction: column;
@@ -235,7 +235,7 @@ button.mini.active { background: var(--primary); color: #fff; }
   font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.6;
   border: 1px solid var(--border); border-radius: 6px;
 }
-/* M8.7 兜底：编辑区内任何 pre 规则都不允许命中 CM 行元素（行高由 CM 自身计算） */
+/*  兜底：编辑区内任何 pre 规则都不允许命中 CM 行元素（行高由 CM 自身计算） */
 .edit-body-wrap pre.CodeMirror-line,
 .edit-body-wrap pre.CodeMirror-line-like {
   min-height: 0; padding: 0 4px; margin: 0; background: transparent; border: 0;
@@ -266,15 +266,15 @@ button.mini.active { background: var(--primary); color: #fff; }
 .detail-panel .d-block pre { flex: 1; }
 .rule-row.active { border-color: var(--primary); background: #f4f8ff; }
 @media (max-width: 900px) {
-  .detail-grid { grid-template-columns: 1fr; grid-template-rows: auto; }  /* M8.6 窄布局恢复内容自适应，避免 1fr 行把左列挤没 */
+  .detail-grid { grid-template-columns: 1fr; grid-template-rows: auto; }  /*  窄布局恢复内容自适应，避免 1fr 行把左列挤没 */
   .col-right { position: static; }
-  /* M8.6 窄布局（整页滚动）：解除右列/面板的 overflow 裁剪，让编辑表单自然撑高；
+  /*  窄布局（整页滚动）：解除右列/面板的 overflow 裁剪，让编辑表单自然撑高；
      编辑器固定一个舒适高度，替代双列下"贴底"的弹性高度。 */
   .col-right, #ruleDetail, #trafficDetail, .detail-panel, .tab-pane, .edit-pane { overflow: visible; }
   .edit-pane .edit-body-row { flex: none; height: min(60vh, 520px); min-height: 240px; }
 }
 
-/* M7.2.2 modal */
+/*  modal */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.45);
   display: flex; align-items: center; justify-content: center; z-index: 100;
@@ -286,7 +286,7 @@ button.mini.active { background: var(--primary); color: #fff; }
 .modal-card h3 { margin: 0 0 12px; font-size: 16px; }
 .form-label { display: block; font-size: 12px; color: #666; margin: 10px 0 4px; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
-/* M9.3 扫码连接二维码容器 */
+/*  扫码连接二维码容器 */
 .scan-qr-box { display: flex; justify-content: center; align-items: center; min-height: 232px; margin: 14px 0 6px; }
 .scan-qr-box canvas { display: block; }
 .rename-btn { background: none; border: none; cursor: pointer; font-size: 12px; padding: 0 2px; }
@@ -319,7 +319,7 @@ button.mini.active { background: var(--primary); color: #fff; }
   background: rgba(229, 62, 62, 0.12) !important;
 }
 
-/* ===== M2 (O3.3) 历史日志视图 ===== */
+/* =====   历史日志视图 ===== */
 .history-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.45);
   display: flex; align-items: center; justify-content: center; z-index: 110;
@@ -356,7 +356,7 @@ button.mini.active { background: var(--primary); color: #fff; }
 .history-more { align-self: center; }
 .history-empty { color: #999; font-size: 13px; padding: 24px 0; text-align: center; }
 
-/* M12.1: API Key 管理（已登录用户入口） */
+/* : API Key 管理（已登录用户入口） */
 .api-key-fresh { margin: 12px 0; padding: 10px 12px; background: #f6f8fa; border: 1px solid #dde3e8; border-radius: 6px; }
 .api-key-row { display: flex; align-items: center; gap: 8px; }
 .api-key-code { flex: 1; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; background: #eef2f5; padding: 6px 8px; border-radius: 4px; user-select: all; }

@@ -9,7 +9,7 @@ import (
 )
 
 // apiKeyStore implements store.APIKeyStore using the FileStore's in-memory
-// data + debounced persistence (same pattern as authSessionStore, M7.1).
+// data + debounced persistence (same pattern as authSessionStore).
 //
 // Only the SHA-256 hash (KeyHash) is persisted; the plaintext key exists at
 // creation time only and is never written to disk or logged.

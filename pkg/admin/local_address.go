@@ -1,4 +1,4 @@
-// MockNetPack local-address API (M9.1-fix, contract v0.8.1): the Web UI is
+// MockNetPack local-address API : the Web UI is
 // usually opened as http://localhost:<port>/mocknetpack/ during development,
 // so location.origin encodes "localhost" into the scan QR (u=...) — a real
 // phone cannot reach its own localhost. This endpoint tells the browser the

@@ -2,7 +2,7 @@
 
 // MockNetPack web: token storage + unified Authorization header, and the
 // auth API calls (login/register/logout). Pure move from app.js.
-// ===== M7.1.2 账号登录态：token 存储 + 统一鉴权头 =====
+// =====  账号登录态：token 存储 + 统一鉴权头 =====
 const TOKEN_KEY = "mocknetpack_token";
 let authUser = null; // { username, role, createdAt }
 
@@ -13,7 +13,7 @@ function setToken(t) {
     else localStorage.removeItem(TOKEN_KEY);
   } catch { /* 隐私模式等场景降级为内存态 */ }
 }
-// 所有 MockNetPack API 请求统一带 Authorization 头（M7.1.3 服务端强制鉴权后无缝）。
+// 所有 MockNetPack API 请求统一带 Authorization 头（ 服务端强制鉴权后无缝）。
 function apiFetch(path, options = {}) {
   const headers = Object.assign({}, options.headers);
   const token = getToken();
@@ -92,7 +92,7 @@ async function doLogout() {
   }
   setToken(null);
   authUser = null;
-  // M7.2.4: 清详情页状态/轮询/会话，回到列表页，避免换账号后残留旧设备
+  // : 清详情页状态/轮询/会话，回到列表页，避免换账号后残留旧设备
   stopTrafficPoll();
   if (detail && detail.sessionId) stopViewer(detail.sessionId);
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }

@@ -1,4 +1,4 @@
-// Long-lived API key endpoints (M12, contract v0.12.0): create / list /
+// Long-lived API key endpoints : create / list /
 // revoke. Keys are machine credentials for scripts and Agent tooling — they
 // authenticate through the same `Authorization: Bearer <key>` header as
 // session tokens (see auth_middleware.go) and outlive the 7-day login token.

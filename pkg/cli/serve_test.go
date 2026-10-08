@@ -457,7 +457,7 @@ func TestFormatPortError(t *testing.T) {
 	})
 }
 
-// M4: engineStartInUseError 必须同时暴露 HTTP 端口与 engine management 端口，
+// : engineStartInUseError 必须同时暴露 HTTP 端口与 engine management 端口，
 // 避免把 management 端口冲突（常见真实根因）误导成 HTTP 端口报错。
 func TestEngineStartInUseError(t *testing.T) {
 	err := engineStartInUseError(4280, 4281)
@@ -476,7 +476,7 @@ func TestEngineStartInUseError(t *testing.T) {
 	}
 }
 
-// M4: checkEngineManagementPort 在 management 端口被占时给出准确报错（端口名实）；
+// : checkEngineManagementPort 在 management 端口被占时给出准确报错（端口名实）；
 // 0（动态分配）跳过；空闲端口通过。用动态端口构造占用，不依赖 4281 的环境状态。
 func TestCheckEngineManagementPort(t *testing.T) {
 	ln, err := net.Listen("tcp", ":0")

@@ -59,11 +59,11 @@ type API struct {
 	cancel                 context.CancelFunc
 	log                    atomic.Pointer[slog.Logger]
 
-	// MockNetPack account stores (M7.1): users and server-issued session tokens.
+	// MockNetPack account stores : users and server-issued session tokens.
 	users        store.UserStore
 	authSessions store.AuthSessionStore
 
-	// MockNetPack long-lived API keys (M12): machine credentials for scripts /
+	// MockNetPack long-lived API keys : machine credentials for scripts /
 	// Agent tooling, authenticated through the same Bearer header.
 	apiKeys store.APIKeyStore
 
@@ -208,12 +208,12 @@ func NewAPI(port int, opts ...Option) *API {
 		dataStore.Shares(),
 		api.captureConfig,
 	)
-	// O2.4 存储水位监控：把水位检查指向持久化 data.json，启动时及每小时
+	//  存储水位监控：把水位检查指向持久化 data.json，启动时及每小时
 	// 输出体积日志（超 500MB WARN，不阻断）。
 	api.captureManager.SetDataFilePath(filepath.Join(dataStore.DataDir(), "data.json"))
 
-	// Initialize the MockNetPack account stores (M7.1): users and session
-	// tokens share the same persistent FileStore. Long-lived API keys (M12)
+	// Initialize the MockNetPack account stores : users and session
+	// tokens share the same persistent FileStore. Long-lived API keys 
 	// persist the same way.
 	api.users = dataStore.Users()
 	api.authSessions = dataStore.AuthSessions()
@@ -392,7 +392,7 @@ func (a *API) withMiddleware(handler http.Handler) http.Handler {
 	// Security headers middleware wraps CORS
 	securityHandler := SecurityHeadersMiddleware(corsHandler)
 
-	// M7.2.4 debug: access log middleware (always on, regardless of tracer)
+	//  debug: access log middleware (always on, regardless of tracer)
 	accessLogged := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		wrapped := &adminStatusCapturingResponseWriter{
 			ResponseWriter: w,
@@ -529,7 +529,7 @@ func (a *API) Start() error {
 	// Start the engine health check background goroutine
 	a.engineRegistry.StartHealthCheck(a.ctx, EngineHeartbeatTimeout)
 
-	// O2.4 存储水位：启动时输出一行 data.json 体积（之后由 hourly janitor
+	//  存储水位：启动时输出一行 data.json 体积（之后由 hourly janitor
 	// 每小时输出，超 500MB WARN 一次）。
 	a.captureManager.LogDataFileSize()
 

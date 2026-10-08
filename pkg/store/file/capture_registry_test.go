@@ -153,12 +153,12 @@ func TestCaptureManager_EndSession(t *testing.T) {
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
-	// M2 (O3 48h 保留): the session record is KEPT — marked ended with a
+	//  ( 48h 保留): the session record is KEPT — marked ended with a
 	// retention deadline (EndedAt + TrafficRetention); its traffic stays
 	// queryable during the window.
 	got, err := m.GetSession(ctx, s.ID)
 	if err != nil || got.Status != capture.SessionStatusEnded {
-		t.Fatalf("GetSession() after end = %+v, %v; want ended record (O3 保留)", got, err)
+		t.Fatalf("GetSession() after end = %+v, %v; want ended record (retained)", got, err)
 	}
 	if got.EndedAt == nil || got.RetainUntil == nil {
 		t.Fatalf("GetSession() after end: EndedAt=%v RetainUntil=%v; want both set", got.EndedAt, got.RetainUntil)
@@ -229,13 +229,13 @@ func TestCaptureManager_ViewerLifecycle_LastViewerEndsSession(t *testing.T) {
 		t.Errorf("renew changed ViewerCount = %d, want 1", got.ViewerCount)
 	}
 
-	// Release the last viewer: session ends (record kept, O3 保留).
+	// Release the last viewer: session ends (record kept,  保留).
 	if err := m.ReleaseViewer(ctx, s.ID, "viewer-2"); err != nil {
 		t.Fatalf("ReleaseViewer(2) = %v", err)
 	}
 	got, err = m.GetSession(ctx, s.ID)
 	if err != nil || got.Status != capture.SessionStatusEnded {
-		t.Errorf("GetSession() after last release = %+v, %v; want ended record (O3 保留)", got, err)
+		t.Errorf("GetSession() after last release = %+v, %v; want ended record (retained)", got, err)
 	}
 
 	// Releasing an unknown viewer is idempotent.
@@ -263,7 +263,7 @@ func TestCaptureManager_HeartbeatTimeout_EndsSession(t *testing.T) {
 	for time.Now().Before(deadline) {
 		s, err := m.GetSession(ctx, s.ID)
 		if err == nil && s.Status == capture.SessionStatusEnded {
-			return // session marked ended (O3: record kept) by health check
+			return // session marked ended (record kept) by health check
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -298,7 +298,7 @@ func TestCaptureManager_ViewerLeaseExpiry_EndsSession(t *testing.T) {
 	for time.Now().Before(deadline) {
 		s, err := m.GetSession(ctx, s.ID)
 		if err == nil && s.Status == capture.SessionStatusEnded {
-			return // session marked ended (O3: record kept) after viewer lease expiry
+			return // session marked ended (record kept) after viewer lease expiry
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -354,7 +354,7 @@ func TestCaptureManager_MultiDeviceIsolation(t *testing.T) {
 	}
 }
 
-// ---- Traffic (M2.2) ----
+// ---- Traffic  ----
 
 // trafficEntry returns a valid TrafficEntry for tests.
 func trafficEntry(method, url string, ts time.Time) *capture.TrafficEntry {
@@ -393,13 +393,13 @@ func TestCaptureManager_UploadTraffic_Validation(t *testing.T) {
 		t.Errorf("UploadTraffic(cross-device) = %v, want ErrSessionNotFound", err)
 	}
 
-	// Ended session (O3: record kept) -> ErrSessionEnded.
+	// Ended session (record kept) -> ErrSessionEnded.
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
 	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
 		[]*capture.TrafficEntry{trafficEntry("GET", "http://x/a", time.Now())}); !errors.Is(err, store.ErrSessionEnded) {
-		t.Errorf("UploadTraffic(ended session) = %v, want ErrSessionEnded (O3: record kept)", err)
+		t.Errorf("UploadTraffic(ended session) = %v, want ErrSessionEnded (record kept)", err)
 	}
 }
 
@@ -591,7 +591,7 @@ func TestCaptureManager_ListSessionTraffic_PagingAndClear(t *testing.T) {
 		t.Errorf("ListSessionTraffic(unknown) = %v, want ErrSessionNotFound", err)
 	}
 
-	// Ended session (O3 保留): record + traffic stay queryable in the window.
+	// Ended session (retained): record + traffic stay queryable in the window.
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
@@ -635,7 +635,7 @@ func TestCaptureManager_Traffic_SessionIsolation(t *testing.T) {
 }
 
 func TestCaptureManager_HeartbeatTimeout_RetainsTraffic(t *testing.T) {
-	// Health check ends the session on heartbeat timeout; O3 keeps the
+	// Health check ends the session on heartbeat timeout;  keeps the
 	// session's traffic for the retention window (queryable afterwards).
 	m, _ := newCaptureManager(t, 300*time.Millisecond)
 	ctx := context.Background()
@@ -656,7 +656,7 @@ func TestCaptureManager_HeartbeatTimeout_RetainsTraffic(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		// Session is ended AND its traffic is still queryable (O3 保留).
+		// Session is ended AND its traffic is still queryable (retained).
 		s, err := m.GetSession(ctx, s.ID)
 		if err != nil || s.Status != capture.SessionStatusEnded {
 			time.Sleep(50 * time.Millisecond)
@@ -692,14 +692,14 @@ func TestCaptureManager_ShareAfterSessionEnd(t *testing.T) {
 	}
 	id := list[0].ID
 
-	// M2 (O3): ending the session marks it ended but KEEPS the record and the
+	//  : ending the session marks it ended but KEEPS the record and the
 	// traffic (48h retention window).
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
 	gs, err := m.GetSession(ctx, s.ID)
 	if err != nil || gs.Status != capture.SessionStatusEnded {
-		t.Fatalf("GetSession(after end) = %+v, %v; want ended record (O3 保留)", gs, err)
+		t.Fatalf("GetSession(after end) = %+v, %v; want ended record (retained)", gs, err)
 	}
 
 	// Traffic stays resolvable by ID with its owning device (session record
@@ -732,7 +732,7 @@ func TestCaptureManager_ShareAfterSessionEnd(t *testing.T) {
 		t.Errorf("GetShare() = %+v, %v", got, err)
 	}
 
-	// O3: within the retention window the ended session IS listable with data.
+	// : within the retention window the ended session IS listable with data.
 	list2, total2, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
 	if err != nil || total2 != 1 || len(list2) != 1 {
 		t.Errorf("ListSessionTraffic(ended, within retention) = %d/%d, %v; want 1/1", len(list2), total2, err)
@@ -833,7 +833,7 @@ func TestCaptureManager_DeleteTraffic_AfterSessionEnd(t *testing.T) {
 	if err := m.EndSession(ctx, s.ID); err != nil {
 		t.Fatalf("EndSession() = %v", err)
 	}
-	// O3: both entries stay in the session's traffic (kept for the window).
+	// : both entries stay in the session's traffic (kept for the window).
 	if _, err := m.GetTraffic(ctx, delID); err != nil {
 		t.Fatalf("GetTraffic(after end, before delete) = %v", err)
 	}
@@ -862,7 +862,7 @@ func TestCaptureManager_DeleteTraffic_AfterSessionEnd(t *testing.T) {
 }
 
 func TestCaptureManager_ExpiredEndedSession_Purged(t *testing.T) {
-	// A4 (O3): after the 48h retention window passes, the janitor
+	// A4 : after the 48h retention window passes, the janitor
 	// (PurgeExpiredEndedSessions) releases the session record + traffic —
 	// list/share lookups all 404. Within the window everything stays queryable.
 	fs := newTestStore(t)
@@ -899,7 +899,7 @@ func TestCaptureManager_ExpiredEndedSession_Purged(t *testing.T) {
 
 	// After the window passes but BEFORE the janitor runs, readers must
 	// already 404 (v0.10.0: an expired-ended session is unqueryable even if
-	// the janitor has not purged it yet — F3 coverage for the expiry-first
+	// the janitor has not purged it yet —  coverage for the expiry-first
 	// branch in GetSession / ListSessionTraffic).
 	time.Sleep(200 * time.Millisecond)
 	if _, err := m.GetSession(ctx, s.ID); !errors.Is(err, store.ErrSessionNotFound) {
@@ -926,12 +926,12 @@ func TestCaptureManager_ExpiredEndedSession_Purged(t *testing.T) {
 }
 
 // ============================================================================
-// M2-1: 上限契约化与配置化（O2.1）
+// : 上限契约化与配置化
 // ============================================================================
 
-// TestCaptureManager_DefaultCaptureConfig_M2Values asserts the M2 defaults:
-// session traffic cap 20000 and ended-session retention 48h (O2.1/O3).
-func TestCaptureManager_DefaultCaptureConfig_M2Values(t *testing.T) {
+// TestCaptureManager_DefaultCaptureConfig_Values asserts the  defaults:
+// session traffic cap 20000 and ended-session retention 48h (/).
+func TestCaptureManager_DefaultCaptureConfig_Values(t *testing.T) {
 	cfg := store.DefaultCaptureConfig()
 	if cfg.MaxSessionTrafficEntries != store.DefaultMaxSessionTrafficEntries {
 		t.Errorf("MaxSessionTrafficEntries = %d, want %d", cfg.MaxSessionTrafficEntries, store.DefaultMaxSessionTrafficEntries)
@@ -959,7 +959,7 @@ func TestCaptureManager_ConfigZero_FallsBackToDefaults(t *testing.T) {
 }
 
 // TestCaptureManager_RollingWindow_UsesConfiguredCap asserts the per-session
-// traffic cap is honored from CaptureConfig.MaxSessionTrafficEntries (O2.1):
+// traffic cap is honored from CaptureConfig.MaxSessionTrafficEntries :
 // overflow drops the oldest entries, RequestCount still counts every upload.
 func TestCaptureManager_RollingWindow_UsesConfiguredCap(t *testing.T) {
 	fs := newTestStore(t)
@@ -1015,7 +1015,7 @@ func TestCaptureManager_RollingWindow_UsesConfiguredCap(t *testing.T) {
 }
 
 // ============================================================================
-// M2-3: 服务端过滤下推（O2.2）
+// : 服务端过滤下推
 // ============================================================================
 
 // TestCaptureManager_ListSessionTraffic_Filters asserts the server-side

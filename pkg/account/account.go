@@ -1,5 +1,5 @@
 // Package account provides the MockNetPack account model and the password /
-// token primitives for the M7 account system (契约 v0.6.0).
+// token primitives for the  account system (契约 v0.6.0).
 //
 // The model is platform-neutral (G5) and has no dependency on the store or
 // HTTP layers: persistence lives in pkg/store, HTTP semantics in pkg/admin.
@@ -9,7 +9,7 @@
 //     PBKDF2-HMAC-SHA256 encoding with a random per-user salt (stdlib
 //     crypto/pbkdf2, OWASP-recommended iteration count).
 //   - Session tokens are 32 random bytes hex-encoded; the server persists
-//     them and revokes them on logout/expiry (服务端吊销, M7.1 拍板).
+//     them and revokes them on logout/expiry (服务端吊销,  拍板).
 package account
 
 import (
@@ -25,14 +25,14 @@ import (
 	"time"
 )
 
-// Role is the account role. Only two roles exist (M7, 需求决策 #3):
+// Role is the account role. Only two roles exist :
 // admin sees every device; dev sees only devices it owns.
 type Role string
 
 const (
 	// RoleAdmin is the administrator role. Admin accounts are NOT created via
 	// the open registration API — the only creation path is the CLI
-	// `mockd start --create-admin` (M7.1 拍板).
+	// `mockd start --create-admin` ( 拍板).
 	RoleAdmin Role = "admin"
 	// RoleDev is the developer role. Open registration only produces this role.
 	RoleDev Role = "dev"
@@ -52,7 +52,7 @@ type User struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
-// AuthSession is a server-issued session token (M7.1): created on login,
+// AuthSession is a server-issued session token : created on login,
 // persisted server-side, revoked on logout (server-side deletion) or expiry.
 type AuthSession struct {
 	Token     string    `json:"token"`

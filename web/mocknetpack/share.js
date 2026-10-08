@@ -2,7 +2,7 @@
 
 // MockNetPack web: share-link creation and public read-only share view.
 // Pure move from app.js.
-// M8.5: 渲染分享只读视图（免登录）
+// : 渲染分享只读视图（免登录）
 async function renderShareView(shareId) {
   $("authView").classList.add("hidden");
   $("appWrap").classList.add("hidden");
@@ -62,7 +62,7 @@ async function renderShareView(shareId) {
   }
 }
 
-// M8.5: 创建分享链接
+// : 创建分享链接
 async function shareRequest(e) {
   try {
     const res = await apiFetch("/shares", {

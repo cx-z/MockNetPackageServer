@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// M4: --no-auth 语义修正。--no-auth（apiKeyConfig disabled）不强制登录，
+// : --no-auth 语义修正。--no-auth（apiKeyConfig disabled）不强制登录，
 // 但请求带有效 Bearer token 时必须解析身份并注入 UserCtx，使创建规则
 // owner 正确落对应用户；缺失/无效 token 仍按现状放行（caller=nil）。
 

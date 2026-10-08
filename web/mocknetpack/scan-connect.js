@@ -1,14 +1,14 @@
 "use strict";
 
-// MockNetPack web: 扫码连接（M9.3，契约 v0.8.1）。
+// MockNetPack web: 扫码连接。
 // 登录态签发配对令牌 → 组装 mocknetpack:// 二维码 → 渲染 + 10 分钟倒计时。
-// 二维码格式（D4）：mocknetpack://connect?v=1&u=<base64url(server)>&a=<appID>&t=<token>
-// u 优先取服务端局域网可达 origin（M9.1-fix，v0.8.1）：浏览器用 localhost 打开时
+// 二维码格式：mocknetpack://connect?v=1&u=<base64url(server)>&a=<appID>&t=<token>
+// u 优先取服务端局域网可达 origin：浏览器用 localhost 打开时
 // location.origin 是 localhost，手机连自己的 localhost 必然失败，故先请求
 // GET /api/v1/local-address 拿 `{origin}` 替换；非 localhost（域名/局域网 IP）直接同源。
-// 令牌可复用（D5）：同一二维码可扫多台设备，10 分钟有效，过期提示刷新
+// 令牌可复用：同一二维码可扫多台设备，10 分钟有效，过期提示刷新
 // （D1 扫码即注册由服务端 RegisterDeviceWithPairing 保证）。
-// M9.3-fix（v0.8.2）：二维码弹窗打开期间轮询 GET /pairing-tokens/{token}，
+// （v0.8.2）：二维码弹窗打开期间轮询 GET /pairing-tokens/{token}，
 // 检测到有新设备用该令牌完成注册 → 自动关闭二维码弹窗 → 弹出设备命名框 →
 // 提交改名后跳转该设备的请求列表页（#/device/{app}/{did}）开始看抓包。
 
@@ -66,7 +66,7 @@ const SCAN_TOKEN_TTL_SEC = 600; // 10 分钟（服务端 pairingTokenTTL）
 let scanQR = null;              // QRCode 实例
 let scanCountdownTimer = null;
 
-/// 从服务端加载 app 目录（GET /api/v1/apps，M9.4）填充扫码弹窗下拉框。
+/// 从服务端加载 app 目录（GET /api/v1/apps）填充扫码弹窗下拉框。
 /// 目录由后端热加载（默认占位 + MOCKD_ALLOWED_APPS + git-ignored 本地文件），
 /// 所以往 allowed-apps.local 里加 bundle id 后，下拉框刷新即出现、无需重启。
 /// 加载失败时保留现有（默认）选项，不影响签发。
@@ -91,7 +91,7 @@ async function loadAppOptions() {
 
 async function openScanConnectModal() {
   // 扫码连接弹窗内 App 下拉（v1.5：手动注册入口已移除，下拉迁移至扫码弹窗）。
-  await loadAppOptions(); // M9.4：先同步服务端 app 目录，再取当前选中值
+  await loadAppOptions(); // 先同步服务端 app 目录，再取当前选中值
   const app = $("addApp").value || "com.example.integrating";
   $("scanConnectApp").textContent = "App：" + app;
   $("scanConnectError").classList.add("hidden");
@@ -99,7 +99,7 @@ async function openScanConnectModal() {
   await issueScanToken(app);
 }
 
-// M9.4-fix（v0.9.1）：切换 App 立即重新签发——之前下拉框未绑定 change，
+// （v0.9.1）：切换 App 立即重新签发——之前下拉框未绑定 change，
 // 二维码仍绑定旧 app，手机扫旧码会报 app 不对（需手动刷新才正确）。
 $("addApp").addEventListener("change", () => {
   const app = $("addApp").value;
@@ -123,7 +123,7 @@ async function issueScanToken(app) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.message || ("HTTP " + res.status));
     renderScanQR(await scanQRText(data.token, data.app), data.expiresAt);
-    startScanPoll(data.token); // M9.3-fix：扫码完成自动关弹窗
+    startScanPoll(data.token); // ：扫码完成自动关弹窗
   } catch (e) {
     $("scanConnectError").textContent = "签发二维码失败：" + e.message;
     $("scanConnectError").classList.remove("hidden");
@@ -171,7 +171,7 @@ function closeScanConnectModal() {
 }
 
 // ============================================================================
-// M9.3-fix (v0.8.2)：扫码完成检测（轮询）+ 设备命名
+//  (v0.8.2)：扫码完成检测（轮询）+ 设备命名
 // ============================================================================
 
 const SCAN_POLL_MS = 3000; // 轮询间隔

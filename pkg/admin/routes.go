@@ -294,10 +294,10 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	// All endpoints live under /api/v1 (contract base path), keeping them
 	// separate from mockd's native /sessions proxy-recording routes.
 	//
-	// M7.1.3 auth split (拍板 #6):
+	// auth split:
 	//   - SDK-facing routes (register, heartbeat, traffic upload) stay OPEN —
 	//     the SDK carries no credentials; did is its identity (unknown-did
-	//     rejection lands in M7.2.3).
+	//     rejection lands in ).
 	//   - Web-facing routes (device list/detail, session control, viewer
 	//     leases, traffic query/delete, mock-rule CRUD) require a logged-in
 	//     Bearer token via requireAuth (--no-auth bypasses for smoke).
@@ -310,17 +310,17 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}", a.requireAuth(a.handleUpdateDeviceName))
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}", a.requireAuth(a.handleDeleteDevice))
 
-	// M9 (contract v0.8.0): QR pairing tokens — a logged-in user issues a
+	//  (contract v0.8.0): QR pairing tokens — a logged-in user issues a
 	// short-lived token that lets the SDK auto-register a scanned device.
 	mux.HandleFunc("POST "+captureAPIPrefix+"/pairing-tokens", a.requireAuth(a.handleCreatePairingToken))
-	// M9.1-fix (contract v0.8.1): LAN-reachable origin for the scan QR when
+	//  (contract v0.8.1): LAN-reachable origin for the scan QR when
 	// the Web is opened via localhost (a phone cannot reach its own localhost).
 	mux.HandleFunc("GET "+captureAPIPrefix+"/local-address", a.requireAuth(a.handleLocalAddress))
-	// M9.3-fix (contract v0.8.2): pairing-token status — the Web polls this
+	//  (contract v0.8.2): pairing-token status — the Web polls this
 	// while the QR modal is open to detect scan completion (a device
 	// registered with the token), then auto-closes the modal.
 	mux.HandleFunc("GET "+captureAPIPrefix+"/pairing-tokens/{token}", a.requireAuth(a.handleGetPairingToken))
-	// M9.4 (contract v0.9.1): app catalog for the Web "App" dropdown — served
+	//  (contract v0.9.1): app catalog for the Web "App" dropdown — served
 	// dynamically so bundle ids added to the hot-reloaded local catalog file
 	// appear in the dropdown without a restart.
 	mux.HandleFunc("GET "+captureAPIPrefix+"/apps", a.requireAuth(a.handleListApps))
@@ -337,7 +337,7 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/traffic/{id}", a.requireAuth(a.handleDeleteTraffic))
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}/traffic", a.requireAuth(a.handleClearSessionTraffic))
 
-	// Mock rules (M3): Web CRUD/toggle + SDK incremental snapshot pull.
+	// Mock rules : Web CRUD/toggle + SDK incremental snapshot pull.
 	// GET is OPEN (SDK ?sinceVersion pull carries no token); the handler itself
 	// enforces auth on the Web full-list branch (no sinceVersion).
 	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.handleListMockRules)
@@ -345,21 +345,21 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.requireAuth(a.handleUpdateMockRule))
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.requireAuth(a.handleDeleteMockRule))
 
-	// Account system (M7.1, contract v0.6.0): open registration (dev only),
+	// Account system : open registration (dev only),
 	// login (server-issued token), logout (server-side revocation), me.
 	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/register", a.handleAuthRegister)
 	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/login", a.handleAuthLogin)
 	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/logout", a.handleAuthLogout)
 	mux.HandleFunc("GET "+captureAPIPrefix+"/auth/me", a.handleAuthMe)
 
-	// M12 (contract v0.12.0): long-lived API keys for scripts / Agent tooling.
+	//  (contract v0.12.0): long-lived API keys for scripts / Agent tooling.
 	// Create returns the plaintext exactly once; list carries only prefixes;
 	// delete revokes immediately. All require the caller's own auth.
 	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/keys", a.requireAuth(a.handleCreateAPIKey))
 	mux.HandleFunc("GET "+captureAPIPrefix+"/auth/keys", a.requireAuth(a.handleListAPIKeys))
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/auth/keys/{id}", a.requireAuth(a.handleDeleteAPIKey))
 
-	// M8.5: request share links. POST creates a snapshot (auth required);
+	// : request share links. POST creates a snapshot (auth required);
 	// GET is public (no auth) — anyone with the link can view the read-only snapshot.
 	mux.HandleFunc("POST "+captureAPIPrefix+"/shares", a.requireAuth(a.handleCreateShare))
 	mux.HandleFunc("GET "+captureAPIPrefix+"/shares/{id}", a.handleGetShare)

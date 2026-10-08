@@ -87,7 +87,7 @@ func TestCaptureManager_PairingTokenLifecycle(t *testing.T) {
 		t.Errorf("created device = %+v", d)
 	}
 
-	// Same (app, did) with a different owner -> reused, owner unchanged (D7).
+	// Same (app, did) with a different owner -> reused, owner unchanged .
 	if _, err := m.RegisterDeviceWithPairing(ctx, captureDevice("com.a", "scan-1", "renamed"), "bob"); err != nil {
 		t.Fatalf("RegisterDeviceWithPairing(reuse) = %v", err)
 	}
@@ -111,7 +111,7 @@ func captureDevice(app, did, name string) *capture.Device {
 	return &capture.Device{App: app, Did: did, Name: name, Platform: capture.PlatformIOS}
 }
 
-// TestRecordPairingUse (M9.3-fix, v0.8.2): appends dids, dedupes repeats,
+// TestRecordPairingUse : appends dids, dedupes repeats,
 // and rejects unknown tokens.
 func TestRecordPairingUse(t *testing.T) {
 	ctx := context.Background()

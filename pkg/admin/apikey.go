@@ -205,7 +205,7 @@ func (a *apiKeyAuth) isExempt(path string) bool {
 		}
 	}
 
-	// M7.1.3 auth split: the entire /api/v1 prefix is the MockNetPack capture
+	//  auth split: the entire /api/v1 prefix is the MockNetPack capture
 	// API and is deliberately NOT protected by the API key — every Web-facing
 	// route there carries its own account Bearer check (requireAuth), and the
 	// SDK/public routes (device register, heartbeat, traffic upload, mock-rules
@@ -221,7 +221,7 @@ func (a *apiKeyAuth) isExempt(path string) bool {
 		return true
 	}
 
-	// MockNetPack web UI (M4): the static shell at /mocknetpack/ must load from a
+	// MockNetPack web UI : the static shell at /mocknetpack/ must load from a
 	// LAN browser before any account credentials exist — it is the login/console
 	// surface, guarded by the account Bearer system (requireAuth), not the API
 	// key. Exempting the prefix (with and without trailing slash) keeps the Web

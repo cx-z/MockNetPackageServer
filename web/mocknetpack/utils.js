@@ -40,7 +40,7 @@ function esc(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
 }
-// M8.4：请求体/响应体 JSON 美化。能 parse 成 JSON 就分行缩进；纯文本/二进制占位原样返回。
+// ：请求体/响应体 JSON 美化。能 parse 成 JSON 就分行缩进；纯文本/二进制占位原样返回。
 // 仅用于详情页只读展示与编辑表单预填（不影响保存——保存始终提交 textarea 原始文本）。
 // 精度修复：不用 JSON.parse→JSON.stringify（会把 19 位整数 ID 舍入成 …5000），
 // 改用无损分词美化 jsonPrettyPrint，数字字面量逐位保留（json-lossless.js）。

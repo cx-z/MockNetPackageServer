@@ -1,7 +1,7 @@
-// MockNetPack long-lived API keys (M12, contract v0.12.0).
+// MockNetPack long-lived API keys .
 //
 // Purpose: give scripts / Agent tooling a machine-native auth channel that
-// outlives the 7-day login session token (M7.1) — an API key is created once,
+// outlives the 7-day login session token  — an API key is created once,
 // the plaintext is returned exactly once, and the server persists only a
 // SHA-256 hash. Keys authenticate through the same `Authorization: Bearer
 // <key>` header as session tokens (the middleware tries session first, then
@@ -15,7 +15,7 @@
 //     entropy, so there is no brute-force surface that iteration protects, and
 //     per-request verification stays cheap (PBKDF2's 210k iterations would
 //     penalize every authenticated call for no gain).
-//   - ExpiresAt zero means "long-lived" (no expiry) — the M12 default.
+//   - ExpiresAt zero means "long-lived" (no expiry) — the  default.
 package account
 
 import (
@@ -49,7 +49,7 @@ type APIKey struct {
 	Username string `json:"username"`
 	// CreatedAt is when the key was issued.
 	CreatedAt time.Time `json:"createdAt"`
-	// ExpiresAt is when the key stops working. Zero = long-lived (M12 default).
+	// ExpiresAt is when the key stops working. Zero = long-lived ( default).
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 

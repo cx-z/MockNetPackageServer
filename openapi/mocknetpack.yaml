@@ -5,23 +5,23 @@ info:
   version: 0.13.0
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
-    - AI 接入层（M12，v0.12.0）：为 Agent 工具与脚本/CLI 提供机器原生通道——
+    - AI 接入层：为 Agent 工具与脚本/CLI 提供机器原生通道——
       (1) 长效 API Key（POST/GET /api/v1/auth/keys、DELETE /api/v1/auth/keys/{id}）：创建时明文仅返回一次，
       服务端只存 SHA-256 哈希；`Authorization: Bearer <apiKey>` 与登录会话 token 并存，鉴权语义一致；
       (2) 流量数据体验补强：GET /sessions/{id}/traffic 新增 projection=compact（8 字段瘦身视图 +
       每会话自增 seq 增量游标）、since（seq 增量拉取）、method/scheme 过滤，默认（非 compact）响应形状不变，
       人类 Web UI 体验不回归；(3) 错误响应按「给 AI 的指引」：401 提示配置 API Key、404/409/403 说明原因与下一步。
-    - 权限与分享（O4/O5，v0.11.0）：MockRule 新增 owner（创建者用户名，服务端从当前会话用户写入，
+    - 权限与分享（/，v0.11.0）：MockRule 新增 owner（创建者用户名，服务端从当前会话用户写入，
       创建时设）与 updatedBy（最后修改者，每次 PUT 更新）两个纯服务端字段——Web 全量列表下发展示；
       SDK 增量拉取（sinceVersion）只返回 SDK 消费字段（id/method/path/response/enabled/effective），
       绝不携带 owner/updatedBy 等纯服务端/Web-only 字段。权限矩阵：查看规则对设备可见者全部开放
-      （设备隔离 M7.2.2 不变）；编辑回包/启停 toggle/删除仅规则 owner 与 admin（PUT / DELETE 非 owner
+      （设备隔离  不变）；编辑回包/启停 toggle/删除仅规则 owner 与 admin（PUT / DELETE 非 owner
       且非 admin → 403 forbidden，且 403 不泄露规则存在性——对非 admin 未知 ruleId 同样 403）；
       「Mock 此请求」创建新规则所有开发者可用，创建后自己即 owner。存量规则（owner 为空，v0.11.0
-      之前创建）仅 admin 可管理，dev 只读 403。分享持久化（O5）：ShareSnapshot 随 data.json 落盘，
+      之前创建）仅 admin 可管理，dev 只读 403。分享持久化：ShareSnapshot 随 data.json 落盘，
       重启不失效，7 天 TTL（expiresAt = 创建时刻 + 7 天）不变——过期链接返回 404，janitor 每小时
-      清理过期快照（与 O3 48h 会话流量保留并存）。
-    - 容量与留存（M2，v0.10.0）：会话流量上限契约化（--capture-session-max-entries，默认 20000，
+      清理过期快照（与  48h 会话流量保留并存）。
+    - 容量与留存：会话流量上限契约化（--capture-session-max-entries，默认 20000，
       超限丢最旧 rolling window）；服务端过滤下推（GET /sessions/{id}/traffic 新增
       keyword/statusCode/from/to，过滤先于分页）；会话结束后流量保留 48h（--capture-traffic-retention-hours，
       默认 48，自结束时刻起算）供历史日志查询，之后由 janitor 每小时清理；历史日志查询期间保留期内
@@ -30,58 +30,57 @@ info:
       DELETE /traffic/{id} 与 DELETE /sessions/{id}/traffic 保留但标注为后端管理用途（Web 已改为纯前端
       清空/删除，不再调用）。
     - 部署：挂载在 mockd Admin :4290 下，base path 为 /api/v1。
-    - 扫码连接（M9，v0.8.0；localhost 修复 v0.8.1；扫码完成轮询 v0.8.2）：Web 设备页为已登录用户签发短时配对令牌（POST /pairing-tokens，
+    - 扫码连接：Web 设备页为已登录用户签发短时配对令牌（POST /pairing-tokens，
       requireAuth；10 分钟有效、可复用——同一令牌可注册多台设备）；SDK 扫码后携带 pairingToken
       调用 /devices/register，令牌有效则未知 (app, did) 自动注册（owner=签发用户，D1 扫码即注册），
       已存在则复用原记录不新建、不改名不换 owner（D7 幂等复用）；无效/过期/错 app 令牌返回
       403 pairing_token_invalid（SDK 提示"二维码已过期，请刷新"）。
-    - 请求体解析（M8.1，v0.7.0）：TrafficEntry / MockRuleSource 新增 requestBodyDecoded——
-      请求体经 App 注入的协议解码器（同响应体 M4 机制）解出的可读 UTF-8 文本，仅 Web 展示、
+    - 请求体解析：TrafficEntry / MockRuleSource 新增 requestBodyDecoded——
+      请求体经 App 注入的协议解码器（同响应体  机制）解出的可读 UTF-8 文本，仅 Web 展示、
       不参与回放；二进制请求体（xcp AES+gzip）解码后 Web 优先展示它，无则回退 requestBody 占位。
-    - 鉴权（M7.1，v0.6.0）：本契约顶层声明 Bearer 安全要求——除显式标注 `security: []` 的端点外，全部
-      /api/v1 端点要求 `Authorization: Bearer <token>`（M7.1.3 起服务端强制；未登录 401、越权 403）。
+    - 鉴权：本契约顶层声明 Bearer 安全要求——除显式标注 `security: []` 的端点外，全部
+      /api/v1 端点要求 `Authorization: Bearer <token>`（ 起服务端强制；未登录 401、越权 403）。
       会话 token 由服务端在登录时签发并持久化，有效期 7 天（服务端配置项）；登出（POST /auth/logout）
       即服务端吊销，token 立即失效。`--no-auth` 仅保留给本地冒烟（跳过鉴权），真机联调启用认证。
-    - 账号（M7.1）：开放注册仅产 dev 角色（用户名+密码，内网员工高可信）；admin 角色不走注册接口，
+    - 账号：开放注册仅产 dev 角色（用户名+密码，内网员工高可信）；admin 角色不走注册接口，
       由 CLI `mockd start --create-admin <user> --admin-password <pass>` 创建。
     - 隔离强制：所有设备/流量/规则接口显式携带 (app, did) 维度（路径或 query），避免串设备。
     - 时间：一律 RFC3339（如 2026-09-18T09:00:00+08:00）。
     - Mock 匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口的所有请求均命中。
-    - 流量语义（O3，v0.10.0）：全量抓包、会话内临时可见；会话结束后流量保留 48h
+    - 流量语义：全量抓包、会话内临时可见；会话结束后流量保留 48h
       （--capture-traffic-retention-hours，默认 48，自结束时刻起算）——保留期内可列表访问
       （历史日志）、按 ID 解析（分享），期满由 janitor 每小时清理释放内存；进行中流量实时可查不变。
       会话流量上限 MaxSessionTrafficEntries（--capture-session-max-entries，默认 20000），
-      超限丢最旧（rolling window）。被 Mock 的请求持久化为规则及其 source 快照（M3 起，7 天滑动），
+      超限丢最旧（rolling window）。被 Mock 的请求持久化为规则及其 source 快照（ 起，7 天滑动），
       与 48h 临时流量保留是两套独立规则。
     - 推送通道：Web 请求流按 2s 轮询 GET /sessions/{id}/traffic 实现秒级可见（已定，不新增推送端点）。
-    - Mock 规则语义（M3）：规则=接口回包，Method+URL 路径匹配；同一接口运行时仅一条 effective=true（异常态多条 enabled 则该接口全部 effective=false、不回包，并在 MockRuleList.conflicts 上报前端弹窗）；规则持久化但 SDK 仅在抓包会话 capturing 期间应用；"Mock 此请求"固化的真实请求快照（原始值+Mock 值）随规则持久化。
-    - 会话结束规则失效（M4，需求 6.6/F4.5/决策13）：抓包会话一旦结束（页面关闭/最后一个查看者释放/心跳超时/手动断开），服务端把该设备所有 enabled=true 的 Mock 规则批量置为 enabled=false 并 Bump 规则版本；规则不删除、仍在 Web 规则列表中，下次建立会话后由用户从历史规则手动一键重新启用。SDK 拉到的新规则集全为 disabled，不再自动生效。
-    - 7 天滑动清理（M4，F8.3/决策15）：Mock 规则及其 source 快照持久化保留，默认 7 天（服务端配置项），滑动窗口起点为 lastUsedAt。命中回包、Web 编辑保存、Web toggle 启停三类操作刷新 lastUsedAt；心跳/规则版本轮询/Web 纯浏览不刷新。过期规则连同其 source 快照自动删除。
-    - 协议解码器增强（M4）：SDK 暴露 setBodyDecoder 注入点，由各 App 把二进制私有协议（如 xcp）解成可读 UTF-8 文本；解码结果以 TrafficEntry.responseBodyDecoded / MockRuleSource.responseBodyDecoded 独立通道上传展示，原始 base64 仍只用于回放。
-    - 日志删除（M9.5）：Web 可单条删除（DELETE /traffic/{id}）或清空（DELETE /sessions/{id}/traffic）会话内临时流量；只作用于日志展示，不触碰已持久化的 Mock 规则（日志与规则互相独立）。
-    - 会话保留（O3，v0.10.0）：会话结束（页面关闭/最后一个查看者释放/心跳超时/手动断开，四条
+    - Mock 规则语义：规则=接口回包，Method+URL 路径匹配；同一接口运行时仅一条 effective=true（异常态多条 enabled 则该接口全部 effective=false、不回包，并在 MockRuleList.conflicts 上报前端弹窗）；规则持久化但 SDK 仅在抓包会话 capturing 期间应用；"Mock 此请求"固化的真实请求快照（原始值+Mock 值）随规则持久化。
+    - 会话结束规则失效：抓包会话一旦结束（页面关闭/最后一个查看者释放/心跳超时/手动断开），服务端把该设备所有 enabled=true 的 Mock 规则批量置为 enabled=false 并 Bump 规则版本；规则不删除、仍在 Web 规则列表中，下次建立会话后由用户从历史规则手动一键重新启用。SDK 拉到的新规则集全为 disabled，不再自动生效。
+    - 7 天滑动清理：Mock 规则及其 source 快照持久化保留，默认 7 天（服务端配置项），滑动窗口起点为 lastUsedAt。命中回包、Web 编辑保存、Web toggle 启停三类操作刷新 lastUsedAt；心跳/规则版本轮询/Web 纯浏览不刷新。过期规则连同其 source 快照自动删除。
+    - 协议解码器增强：SDK 暴露 setBodyDecoder 注入点，由各 App 把二进制私有协议（如 xcp）解成可读 UTF-8 文本；解码结果以 TrafficEntry.responseBodyDecoded / MockRuleSource.responseBodyDecoded 独立通道上传展示，原始 base64 仍只用于回放。
+    - 日志删除：Web 可单条删除（DELETE /traffic/{id}）或清空（DELETE /sessions/{id}/traffic）会话内临时流量；只作用于日志展示，不触碰已持久化的 Mock 规则（日志与规则互相独立）。
+    - 会话保留：会话结束（页面关闭/最后一个查看者释放/心跳超时/手动断开，四条
       结束路径）时服务端不再删除记录，改为标记 status=ended + endedAt + retainUntil=now+48h
       （--capture-traffic-retention-hours），流量保留在会话内供历史查询；保留期内
       GET /sessions/{id} 返回 200（含 retainUntil）、GET /sessions/{id}/traffic 可查
       （历史日志按时间/URL/状态码过滤 + 分页）；期满后（即使 janitor 尚未运行）上述查询返回
       404 session_not_found；janitor 每小时清理过期 ended 会话及其流量释放内存。
-      GET /sessions 返回该设备会话列表（capturing + 保留期内 ended）。分享（M8.6）保留：ended
-      会话流量保留期内仍可按 ID 解析创建分享链接。规则不受影响——保留并自动禁用（见 M4）。
-    - 规则备注与编辑语义（M5，M7 收窄）：MockRule 新增 note（字符串，可空，单条覆盖式更新，不做编辑历史）。创建（POST）时 note 可空；编辑（PUT）时 note 必须非空——仅当请求体实际改动 response 内容（statusCode/headers/body 与现值不一致）时校验（空或纯空白返回 400）；纯开关操作（response 原样回传、仅 enabled 变化）note 可空，未编辑的"Mock 此请求"规则可直接启用。匹配键 method/path 不可改——PUT 请求体改用独立的 UpdateMockRuleInput（不含 method/path），编辑只允许改 response（statusCode/headers/body）与 note、enabled。编辑成功刷新 lastUsedAt（与 M4 既有口径一致）。note 为纯管理面字段，不参与匹配、不下发给 SDK。
-    - 实现状态：每个 path 用 x-milestone 标注实现阶段（m1/m2/m3/m4/m5/m6），当前阶段之外的仅契约定义、未实现。
+      GET /sessions 返回该设备会话列表（capturing + 保留期内 ended）。分享保留：ended
+      会话流量保留期内仍可按 ID 解析创建分享链接。规则不受影响——保留并自动禁用（见 ）。
+    - 规则备注与编辑语义：MockRule 新增 note（字符串，可空，单条覆盖式更新，不做编辑历史）。创建（POST）时 note 可空；编辑（PUT）时 note 必须非空——仅当请求体实际改动 response 内容（statusCode/headers/body 与现值不一致）时校验（空或纯空白返回 400）；纯开关操作（response 原样回传、仅 enabled 变化）note 可空，未编辑的"Mock 此请求"规则可直接启用。匹配键 method/path 不可改——PUT 请求体改用独立的 UpdateMockRuleInput（不含 method/path），编辑只允许改 response（statusCode/headers/body）与 note、enabled。编辑成功刷新 lastUsedAt（与  既有口径一致）。note 为纯管理面字段，不参与匹配、不下发给 SDK。
 
 servers:
   - url: http://localhost:4290/api/v1
     description: 本地开发（mockd admin 端口）
 
-# M7.1 (v0.6.0): 顶层安全要求——除显式标注 security: [] 的端点（/auth/register、/auth/login）外，
-# 全部端点要求 Bearer token。服务端在 M7.1.3 强制执行；--no-auth 本地冒烟跳过。
+#  (v0.6.0): 顶层安全要求——除显式标注 security: [] 的端点（/auth/register、/auth/login）外，
+# 全部端点要求 Bearer token。服务端在  强制执行；--no-auth 本地冒烟跳过。
 security:
   - bearerAuth: []
 
 tags:
   - name: auth
-    description: 账号与会话（注册/登录/登出/当前用户，M7.1）
+    description: 账号与会话（注册/登录/登出/当前用户）
   - name: devices
     description: 设备注册、心跳、查询
   - name: sessions
@@ -93,20 +92,19 @@ tags:
 
 paths:
   # ==========================================================================
-  # 1. 设备注册 / 心跳（SDK 侧，M1）
+  # 1. 设备注册 / 心跳（SDK 侧）
   # ==========================================================================
   /devices/register:
     post:
       tags: [devices]
-      x-milestone: m1
-      summary: 设备注册（幂等 upsert；M9 起支持配对令牌自动注册）
+      summary: 设备注册（幂等 upsert； 起支持配对令牌自动注册）
       description: |
         SDK 启动时调用。did 由 SDK 生成：App 作用域内唯一、App 内持久化（重启不变）、不依赖设备硬件标识。
         相同 (app, did) 重复注册视为同一设备，更新元信息并置为在线（幂等）。
         响应下发服务端心跳配置（间隔/超时为服务端配置项）。
-        M9（v0.8.0）扫码即注册：请求体可携带 pairingToken（Web 二维码中的配对令牌）。令牌有效时，
+        （v0.8.0）扫码即注册：请求体可携带 pairingToken（Web 二维码中的配对令牌）。令牌有效时，
         未知 (app, did) 直接自动注册（owner=签发令牌的用户，D1），已存在则复用原记录（D7：不新建、
-        不改名、owner 为空才补签发用户）；令牌缺失时保持 M7.2.3 语义——未知 did 返回 404 device_not_registered。
+        不改名、owner 为空才补签发用户）；令牌缺失时保持  语义——未知 did 返回 404 device_not_registered。
       operationId: registerDevice
       requestBody:
         required: true
@@ -124,7 +122,7 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
-          description: 配对令牌无效/过期/不匹配该 app（pairing_token_invalid，M9）
+          description: 配对令牌无效/过期/不匹配该 app（pairing_token_invalid）
           content:
             application/json:
               schema:
@@ -141,15 +139,14 @@ paths:
   /devices/{app}/{did}/heartbeat:
     post:
       tags: [devices]
-      x-milestone: m1
       summary: 心跳 + 状态同步
       description: |
         SDK 周期调用（服务端配置，默认建议 15~20s）。兼作三类信号：
         1) 保活：服务端连续超过心跳超时阈值（默认 60s，配置项）未收到即判定设备离线并结束抓包会话；
         2) 会话状态下发：响应携带当前激活会话（若有），SDK 据此启停采集/Mock；
-        3) 规则版本下发（M3 启用）：响应 rulesVersion 为本设备规则集单调递增版本号；SDK 比对本地版本，不一致时带 sinceVersion 拉取增量。
-        规则应用边界（M3）：SDK 仅在本心跳 session 非空（capturing）时应用拉到的规则；session 变 null（会话结束）即清空当前生效集、全部直连。
-        fail-open（M3 定案 A）：从未成功拉到规则 → 不 Mock 全直连；已有成功快照后某次拉取失败 → 沿用上一份成功快照继续 Mock，下次心跳再试；任何情况下业务请求不被阻断。
+        3) 规则版本下发（启用后）：响应 rulesVersion 为本设备规则集单调递增版本号；SDK 比对本地版本，不一致时带 sinceVersion 拉取增量。
+        规则应用边界：SDK 仅在本心跳 session 非空（capturing）时应用拉到的规则；session 变 null（会话结束）即清空当前生效集、全部直连。
+        fail-open：从未成功拉到规则 → 不 Mock 全直连；已有成功快照后某次拉取失败 → 沿用上一份成功快照继续 Mock，下次心跳再试；任何情况下业务请求不被阻断。
         设备未注册时返回 404，SDK 应重新注册。
       operationId: deviceHeartbeat
       parameters:
@@ -175,12 +172,11 @@ paths:
           $ref: '#/components/responses/InternalError'
 
   # ==========================================================================
-  # 2. 会话生命周期（Web 侧，M1）
+  # 2. 会话生命周期（Web 侧）
   # ==========================================================================
   /sessions:
     post:
       tags: [sessions]
-      x-milestone: m1
       summary: 激活抓包会话（Web「连接」）
       description: |
         同一设备同时仅存在一个抓包会话：若已有激活会话则返回现有会话（幂等）。
@@ -219,9 +215,8 @@ paths:
           $ref: '#/components/responses/InternalError'
     get:
       tags: [sessions]
-      x-milestone: m1
       summary: 会话列表（按设备查询）
-      description: 返回该 (app, did) 的会话列表（O3，v0.10.0：capturing + 保留期内 ended 会话；
+      description: 返回该 (app, did) 的会话列表（v0.10.0：capturing + 保留期内 ended 会话；
         历史 ended 会话期满由 janitor 清理后不再返回）。app、did 均为必填 query 参数（隔离强制）。
       operationId: listSessions
       parameters:
@@ -248,10 +243,9 @@ paths:
   /sessions/{id}:
     get:
       tags: [sessions]
-      x-milestone: m1
       summary: 会话概要（起止时间/请求数/状态/保留截止）
       description: |
-        O3（v0.10.0）：capturing 会话返回实时状态；ended 会话在保留期（retainUntil 之前）内仍返回
+        （v0.10.0）：capturing 会话返回实时状态；ended 会话在保留期（retainUntil 之前）内仍返回
         200（status=ended + endedAt + retainUntil，供历史日志展示），期满（即使 janitor 尚未清理）
         返回 404 session_not_found。
       operationId: getSession
@@ -268,15 +262,14 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       tags: [sessions]
-      x-milestone: m1
       summary: 强制结束会话（Web「断开」）
       description: |
         结束会话：SDK 停止采集与 Mock；设备回到待命。与"最后一个查看者释放"、"心跳超时"同为会话结束路径。
-        O3（v0.10.0，标记保留而非删除）：会话标记 status=ended + endedAt + retainUntil=now+48h
+        （v0.10.0，标记保留而非删除）：会话标记 status=ended + endedAt + retainUntil=now+48h
         （--capture-traffic-retention-hours，默认 48），流量保留在会话内供历史日志查询；
         保留期内 GET /sessions/{id} 与流量列表仍可访问，期满由 janitor 每小时清理释放内存。
         会话结束（任意路径）统一副作用：该设备所有 enabled=true 的 Mock 规则批量置为
-        enabled=false 并 Bump 规则版本（需求 6.6/F4.5/决策13），规则不删除、仍在规则列表，
+        enabled=false 并 Bump 规则版本，规则不删除、仍在规则列表，
         下次建立会话后由用户手动一键重新启用。
       operationId: endSession
       parameters:
@@ -290,7 +283,6 @@ paths:
   /sessions/{id}/viewers:
     post:
       tags: [sessions]
-      x-milestone: m1
       summary: 登记/续租查看者（Web 页面）
       description: |
         每个打开该设备页面的浏览器调用一次以登记页面租约；幂等续租（同 viewerId 重复调用刷新 TTL）。
@@ -318,7 +310,6 @@ paths:
   /sessions/{id}/viewers/{viewerId}:
     delete:
       tags: [sessions]
-      x-milestone: m1
       summary: 释放查看者（页面关闭）
       description: 页面关闭/卸载时调用；释放后服务端重算计数，归 0 则结束会话。
       operationId: releaseViewer
@@ -332,20 +323,19 @@ paths:
           $ref: '#/components/responses/NotFound'
 
   # ==========================================================================
-  # 3. 流量上传 / 查询（M2 实现，本阶段仅契约）
+  # 3. 流量上传 / 查询（ 实现，本阶段仅契约）
   # ==========================================================================
   /traffic:
     post:
       tags: [traffic]
-      x-milestone: m2
       summary: 批量上传流量（SDK）
       description: |
         SDK 在抓包会话有效期间批量上传一次/多次请求的完整信息（全量抓包，会话内临时记录）。
-        攒批：SDK 按条目数或累计字节阈值触发上传（M2.4 定具体策略），单批 ≤ 500 条；
+        攒批：SDK 按条目数或累计字节阈值触发上传，单批 ≤ 500 条；
         服务端请求体上限 10MB（mockd Admin BodyLimit），SDK 应控制批次大小避免整批被拒。
         部分接受：entries 中字段不合法的条目被丢弃、合法条目正常入库，响应 count = 实际接受数；
         全部条目不合法返回 400。
-        临时语义（O3，v0.10.0）：会话流量按 MaxSessionTrafficEntries
+        临时语义：会话流量按 MaxSessionTrafficEntries
         （--capture-session-max-entries，默认 20000）上限保留，超限丢最旧（rolling window）；
         会话结束（页面关闭 / 心跳超时 / 强制断开）后流量保留 48h（--capture-traffic-retention-hours，
         默认 48，自结束时刻起算）供历史日志查询，期满由 janitor 清理；
@@ -383,10 +373,9 @@ paths:
   /traffic/{id}:
     get:
       tags: [traffic]
-      x-milestone: m2
       summary: 请求详情
       description: |
-        返回单条请求完整信息。会话结束后流量转入保留区（M8.6，默认 7 天内仍可按 ID 解析，供创建分享
+        返回单条请求完整信息。会话结束后流量转入保留区（默认 7 天内仍可按 ID 解析，供创建分享
         链接）；超过保留窗口或不存在的记录返回 404（not_found）。
       operationId: getTraffic
       parameters:
@@ -402,11 +391,10 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       tags: [traffic]
-      x-milestone: m9
       summary: 删除单条流量（后端管理用途；Web 自 v0.10.0 起不再调用——「清空/✕」为纯前端操作）
       description: |
         删除一条会话内临时流量记录，仅作用于日志展示；不影响任何已持久化的 Mock 规则
-        （日志与规则互相独立）。O3（v0.10.0）起标注为后端管理用途：Web 不再调用（前端删除只清
+        （日志与规则互相独立）。（v0.10.0）起标注为后端管理用途：Web 不再调用（前端删除只清
         pageLog），服务端保留该接口供运维清理。条目不存在返回 404 not_found，调用方按幂等容错处理。
       operationId: deleteTraffic
       parameters:
@@ -420,13 +408,12 @@ paths:
   /shares:
     post:
       tags: [shares]
-      x-milestone: m8
       summary: 创建分享链接（快照）
       description: |
         把一条流量（进行中会话内，或结束会话的保留区内）复制为独立只读快照并生成分享链接
-        （M8.5/M8.6）。快照自包含（深度拷贝，切断与原会话/流量的关联）。持久化语义（O5，v0.11.0）：
+        。快照自包含（深度拷贝，切断与原会话/流量的关联）。持久化语义：
         快照随 data.json 落盘、服务重启不失效；有效期 7 天（expiresAt = 创建时刻 + 7 天），过期链接
-        返回 404，janitor 每小时清理过期快照（与 O3 48h 会话流量保留并存）。
+        返回 404，janitor 每小时清理过期快照（与  48h 会话流量保留并存）。
         需要登录（设备可见者：设备 owner 或 admin）。链接本身公开只读（GET /shares/{id} 免登录）。
       operationId: createShare
       requestBody:
@@ -450,10 +437,9 @@ paths:
   /shares/{shareId}:
     get:
       tags: [shares]
-      x-milestone: m8
       summary: 读取分享快照（公开只读，免登录）
       description: |
-        按分享 ID 返回只读快照。持久化语义（O5，v0.11.0）：链接跨服务重启有效（快照落盘）；
+        按分享 ID 返回只读快照。持久化语义：链接跨服务重启有效（快照落盘）；
         过期（创建后 7 天）或未知 ID 一律 404。
       operationId: getShare
       parameters:
@@ -475,18 +461,17 @@ paths:
   /sessions/{id}/traffic:
     get:
       tags: [traffic]
-      x-milestone: m2
-      summary: 会话内流量列表（实时 / 历史日志，O2.2 过滤下推 + O2.3 分页 + M12 机器通道）
+      summary: 会话内流量列表（实时 / 历史日志，服务端过滤下推 + 分页 + 机器通道）
       description: |
-        Web 请求流数据源（实时）与历史日志查询共用本接口（O3，v0.10.0）：
-        - 实时：Web 每 2s 轮询本接口实现秒级可见（需求决策 #5），limit 拉取最新条目并按 id 本地去重。
+        Web 请求流数据源（实时）与历史日志查询共用本接口：
+        - 实时：Web 每 2s 轮询本接口实现秒级可见（需求），limit 拉取最新条目并按 id 本地去重。
         - 历史日志：capturing 会话实时查询不变；ended 会话在保留期（retainUntil 之前）内同样返回真实
           流量（供最近 48h 历史日志），期满返回 404 session_not_found。
-        - 过滤（O2.2，服务端下推）：keyword（URL 子串，大小写不敏感）/ statusCode（精确）/
+        - 过滤：keyword（URL 子串，大小写不敏感）/ statusCode（精确）/
           from、to（RFC3339，含边界）可任意组合（AND）；非法参数 400 invalid_field。
-        - 分页（O2.3）：先过滤后分页——total 为过滤后集合大小；Web「加载更多」用 offset 累加。
+        - 分页：先过滤后分页——total 为过滤后集合大小；Web「加载更多」用 offset 累加。
         排序：按 timestamp 升序返回（请求时间线）；Web 展示可自行倒序。
-        - 机器通道（M12，v0.12.0）：projection=compact 返回瘦身视图 CompactTrafficView（8 字段，
+        - 机器通道：projection=compact 返回瘦身视图 CompactTrafficView（8 字段，
           不含 headers/bodies/query 等大字段），并为每条补 seq（每会话自增增量游标，ID 字典序不严格单调，
           故新增独立 seq）；since 按 seq 增量拉取（since=0 全量）；method（大小写不敏感）/
           scheme（URL 前缀 http|https）过滤。默认无 projection 时响应形状与 v0.11.0 完全一致
@@ -506,7 +491,7 @@ paths:
           schema:
             type: integer
             default: 0
-          description: 跳过条数（先过滤后分页，O2.3）
+          description: 跳过条数（先过滤后分页）
         - name: keyword
           in: query
           schema:
@@ -535,7 +520,7 @@ paths:
             type: string
             enum: [compact]
           description: |
-            M12：compact 时返回瘦身视图（CompactTrafficView 数组，含 seq 增量游标），
+            compact 时返回瘦身视图（CompactTrafficView 数组，含 seq 增量游标），
             供 MCP/CLI 等机器通道低带宽拉取；缺省时返回完整 TrafficEntry（v0.11.0 形状不变）。
         - name: since
           in: query
@@ -543,18 +528,18 @@ paths:
             type: integer
             minimum: 0
           description: |
-            M12：增量游标——只返回 seq > since 的条目（跨请求批次单调递增），
+            增量游标——只返回 seq > since 的条目（跨请求批次单调递增），
             用于 MCP/CLI 轮询增量拉取；since=0（缺省）返回全量。与 offset 组合时先按 since 过滤再分页。
         - name: method
           in: query
           schema:
             type: string
-          description: M12：HTTP 方法精确过滤（大小写不敏感，如 GET/post）
+          description: HTTP 方法精确过滤（大小写不敏感，如 GET/post）
         - name: scheme
           in: query
           schema:
             type: string
-          description: M12：URL scheme 过滤（http|https，按 URL 前缀匹配，忽略大小写）
+          description: ：URL scheme 过滤（http|https，按 URL 前缀匹配，忽略大小写）
       responses:
         '200':
           description: 流量列表（默认完整条目；projection=compact 时为瘦身条目；均含过滤后 total）
@@ -578,11 +563,10 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       tags: [traffic]
-      x-milestone: m9
       summary: 清空会话流量（后端管理用途；Web 自 v0.10.0 起不再调用——「清空/✕」为纯前端操作）
       description: |
         清空会话的全部临时流量并把会话请求计数重置为 0（时间线重开，新流量继续累积）。
-        仅作用于日志展示，不影响任何已持久化的 Mock 规则。O3（v0.10.0）起标注为后端管理用途：
+        仅作用于日志展示，不影响任何已持久化的 Mock 规则。（v0.10.0）起标注为后端管理用途：
         Web 不再调用（前端清空只清 pageLog），服务端保留该接口供运维清理。未知会话返回 404。
       operationId: clearSessionTraffic
       parameters:
@@ -594,18 +578,17 @@ paths:
           $ref: '#/components/responses/NotFound'
 
   # ==========================================================================
-  # 4. Mock 规则（下发与 CRUD，M3/M4 实现，本阶段仅契约）
+  # 4. Mock 规则（下发与 CRUD，/ 实现，本阶段仅契约）
   # ==========================================================================
   /devices/{app}/{did}/mock-rules:
     get:
       tags: [mock-rules]
-      x-milestone: m3
       summary: 规则下发（SDK 拉取） / 规则列表（Web）
       description: |
         SDK 侧：携带 sinceVersion 增量拉取本设备运行时生效规则；version 为单调递增版本号，规则变更（创建/编辑/启停/删除）即 +1。
         仅返回 effective=true 的规则供 SDK 回包（异常态同接口多条 enabled 时该接口规则全部 effective=false、不出现在 SDK 集）。
         SDK 拉取响应只含 SDK 消费字段（id/method/path/response/enabled/effective）——owner/updatedBy 等
-        纯服务端字段（O4，v0.11.0）与 source/note/lastUsedAt 等 Web-only 字段绝不下发 SDK。
+        纯服务端字段与 source/note/lastUsedAt 等 Web-only 字段绝不下发 SDK。
         Web 侧：不带 sinceVersion，返回本设备全部规则（含停用、含 source 快照、含 owner/updatedBy），并附带 conflicts 异常态报告。
         匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口同时仅一条生效（前端互斥 + 服务端兜底：多条生效时该接口不 Mock 并在 conflicts 下发前端弹窗）。
       operationId: listMockRules
@@ -628,12 +611,11 @@ paths:
           $ref: '#/components/responses/BadRequest'
     post:
       tags: [mock-rules]
-      x-milestone: m3
       summary: 创建 Mock 回包规则（含"从真实回包一键创建"）
       description: |
         创建时默认 enabled=false；同一接口（Method+Path）允许多条保存，但运行时仅一条 effective。
-        note 创建时可空（null），首次编辑保存时再必填（M5）。
-        "从真实回包一键创建"：Web 把整条已抓包 TrafficEntry 作为 source 快照传入（原始请求 + 真实回包 b1），服务端随规则持久化（临时流量会话结束即清空，快照保留）；手动创建（F4.1）可省略 source。
+        note 创建时可空（null），首次编辑保存时再必填。
+        "从真实回包一键创建"：Web 把整条已抓包 TrafficEntry 作为 source 快照传入（原始请求 + 真实回包 b1），服务端随规则持久化（临时流量会话结束即清空，快照保留）；手动创建可省略 source。
       operationId: createMockRule
       parameters:
         - $ref: '#/components/parameters/AppPath'
@@ -659,15 +641,14 @@ paths:
   /devices/{app}/{did}/mock-rules/{ruleId}:
     put:
       tags: [mock-rules]
-      x-milestone: m3
       summary: 更新规则（编辑回包内容 / 备注 / 启停）
       description: |
-        编辑规则内容（M5）。请求体为独立的 UpdateMockRuleInput，不含 method/path——匹配键不可改，
+        编辑规则内容。请求体为独立的 UpdateMockRuleInput，不含 method/path——匹配键不可改，
         编辑只允许改 response（statusCode/headers/body）、note、enabled。note 仅当响应内容实际改动时
-        必填（空或纯空白返回 400，M7）；纯开关操作（response 原样回传）note 可空。
+        必填（空或纯空白返回 400）；纯开关操作（response 原样回传）note 可空。
         单条覆盖式更新、不做编辑历史；编辑成功刷新 lastUsedAt。
         同一接口仅一条生效的服务端兜底在此执行：若置为启用时发现同接口已有其他生效规则，返回 409（前端应先做开关互斥）。
-        权限（O4，v0.11.0）：编辑/启停仅规则 owner 与 admin——非 owner 且非 admin 返回 403 forbidden，
+        权限：编辑/启停仅规则 owner 与 admin——非 owner 且非 admin 返回 403 forbidden，
         且不泄露规则存在性（对非 admin，未知 ruleId 同样 403；admin 才见真实 404）。
       operationId: updateMockRule
       parameters:
@@ -690,7 +671,7 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
-          description: 权限不足——仅规则 owner 或 admin 可编辑/启停（O4，v0.11.0）；未知 ruleId 对非 admin 同样 403（不泄露存在性）
+          description: 权限不足——仅规则 owner 或 admin 可编辑/启停；未知 ruleId 对非 admin 同样 403（不泄露存在性）
           content:
             application/json:
               schema:
@@ -705,10 +686,9 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
     delete:
       tags: [mock-rules]
-      x-milestone: m4
       summary: 删除规则
       description: |
-        权限（O4，v0.11.0）：删除仅规则 owner 与 admin——非 owner 且非 admin 返回 403 forbidden
+        权限：删除仅规则 owner 与 admin——非 owner 且非 admin 返回 403 forbidden
         （未知 ruleId 对非 admin 同样 403，不泄露存在性）。
       operationId: deleteMockRule
       parameters:
@@ -719,7 +699,7 @@ paths:
         '204':
           description: 已删除
         '403':
-          description: 权限不足——仅规则 owner 或 admin 可删除（O4，v0.11.0）
+          description: 权限不足——仅规则 owner 或 admin 可删除
           content:
             application/json:
               schema:
@@ -733,7 +713,6 @@ paths:
   /devices:
     get:
       tags: [devices]
-      x-milestone: m1
       summary: 设备列表（Web 首页）
       description: |
         返回全部设备，含连接状态（idle 待命 / capturing 抓包中 / offline 离线）与最后活跃时间。
@@ -758,12 +737,11 @@ paths:
   /devices:
     post:
       tags: [devices]
-      x-milestone: m7.2.1
       summary: 手动注册设备（Web）
       description: |
         Web 手动创建设备条目：从固定 app 清单选 app、填入 SDK 的 did、命名设备。
         当前登录账号即 owner；同一 (app,did) 已存在则 409。
-        需 Bearer 登录态（SDK 自动注册在 M7.2.3 后废弃，此为唯一创建设备途径）。
+        需 Bearer 登录态（SDK 自动注册在  后废弃，此为唯一创建设备途径）。
       operationId: createDevice
       security:
         - bearerAuth: []
@@ -802,7 +780,6 @@ paths:
   /devices/{app}/{did}:
     get:
       tags: [devices]
-      x-milestone: m1
       summary: 设备详情
       operationId: getDevice
       parameters:
@@ -819,7 +796,6 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       tags: [devices]
-      x-milestone: m6
       summary: 设置设备自定义名称/备注
       operationId: renameDevice
       parameters:
@@ -848,14 +824,13 @@ paths:
           $ref: '#/components/responses/NotFound'
 
   # ==========================================================================
-  # 7. 配对令牌（M9，v0.8.0）：扫码连接的基础
+  # 7. 配对令牌：扫码连接的基础
   # 设备页为已登录用户签发短时令牌；二维码携带该令牌 + 服务器地址 + appID，
   # SDK 扫码后凭令牌自动注册设备。令牌 10 分钟有效、可复用（同一令牌可注册多台设备）。
   # ==========================================================================
   /pairing-tokens:
     post:
       tags: [devices]
-      x-milestone: m9
       summary: 签发配对令牌（Web 设备页，requireAuth）
       description: |
         为当前登录用户、指定 app 签发配对令牌（10 分钟有效，D5 可复用：有效期内同一令牌可
@@ -892,12 +867,11 @@ paths:
   /pairing-tokens/{token}:
     get:
       tags: [devices]
-      x-milestone: m9
       summary: 查询配对令牌状态与已配对设备（requireAuth，扫码完成轮询）
       description: |
         Web 在二维码弹窗打开期间轮询本端点（v0.8.2）：一旦有设备用该令牌完成注册
         （pairedDevices 新增 did），Web 自动关闭二维码弹窗 → 弹出设备命名框 → 提交后
-        跳转该设备请求列表页。令牌可复用（D5）：usedDevices 可含多台设备，Web 以
+        跳转该设备请求列表页。令牌可复用：usedDevices 可含多台设备，Web 以
         「自弹窗打开以来新增」为准。过期令牌仍返回（Web 以自身倒计时为准，仅弹窗
         打开期间需要状态）。
       operationId: getPairingTokenStatus
@@ -928,7 +902,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   # ==========================================================================
-  # 7a. App 目录（M9.4，v0.9.1）：Web「App」下拉框的数据源
+  # 7a. App 目录：Web「App」下拉框的数据源
   # Web 扫码弹窗的 App 下拉框不再硬编码，而是 GET /apps 动态拉取服务端生效中的
   # app 目录（默认占位 + MOCKD_ALLOWED_APPS 环境变量 + git-ignored 本地文件
   # allowed-apps.local，热加载：改文件无需重启）。真实 bundle id 只存在于
@@ -937,7 +911,6 @@ paths:
   /apps:
     get:
       tags: [devices]
-      x-milestone: m9
       summary: 查询生效中的 app 目录（requireAuth，Web 下拉框数据源）
       description: |
         返回按字典序排序的 app 目录。目录由 loadAllowedApps() 每次请求实时计算：
@@ -960,7 +933,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   # ==========================================================================
-  # 7b. 服务器局域网地址（M9.1-fix，v0.8.1）：localhost 场景二维码修复
+  # 7b. 服务器局域网地址：localhost 场景二维码修复
   # 浏览器用 localhost 打开 Web 时，location.origin 对手机不可达（手机连自己的
   # localhost 被拒）。Web 先查此端点拿服务端局域网可达 origin，替换二维码 u 字段。
   # 非 localhost 部署（域名/局域网 IP 访问）不调用本端点。
@@ -968,7 +941,6 @@ paths:
   /local-address:
     get:
       tags: [devices]
-      x-milestone: m9
       summary: 查询服务端局域网可达地址（requireAuth）
       description: |
         返回服务端局域网可达 origin（scheme://LAN-IPv4:port，port 沿用请求 Host 的端口），
@@ -995,14 +967,13 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   # ==========================================================================
-  # 6. 账号与会话（M7.1，v0.6.0）
+  # 6. 账号与会话
   # 开放注册仅产 dev 角色；admin 由 CLI `mockd start --create-admin` 创建。
   # 登录签发服务端持久化的会话 token（有效期 7 天，配置项）；登出即服务端吊销。
   # ==========================================================================
   /auth/register:
     post:
       tags: [auth]
-      x-milestone: m7
       summary: 开放注册（仅 dev 角色）
       description: |
         用户名+密码即可注册（内网员工高可信）；角色固定为 dev，管理员不走注册接口。
@@ -1036,7 +1007,6 @@ paths:
   /auth/login:
     post:
       tags: [auth]
-      x-milestone: m7
       summary: 登录（签发会话 token）
       description: |
         校验用户名+密码；成功签发 Bearer token（服务端持久化，有效期 7 天）并返回用户信息。
@@ -1070,7 +1040,6 @@ paths:
   /auth/logout:
     post:
       tags: [auth]
-      x-milestone: m7
       summary: 登出（服务端吊销当前 token）
       description: |
         吊销请求携带的 Bearer token（服务端删除会话记录），token 立即失效。
@@ -1089,7 +1058,6 @@ paths:
   /auth/me:
     get:
       tags: [auth]
-      x-milestone: m7
       summary: 当前登录用户
       description: |
         返回请求携带的 Bearer token 对应的用户信息（角色 admin|dev），供 Web 判断登录态与角色。
@@ -1110,7 +1078,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   # --------------------------------------------------------------------------
-  # 6.1 长效 API Key（M12，v0.12.0）——机器原生通道凭证
+  # 6.1 长效 API Key——机器原生通道凭证
   # 明文仅在创建响应返回一次；服务端只存 SHA-256 哈希；日志不落 key 明文。
   # 语义：API Key 等价于所属用户（角色同源）；非 owner 且非 admin 对他人 key 的
   # 吊销一律 404（不泄露存在性，与 mock-rules 403 语义的防枚举原则一致）。
@@ -1118,7 +1086,6 @@ paths:
   /auth/keys:
     post:
       tags: [auth]
-      x-milestone: m12
       summary: 创建长效 API Key（明文仅本次返回）
       description: |
         为当前用户签发一个长效 API Key（前缀 mnpk_，服务端存 SHA-256 哈希）。
@@ -1143,7 +1110,6 @@ paths:
           $ref: '#/components/responses/InternalError'
     get:
       tags: [auth]
-      x-milestone: m12
       summary: 当前用户的 API Key 列表（不含明文）
       description: |
         返回当前用户已创建且未吊销的 API Key（id/keyPrefix/createdAt/expiresAt）；
@@ -1168,7 +1134,6 @@ paths:
   /auth/keys/{id}:
     delete:
       tags: [auth]
-      x-milestone: m12
       summary: 吊销 API Key
       description: |
         吊销指定 API Key（立即失效，不可恢复）。仅 key 的 owner 与 admin 可吊销；
@@ -1202,7 +1167,7 @@ components:
       scheme: bearer
       bearerFormat: Token
       description: |
-        两种凭证并存（M12，v0.12.0）：
+        两种凭证并存：
         - 会话 token：登录（POST /auth/login）签发、服务端持久化；Web 每次请求携带
           `Authorization: Bearer <token>`。有效期 7 天（服务端配置项）；登出即服务端吊销。
         - 长效 API Key：POST /auth/keys 创建，`Authorization: Bearer <mnpk_...>`；无过期，
@@ -1328,11 +1293,11 @@ components:
         owner:
           type: string
           nullable: true
-          description: 注册该设备的账号用户名（M7.2 Web 手动注册 / M9 扫码自动注册）；SDK 直接注册的遗留设备为空
+          description: 注册该设备的账号用户名（ Web 手动注册 /  扫码自动注册）；SDK 直接注册的遗留设备为空
         platform:
           type: string
           enum: [ios]
-          description: 平台（为 Android 预留，M1 仅 ios）
+          description: 平台（为 Android 预留， 仅 ios）
         osVersion:
           type: string
           description: 系统版本
@@ -1401,8 +1366,8 @@ components:
           type: string
           maxLength: 128
           description: |
-            配对令牌（M9，v0.8.0）：Web 二维码中的短时令牌。提供且有效时未知 (app, did)
-            自动注册（owner=签发用户，D1），已存在则复用原记录（D7）；缺失时保持 M7.2.3 语义
+            配对令牌：Web 二维码中的短时令牌。提供且有效时未知 (app, did)
+            自动注册（owner=签发用户，D1），已存在则复用原记录；缺失时保持  语义
             （未知 did 404）。
         deviceName:
           type: string
@@ -1489,7 +1454,7 @@ components:
           type: array
           items:
             type: string
-          description: 生效中的 app 目录（字典序）；Web 扫码弹窗下拉框的数据源（M9.4）
+          description: 生效中的 app 目录（字典序）；Web 扫码弹窗下拉框的数据源
 
     RegisterDeviceResponse:
       type: object
@@ -1543,13 +1508,13 @@ components:
         rulesVersion:
           type: integer
           default: 0
-          description: 当前规则版本号（M3 启用：SDK 比对后决定是否拉取增量）
+          description: 当前规则版本号（ 启用：SDK 比对后决定是否拉取增量）
 
     # ---------------------------------------------------------------- 会话
     SessionStatus:
       type: string
       enum: [capturing, ended]
-      description: capturing=抓包中；ended=已结束（M9 起仅瞬时状态：会话结束即删除记录，不持久化 ended）
+      description: capturing=抓包中；ended=已结束（ 起仅瞬时状态：会话结束即删除记录，不持久化 ended）
 
     CaptureSession:
       type: object
@@ -1574,7 +1539,7 @@ components:
         requestCount:
           type: integer
           default: 0
-          description: 会话内请求数（M2 起有真实值）
+          description: 会话内请求数（启用后有真实值）
         viewerCount:
           type: integer
           default: 0
@@ -1583,7 +1548,7 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: 结束会话的保留截止时刻（O3，v0.10.0：ended 会话流量保留 48h，保留期内可查）
+          description: 结束会话的保留截止时刻
 
     ActivateSessionRequest:
       type: object
@@ -1659,7 +1624,7 @@ components:
         requestBody:
           type: string
           description: |
-            请求体：按 UTF-8 文本保存，超过 1MB 截断（M2 固定上限，不做配置项）；
+            请求体：按 UTF-8 文本保存，超过 1MB 截断（ 固定上限，不做配置项）；
             无法 UTF-8 解码的二进制内容以 "[binary N bytes]" 占位保存。
         requestBodyBase64:
           type: string
@@ -1667,7 +1632,7 @@ components:
         requestBodyDecoded:
           type: string
           description: |
-            请求体经 App 注入的协议解码器解出的可读 UTF-8 文本（M8.1，与 responseBodyDecoded 同机制）。
+            请求体经 App 注入的协议解码器解出的可读 UTF-8 文本。
             仅作 Web 展示；存在时 Web 优先展示它，无则回退 requestBody 的 "[binary N bytes]" 占位。
             不参与回放；解码失败/未注入解码器时缺省。
         statusCode:
@@ -1686,7 +1651,7 @@ components:
           type: string
           nullable: true
           description: |
-            响应体：按 UTF-8 文本保存，超过 1MB 截断（M2 固定上限，不做配置项）；
+            响应体：按 UTF-8 文本保存，超过 1MB 截断（ 固定上限，不做配置项）；
             无法 UTF-8 解码的二进制内容以 "[binary N bytes]" 占位保存；请求失败时为空。
         responseBodyBase64:
           type: string
@@ -1694,7 +1659,7 @@ components:
         responseBodyDecoded:
           type: string
           description: |
-            响应体经 App 注入的协议解码器解出的可读 UTF-8 文本（M4）。
+            响应体经 App 注入的协议解码器解出的可读 UTF-8 文本。
             仅作 Web 展示；存在时 Web 优先展示它，无则回退 responseBody 的 "[binary N bytes]" 占位。
             不参与回放——回放永远走 responseBodyBase64 原始字节；解码失败/未注入解码器时缺省。
         error:
@@ -1707,25 +1672,25 @@ components:
         mocked:
           type: boolean
           default: false
-          description: 是否命中 Mock（M2 恒为 false；M3 起标记，Web 请求流标注"Mock 命中"）
+          description: 是否命中 Mock（ 恒为 false； 起标记，Web 请求流标注"Mock 命中"）
         matchedRuleId:
           type: string
           description: >-
-            命中的 Mock 规则 ID（v0.13.0，M12.3 P1-1）：仅 mocked=true 时非空，
+            命中的 Mock 规则 ID（v0.13.0， P1-1）：仅 mocked=true 时非空，
             用于确认该请求究竟命中哪一条规则；真实流量为空/缺省。
         seq:
           type: integer
           description: |
-            每会话自增的到达序号（M12，v0.12.0）：服务端按上传到达顺序从 1 递增，
+            每会话自增的到达序号：服务端按上传到达顺序从 1 递增，
             供增量拉取（since）使用——ID 为 ULID，同毫秒内字典序不严格单调，故新增独立 seq。
             仅服务端与查询方（MCP/CLI/Web）消费，SDK 不感知、不消费。
 
-    # ------------------------------------------------- M12 机器通道（v0.12.0）
+    # -------------------------------------------------  机器通道（v0.12.0）
     CompactTrafficView:
       type: object
       required: [id, seq, timestamp, method, url, durationMs]
       description: |
-        流量瘦身视图（?projection=compact，M12）：供 MCP/CLI 低带宽增量拉取，
+        流量瘦身视图（?projection=compact）：供 MCP/CLI 低带宽增量拉取，
         不含 headers/bodies/query/requestBody* 等大字段；seq 为每会话增量游标。
       properties:
         id:
@@ -1838,7 +1803,7 @@ components:
           items:
             $ref: '#/components/schemas/TrafficEntry'
           description: |
-            一次批量上传的流量条目。SDK 攒批：按条目数或累计字节阈值触发上传（M2.4 定具体策略），
+            一次批量上传的流量条目。SDK 攒批：按条目数或累计字节阈值触发上传，
             单批 ≤ 500 条且控制总字节，避免超过服务端 10MB 请求体上限。
 
     TrafficUploadResponse:
@@ -1847,7 +1812,7 @@ components:
       properties:
         accepted:
           type: boolean
-          description: 是否已接收（202 隐含接收，M2 恒为 true；false 仅作扩展预留）
+          description: 是否已接收（202 隐含接收， 恒为 true；false 仅作扩展预留）
         count:
           type: integer
           description: 实际接受的条目数（部分接受：合法条目数；全部条目不合法时服务端返回 400 而非 202）
@@ -1914,36 +1879,36 @@ components:
           type: string
           format: date-time
           description: |
-            上一次"被使用"时间（M4，滑动清理窗口起点）。
+            上一次"被使用"时间。
             命中回包、Web 编辑保存、Web toggle 启停三类操作刷新；心跳/版本轮询/纯浏览不刷新。
             早于 now - retention（默认 7 天，配置项）的规则连同 source 快照自动删除。
         note:
           type: string
           nullable: true
           description: |
-            规则备注（M5）。单条字符串，编辑保存时覆盖式更新，不做编辑历史。
-            创建时可空（null，兼容 M4 及之前老规则）；Web 编辑弹窗中必填（PUT 时服务端校验非空）。
+            规则备注。单条字符串，编辑保存时覆盖式更新，不做编辑历史。
+            创建时可空（null，兼容  及之前老规则）；Web 编辑弹窗中必填（PUT 时服务端校验非空）。
             纯管理面字段，不参与匹配、不下发给 SDK。
         owner:
           type: string
           nullable: true
           description: |
-            规则创建者用户名（O4，v0.11.0）。服务端从当前会话用户写入，创建时设；空（null）
-            表示存量规则（v0.11.0 之前创建），仅 admin 可管理（O4.3）。
+            规则创建者用户名。服务端从当前会话用户写入，创建时设；空（null）
+            表示存量规则（v0.11.0 之前创建），仅 admin 可管理。
             纯服务端字段：Web 全量列表下发展示；SDK 增量拉取不下发（SDK 只关心
             method/path/response/enabled/effective）。
         updatedBy:
           type: string
           nullable: true
           description: |
-            最后修改者用户名（O4，v0.11.0）。每次 PUT 更新时由服务端写入当前会话用户。
+            最后修改者用户名。每次 PUT 更新时由服务端写入当前会话用户。
             纯服务端字段：Web 全量列表下发展示；SDK 增量拉取不下发。
 
     MockRuleSource:
       type: object
       description: |
         该规则所依据的真实请求快照（"Mock 此请求"时从一条已抓包 TrafficEntry 固化）。
-        临时流量随会话结束清空，此快照随规则持久化保留（需求 6.6/F3.4），供后续查看原始值与 Mock 值对照；手动创建的规则为 null。
+        临时流量随会话结束清空，此快照随规则持久化保留（需求 6.6/），供后续查看原始值与 Mock 值对照；手动创建的规则为 null。
       required: [method, path, capturedAt]
       properties:
         method:
@@ -1969,7 +1934,7 @@ components:
         requestBodyDecoded:
           type: string
           description: |
-            原始请求体经 App 协议解码器解出的可读 UTF-8 文本（M8.1），随"Mock 此请求"快照固化，
+            原始请求体经 App 协议解码器解出的可读 UTF-8 文本，随"Mock 此请求"快照固化，
             供规则详情页对照查看；纯展示字段，不参与回放。
         statusCode:
           type: integer
@@ -1991,7 +1956,7 @@ components:
         responseBodyDecoded:
           type: string
           description: |
-            原始真实回包经 App 协议解码器解出的可读 UTF-8 文本（M4），随"Mock 此请求"快照固化，
+            原始真实回包经 App 协议解码器解出的可读 UTF-8 文本，随"Mock 此请求"快照固化，
             供规则详情页对照查看；纯展示字段，不参与回放。
         capturedAt:
           type: string
@@ -2014,7 +1979,7 @@ components:
         note:
           type: string
           nullable: true
-          description: 规则备注（M5），创建时可省略或为 null；首次编辑保存时再必填。
+          description: 规则备注，创建时可省略或为 null；首次编辑保存时再必填。
         source:
           $ref: '#/components/schemas/MockRuleSource'
           nullable: true
@@ -2026,7 +1991,7 @@ components:
       type: object
       required: [response, note]
       description: |
-        编辑规则请求体（M5）。与创建用 MockRuleInput 分离：不含 method/path（匹配键不可改），
+        编辑规则请求体。与创建用 MockRuleInput 分离：不含 method/path（匹配键不可改），
         不含 source（快照只读）。编辑只允许改 response、note、enabled。
       properties:
         response:
@@ -2035,7 +2000,7 @@ components:
           type: string
           description: |
             规则备注，单条覆盖式更新，不做编辑历史。仅当请求体实际改动 response 内容（编辑）时必填且非空
-            （空串或纯空白返回 400，M7）；纯开关操作（response 原样回传）可省略或留空。
+            （空串或纯空白返回 400）；纯开关操作（response 原样回传）可省略或留空。
         enabled:
           type: boolean
           description: |
@@ -2069,7 +2034,7 @@ components:
                 type: string
                 example: "不允许同一个接口同时开启多个 Mock 规则"
 
-    # ---------------------------------------------------------------- 分享（M8.5/O5）
+    # ---------------------------------------------------------------- 分享
     CreateShareRequest:
       type: object
       required: [trafficId]
@@ -2091,7 +2056,7 @@ components:
         expiresAt:
           type: string
           format: date-time
-          description: 失效时刻（创建时刻 + 7 天，O5 持久化语义：跨重启仍按此 TTL 过期）
+          description: 失效时刻（创建时刻 + 7 天， 持久化语义：跨重启仍按此 TTL 过期）
     ShareSnapshot:
       type: object
       required: [shareId, createdAt, expiresAt, entry]
@@ -2109,7 +2074,7 @@ components:
           $ref: '#/components/schemas/TrafficEntry'
           description: 只读快照（深度拷贝，切断与原会话/流量的关联；sessionId 置空不暴露内部关联）
 
-    # ---------------------------------------------------------------- 账号（M7.1）
+    # ---------------------------------------------------------------- 账号
     User:
       type: object
       description: 用户信息（API 输出不含密码哈希）
@@ -2141,7 +2106,7 @@ components:
           type: string
           minLength: 6
           maxLength: 128
-          description: 密码（明文传输，内网；服务端 PBKDF2 哈希存储）
+          description: 密码（明文传输，内网；服务端 PBKD 哈希存储）
 
     LoginAuthRequest:
       type: object

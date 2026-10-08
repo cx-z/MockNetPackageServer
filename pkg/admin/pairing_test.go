@@ -59,11 +59,11 @@ func TestPairingToken_IssueAndRegister(t *testing.T) {
 	_, ts := newAuthRequiredTestAPI(t)
 	issue := issuePairingToken(t, ts, "pairdev")
 
-	// TTL is ~10 minutes (D5), token carries the app binding.
+	// TTL is ~10 minutes , token carries the app binding.
 	assert.WithinDuration(t, time.Now().Add(10*time.Minute), issue.ExpiresAt, time.Minute)
 
 	// SDK register with the token: an unknown (app, did) is auto-registered
-	// under the issuing user (D1), with the supplied display name.
+	// under the issuing user , with the supplied display name.
 	var reg RegisterDeviceResponse
 	res := doJSON(t, http.MethodPost, ts.URL+"/api/v1/devices/register", RegisterDeviceRequest{
 		App:          "com.example.integrating",
@@ -122,7 +122,7 @@ func TestPairingToken_D7IdempotentReuse(t *testing.T) {
 	}, &reg)
 	require.Equal(t, http.StatusOK, res.StatusCode)
 	assert.True(t, reg.Device.RegisteredAt.Equal(firstRegisteredAt), "re-register must keep RegisteredAt")
-	assert.Equal(t, "A", reg.Device.Name, "reuse must never overwrite the device name (D7)")
+	assert.Equal(t, "A", reg.Device.Name, "reuse must never overwrite the device name ")
 	assert.Equal(t, "pairdev", reg.Device.Owner)
 
 	// A different user scans the same device: still reused, owner unchanged.
@@ -132,7 +132,7 @@ func TestPairingToken_D7IdempotentReuse(t *testing.T) {
 		PairingToken: other.Token,
 	}, &reg)
 	require.Equal(t, http.StatusOK, res.StatusCode)
-	assert.Equal(t, "pairdev", reg.Device.Owner, "owner must not transfer on reuse (D7)")
+	assert.Equal(t, "pairdev", reg.Device.Owner, "owner must not transfer on reuse ")
 
 	// Device list still has exactly one record.
 	list := listDevicesAs(t, ts, "pairdev")
@@ -188,7 +188,7 @@ func TestPairingToken_ReusableMultipleDevices(t *testing.T) {
 	_, ts := newAuthRequiredTestAPI(t)
 	issue := issuePairingToken(t, ts, "pairdev")
 
-	// One QR (one token) onboards several devices (D5) within the TTL.
+	// One QR (one token) onboards several devices  within the TTL.
 	for _, did := range []string{"scan-a", "scan-b", "scan-c"} {
 		var reg RegisterDeviceResponse
 		res := doJSON(t, http.MethodPost, ts.URL+"/api/v1/devices/register", RegisterDeviceRequest{
@@ -203,7 +203,7 @@ func TestPairingToken_ReusableMultipleDevices(t *testing.T) {
 	require.Len(t, list.Devices, 3)
 }
 
-// TestPairingToken_StatusReflectsScan (M9.3-fix, v0.8.2): after a device
+// TestPairingToken_StatusReflectsScan : after a device
 // registers with the token, GET /pairing-tokens/{token} reports used=true and
 // the paired device (did + name) — the Web polls this to auto-close the QR
 // modal and open the naming flow.
@@ -270,13 +270,13 @@ func TestPairingToken_AppNameRefreshedOnReuse(t *testing.T) {
 	assert.Equal(t, "IntegratingApp", reg.Device.AppName)
 
 	// Re-scan same did with a different appName + different device name:
-	// appName refreshes, name/owner are preserved (D7).
+	// appName refreshes, name/owner are preserved .
 	res = doJSON(t, http.MethodPost, ts.URL+"/api/v1/devices/register", RegisterDeviceRequest{
 		App: "com.example.integrating", Did: "scan-appname", DeviceName: "B",
 		AppName: "IntegratingApp Pro", PairingToken: issue.Token,
 	}, &reg)
 	require.Equal(t, http.StatusOK, res.StatusCode)
 	assert.Equal(t, "IntegratingApp Pro", reg.Device.AppName, "appName refreshes as metadata on reuse")
-	assert.Equal(t, "dev", reg.Device.Name, "device name must not change on reuse (D7)")
+	assert.Equal(t, "dev", reg.Device.Name, "device name must not change on reuse ")
 	assert.Equal(t, "pairdev", reg.Device.Owner)
 }

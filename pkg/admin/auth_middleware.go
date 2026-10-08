@@ -1,20 +1,20 @@
-// Bearer-token auth middleware for the Web-facing MockNetPack routes (M7.1.3).
+// Bearer-token auth middleware for the Web-facing MockNetPack routes .
 //
-// Scope decision (M7 拍板 #6): Web management routes (device list/detail,
+// Scope decision ( ): Web management routes (device list/detail,
 // session control, viewer leases, traffic query/delete, mock-rule CRUD)
 // require a valid logged-in user; SDK-facing routes (device register, device
 // heartbeat, traffic upload) are intentionally NOT wrapped — the SDK carries
 // no credentials, its identity is (app, did), and unknown-did rejection
-// lands separately in M7.2.3.
+// lands separately in .
 //
 // --no-auth (apiKeyConfig disabled) does not force login: missing/invalid
 // tokens pass through (local smoke mode), but a request that DOES carry a
-// valid Bearer token is still resolved and injected (M4) — so a logged-in
+// valid Bearer token is still resolved and injected  — so a logged-in
 // browser on a --no-auth instance gets its identity (rule owner stamping,
 // permission checks) while anonymous callers keep full smoke-mode access.
 // In auth mode the Bearer requirement is enforced.
 //
-// M12: the Bearer credential may be either a login session token (M7.1,
+// : the Bearer credential may be either a login session token (
 // 32 random bytes hex) or a long-lived API key (prefixed "mnpk_"). Both are
 // resolved to the same UserCtx; a request passes when either is valid.
 
@@ -50,10 +50,10 @@ func currentUser(r *http.Request) *UserCtx {
 // valid token resolves to an AuthSession + User which is injected into the
 // request context. Missing/invalid/expired tokens get 401; role-based
 // 403 checks are opt-in via requireRole for future admin-only routes.
-// M12: the Bearer credential may be a session token OR a long-lived API key
+// : the Bearer credential may be a session token OR a long-lived API key
 // (both resolve via authenticate).
 // In --no-auth smoke mode login is not forced, but a valid token is still
-// resolved and injected (M4); anonymous requests proceed without a caller.
+// resolved and injected ; anonymous requests proceed without a caller.
 func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// --no-auth: no forced login, but honor a presented valid token.
@@ -79,8 +79,8 @@ func (a *API) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // requireRole wraps requireAuth and additionally demands one of the given
-// roles (403 otherwise). M7.1.3 ships the channel; no route is admin-only yet
-// (app management is a recorded backlog item, owner filtering lands M7.2.2).
+// roles (403 otherwise).  ships the channel; no route is admin-only yet
+// (app management is a recorded backlog item, owner filtering lands ).
 func (a *API) requireRole(role account.Role, next http.HandlerFunc) http.HandlerFunc {
 	return a.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		u := currentUser(r)
@@ -94,12 +94,12 @@ func (a *API) requireRole(role account.Role, next http.HandlerFunc) http.Handler
 
 // authenticate resolves the Bearer token to a *UserCtx without writing an
 // error response. Returns nil when the token is missing/invalid/expired —
-// in any auth mode (M4: --no-auth also attempts resolution). Used by handlers
+// in any auth mode (: --no-auth also attempts resolution). Used by handlers
 // that mix an open SDK consumer and an authenticated Web consumer on one route
 // (e.g. GET mock-rules): the caller decides which branch needs auth and writes
 // the 401 itself.
 //
-// M12: the credential may be a session token or a long-lived API key. API
+// : the credential may be a session token or a long-lived API key. API
 // keys carry the "mnpk_" prefix, so the lookup is routed without a store
 // probe; either path resolves to the same UserCtx.
 func (a *API) authenticate(r *http.Request) *UserCtx {
@@ -121,7 +121,7 @@ func (a *API) authenticate(r *http.Request) *UserCtx {
 	return &UserCtx{Username: u.Username, Role: u.Role}
 }
 
-// authenticateAPIKey resolves a long-lived API key (M12) to its owning user.
+// authenticateAPIKey resolves a long-lived API key  to its owning user.
 // The stored key holds only the SHA-256 hash; the plaintext is never kept or
 // logged. Expired keys (non-zero ExpiresAt in the past) fail closed.
 func (a *API) authenticateAPIKey(r *http.Request, plain string) *UserCtx {
@@ -137,7 +137,7 @@ func (a *API) authenticateAPIKey(r *http.Request, plain string) *UserCtx {
 }
 
 // ============================================================================
-// Ownership enforcement (M7.2.2): developers see only devices they registered;
+// Ownership enforcement : developers see only devices they registered;
 // admins see everything. Cross-owner access is reported as 404 (not 403) so
 // the existence of another user's devices is not leaked.
 // ============================================================================

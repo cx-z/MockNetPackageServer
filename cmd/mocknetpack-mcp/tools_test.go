@@ -63,7 +63,7 @@ func resultText(res *mcp.CallToolResult) string {
 	return sb.String()
 }
 
-// TestMCPServer_RegistersTwelveTools asserts M1 (M12.3): the 12 documented
+// TestMCPServer_RegistersTwelveTools asserts  : the 12 documented
 // tools are registered, each with a description and a JSON schema.
 func TestMCPServer_RegistersTwelveTools(t *testing.T) {
 	srv := server.NewMCPServer("mocknetpack", "0.12.0")
@@ -169,7 +169,7 @@ func TestMCPServer_CreateRuleFromTrafficTool(t *testing.T) {
 	assert.Contains(t, resultText(res), "r1")
 }
 
-// TestMCPServer_CreateMockRuleFromTraffic_CarriesDecodedSource asserts M12.4/5:
+// TestMCPServer_CreateMockRuleFromTraffic_CarriesDecodedSource asserts /5:
 // creating a rule from binary (xcp) traffic via the MCP tool must freeze the
 // app-decoded request/response JSON into the rule source — exactly like the Web
 // "Mock 此请求" path — so the rule detail view can expand them.
@@ -228,7 +228,7 @@ func TestMCPServer_CreateShareTool(t *testing.T) {
 	assert.Contains(t, resultText(res), "share-1")
 }
 
-// TestMCPServer_ErrorTransmission asserts M3: 401/404/409 surface as tool
+// TestMCPServer_ErrorTransmission asserts : 401/404/409 surface as tool
 // errors with the AI-facing guidance.
 func TestMCPServer_ErrorTransmission(t *testing.T) {
 	mux := http.NewServeMux()

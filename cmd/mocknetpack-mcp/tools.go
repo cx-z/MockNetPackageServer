@@ -409,7 +409,7 @@ func mcpSetMockRuleEnabled(base string) server.ToolHandlerFunc {
 		on, _ := p["enabled"].(bool)
 
 		// The server PUT is a full replace of the canned response (statusCode
-		// 100–599 validated, M5/M7 semantics): a pure toggle must re-send the
+		// 100–599 validated, / semantics): a pure toggle must re-send the
 		// complete response plus the existing note — read-modify-write, same
 		// as CLI `rule set-enabled` and update_mock_rule.
 		existing, err := c.GetMockRule(ctx, app, did, ruleID)
@@ -462,7 +462,7 @@ func mcpUpdateMockRule(base string) server.ToolHandlerFunc {
 			resp.Body = v
 		}
 		// clearBodyBase64=true: drop the binary snapshot so the rule replays the
-		// text body (binary → text JSON migration, M12.3 P0-3).
+		// text body (binary → text JSON migration,  P0-3).
 		if v, ok := p["clearBodyBase64"].(bool); ok && v {
 			resp.BodyBase64 = ""
 		}

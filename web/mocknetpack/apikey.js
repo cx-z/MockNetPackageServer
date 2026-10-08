@@ -1,6 +1,6 @@
 "use strict";
 
-// M12.1: Web API Key 管理（已登录用户）。
+// : Web API Key 管理（已登录用户）。
 // 已登录用户在头部「API Key」入口创建/查看/吊销长效凭证（MCP/CLI/脚本免登录用）。
 // 安全约定：明文仅创建时展示一次；列表只显示 keyPrefix（服务端只存 SHA-256 哈希）。
 // 明文只保存在内存变量 lastKey，关闭弹窗或刷新即清除，绝不落 localStorage。

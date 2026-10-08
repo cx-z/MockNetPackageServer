@@ -46,10 +46,10 @@ func m12Entry(method, url string, ts time.Time) *capture.TrafficEntry {
 	}
 }
 
-// TestM12TrafficCompactProjection asserts S4: ?projection=compact returns
+// TestTrafficCompactProjection asserts S4: ?projection=compact returns
 // exactly the machine-facing field set, and the default (no projection)
 // response still carries the full detail fields — the Web never changes shape.
-func TestM12TrafficCompactProjection(t *testing.T) {
+func TestTrafficCompactProjection(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	now := time.Now()
 	sessionID := seedTrafficSession(t, srv, []*capture.TrafficEntry{
@@ -91,10 +91,10 @@ func TestM12TrafficCompactProjection(t *testing.T) {
 	assert.Equal(t, sessionID, fe.SessionID)
 }
 
-// TestM12TrafficSinceIncremental asserts S5: since=<seq> returns only entries
+// TestTrafficSinceIncremental asserts S5: since=<seq> returns only entries
 // newer than the cursor, repeated pulls are idempotent, and seq advances
 // across batches (arrival order).
-func TestM12TrafficSinceIncremental(t *testing.T) {
+func TestTrafficSinceIncremental(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	now := time.Now()
 	sessionID := seedTrafficSession(t, srv, []*capture.TrafficEntry{
@@ -139,9 +139,9 @@ func TestM12TrafficSinceIncremental(t *testing.T) {
 	require.Equal(t, 3, page.Total)
 }
 
-// TestM12TrafficMethodSchemeFilter asserts S6: method / scheme narrow the list
+// TestTrafficMethodSchemeFilter asserts S6: method / scheme narrow the list
 // server-side and AND with the existing filters.
-func TestM12TrafficMethodSchemeFilter(t *testing.T) {
+func TestTrafficMethodSchemeFilter(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	now := time.Now()
 	sessionID := seedTrafficSession(t, srv, []*capture.TrafficEntry{
@@ -175,9 +175,9 @@ func TestM12TrafficMethodSchemeFilter(t *testing.T) {
 	assert.Equal(t, 1, get("&method=POST&scheme=https&keyword=orders").Total)
 }
 
-// TestM12TrafficQueryInvalidParams asserts invalid projection / since are
+// TestTrafficQueryInvalidParams asserts invalid projection / since are
 // rejected with 400 rather than silently ignored.
-func TestM12TrafficQueryInvalidParams(t *testing.T) {
+func TestTrafficQueryInvalidParams(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	now := time.Now()
 	sessionID := seedTrafficSession(t, srv, []*capture.TrafficEntry{

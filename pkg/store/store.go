@@ -192,11 +192,11 @@ type Store interface {
 	Devices() DeviceStore
 	CaptureSessions() CaptureSessionStore
 
-	// MockNetPack account stores (users and auth sessions, M7.1)
+	// MockNetPack account stores (users and auth sessions)
 	Users() UserStore
 	AuthSessions() AuthSessionStore
 
-	// MockNetPack QR pairing tokens (M9, contract v0.8.0)
+	// MockNetPack QR pairing tokens 
 	PairingTokens() PairingTokenStore
 
 	// Transactions (for backends that support it)

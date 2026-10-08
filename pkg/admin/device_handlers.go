@@ -16,7 +16,7 @@ import (
 
 // handleCreateDevice handles POST /api/v1/devices — Web manual device
 // registration. The logged-in user becomes the owner; an existing (App, Did)
-// conflicts. SDK auto-registration is removed in M7.2.3, making this the only
+// conflicts. SDK auto-registration is removed in , making this the only
 // creation path afterwards.
 func (a *API) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
 	var req CreateDeviceRequest
@@ -114,9 +114,9 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.PairingToken != "" {
-		// M9 (v0.8.0): QR pairing flow. A valid token unlocks auto-registration:
-		// unknown (app, did) is created under the token's user (D1), and an
-		// existing record is reused without duplication (D7).
+		//  (v0.8.0): QR pairing flow. A valid token unlocks auto-registration:
+		// unknown (app, did) is created under the token's user , and an
+		// existing record is reused without duplication .
 		tok, err := a.captureManager.ValidatePairingToken(r.Context(), req.PairingToken, req.App)
 		if err != nil {
 			writeCaptureError(w, err)
@@ -126,11 +126,11 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 			writeCaptureError(w, err)
 			return
 		}
-		// M9.3-fix (v0.8.2): record the registration on the token so the Web
+		//  (v0.8.2): record the registration on the token so the Web
 		// can detect scan completion and auto-close the QR modal. Best-effort.
 		a.captureManager.RecordPairingUse(r.Context(), req.PairingToken, req.Did)
 	} else {
-		// M7.2.3: SDK auto-registration is retired. A device must already exist
+		// : SDK auto-registration is retired. A device must already exist
 		// (created manually in the Web UI). An unknown did gets a technical 404 —
 		// no user-facing "please register in Web" copy here; that guidance belongs
 		// to the Web UI, not the debug SDK channel.
@@ -155,13 +155,13 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// idleHeartbeatConfig 返回 idle（未抓包）状态的心跳间隔（M8.2：5s，快速感知会话激活）。
+// idleHeartbeatConfig 返回 idle（未抓包）状态的心跳间隔（：5s，快速感知会话激活）。
 func idleHeartbeatConfig(cfg capture.ServerConfig) capture.ServerConfig {
 	cfg.HeartbeatIntervalSeconds = 5
 	return cfg
 }
 
-// capturingHeartbeatConfig 返回 capturing（抓包中）状态的心跳间隔（M8.3：3s，快速感知规则变更）。
+// capturingHeartbeatConfig 返回 capturing（抓包中）状态的心跳间隔（：3s，快速感知规则变更）。
 func capturingHeartbeatConfig(cfg capture.ServerConfig) capture.ServerConfig {
 	cfg.HeartbeatIntervalSeconds = 3
 	return cfg
@@ -191,7 +191,7 @@ func (a *API) handleDeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, HeartbeatResponse{
 		OK:         true,
 		ServerTime: time.Now(),
-		// M8.2/M8.3：心跳间隔按会话状态动态下发——capturing 3s（快速感知规则变更）、
+		// /：心跳间隔按会话状态动态下发——capturing 3s（快速感知规则变更）、
 		// idle 5s（快速感知会话激活）；SDK 按响应间隔调度下一次心跳。
 		ServerConfig: heartbeatConfigForSession(a.captureManager.ServerConfig(), session),
 		Session:      session,
@@ -214,7 +214,7 @@ func (a *API) handleListDevices(w http.ResponseWriter, r *http.Request) {
 		writeCaptureError(w, err)
 		return
 	}
-	// M7.2.2 ownership filtering: admin sees all; a dev sees only its own devices.
+	//  ownership filtering: admin sees all; a dev sees only its own devices.
 	if u := currentUser(r); u != nil && !isAdmin(u) {
 		filtered := make([]*capture.DeviceView, 0, len(devices))
 		for _, d := range devices {

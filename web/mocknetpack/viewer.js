@@ -3,7 +3,7 @@
 // MockNetPack web: viewer lease registration/renew/release (session
 // keep-alive across tabs). Pure move from app.js.
 // ============================================================================
-// viewer 租约（M1.6）
+// viewer 租约
 // ============================================================================
 
 async function registerViewer(session, label) {

@@ -10,8 +10,8 @@
                        │                                                           │
   SDK (iOS) ──/api/v1──▶  ADMIN SERVER  :4290                                      │
   Web UI    ──/api/v1──▶  ├─ /api/v1 capture API   (custom handlers)               │
-  Browser   ──/mocknetpack/▶ ├─ /api/v1/auth/*         (custom, M7)                │
-                       │  ├─ /api/v1/shares/*       (custom, M8.5)                 │
+  Browser   ──/mocknetpack/▶ ├─ /api/v1/auth/*         (custom)                │
+                       │  ├─ /api/v1/shares/*       (custom)                 │
                        │  ├─ /mocknetpack/ static   (custom web serving)           │
                        │  └─ upstream admin API     (mocks, workspaces, ...)       │
                        │                  │                                        │
@@ -40,7 +40,7 @@ pkg/capture (models) ◄── pkg/store.CaptureManager ◄── pkg/store inte
         ▲                       │       ▲                       │
         │                       │       └────── pkg/store/file (persistence)
         │                       ▼
-        └── pkg/account (User/AuthSession + PBKDF2) ── used by pkg/admin auth
+        └── pkg/account (User/AuthSession + PBKD) ── used by pkg/admin auth
 ```
 
 | Layer | Files | Responsibility |
@@ -51,17 +51,17 @@ pkg/capture (models) ◄── pkg/store.CaptureManager ◄── pkg/store inte
 | Domain | `pkg/store/*_registry.go` (`capture`, `device`, `session`, `traffic`, `rule`, `share`) | `CaptureManager`: all runtime semantics (heartbeat, session lifecycle, viewer leases, traffic, rules, conflicts, janitors, shares) |
 | Store interfaces | `pkg/store/interfaces.go` | `DeviceStore`, `CaptureSessionStore`, `MockRuleStore`, `UserStore`, `AuthSessionStore`, … (persistence contract) |
 | Persistence | `pkg/store/file/*.go` | File-backed implementations of the stores (devices/sessions/rules/accounts/etc.) |
-| Account | `pkg/account/account.go` | `User`, `Role`, `AuthSession`, PBKDF2-SHA256 hashing, `NewToken` |
+| Account | `pkg/account/account.go` | `User`, `Role`, `AuthSession`, PBKD-SHA256 hashing, `NewToken` |
 | HTTP (custom) | `pkg/admin/{capture_handlers,device_handlers,traffic_handlers,auth_handlers,auth_middleware,mock_rule_handlers,mocknetpack_web}.go` + `routes.go` + `api.go` | `/api/v1` handlers, auth gate, ownership filtering, static web serving |
 | HTTP (upstream) | rest of `pkg/admin/*.go` | mockd native admin API (mocks, workspaces, engines, proxy, recording, chaos, …) |
-| Contract | `openapi/mocknetpack.yaml` | `/api/v1` schemas + paths (v0.8.0; M9 adds `/pairing-tokens`, register `pairingToken`/`deviceName`, `403 pairing_token_invalid`) |
+| Contract | `openapi/mocknetpack.yaml` | `/api/v1` schemas + paths (v0.8.0;  adds `/pairing-tokens`, register `pairingToken`/`deviceName`, `403 pairing_token_invalid`) |
 
 ## Domain flows
 
 ### 1. Device registration & heartbeat
 
 ```
-Web manual registration (only creation path, M7.2+)
+Web manual registration (only creation path, +)
   POST /api/v1/devices  {app, did, name}            [requireAuth]
     → allowedApps check (catalog) → owner = current user
     → CaptureManager.CreateManualDevice (no upsert; (App,did) conflict ⇒ 409 device_taken)
@@ -69,17 +69,17 @@ Web manual registration (only creation path, M7.2+)
 SDK register (metadata refresh only; pairingToken enables auto-create)
   POST /api/v1/devices/register                     [open]
     body {app, did, pairingToken?, deviceName?}
-    no token  → GetDevice first: unknown (app,did) ⇒ 404 device_not_registered (M7.2.3)
+    no token  → GetDevice first: unknown (app,did) ⇒ 404 device_not_registered 
     with token→ ValidatePairingToken(token, app): expired/invalid ⇒ 403 pairing_token_invalid
-                RegisterDeviceWithPairing (M9/D1+D7): unknown ⇒ create (owner=token user,
+                RegisterDeviceWithPairing (/D1+D7): unknown ⇒ create (owner=token user,
                 name=deviceName ?? "platform·did[:12]"); known ⇒ reuse — owner only filled if
                 empty, name never overwritten, refresh OS/SDK/version/platform/LastSeenAt
     → returns DeviceView + ServerConfig (idle heartbeat interval 5s)
 
-Pairing token issue (M9, QR 扫码即注册)
+Pairing token issue 
   POST /api/v1/pairing-tokens {app}                 [requireAuth]
     → allowedApps check → token TTL 10min (pairingTokenTTL), owner = current user
-    → returns {token, app, expiresAt}; same token reusable for multiple devices (D5)
+    → returns {token, app, expiresAt}; same token reusable for multiple devices 
     → hourly janitor purges expired tokens (aligned with health check)
 
 SDK heartbeat (keep-alive + session-state channel)
@@ -106,7 +106,7 @@ End        DELETE /api/v1/sessions/{id}             [requireAuth]
              → EndSession (idempotent):
                 1) delete viewer leases
                 2) move session traffic → retained store (7d, shareable by ID)
-                3) DELETE the session record (M9: delete-on-end)
+                3) DELETE the session record (: delete-on-end)
                 4) disableDeviceRules (rules persist but Enabled=false; version bump)
 
 Timeout    background health check (every HeartbeatTimeout/2)
@@ -129,8 +129,8 @@ Query     GET /api/v1/sessions/{id}/traffic?limit&offset        [requireAuth]
             → active session: entries in arrival order (default limit 100, ≤500)
             → ended session: [] + total 0 (record is gone)
           GET /api/v1/traffic/{id}                              [requireAuth]
-            → live session OR retained store of ended session (M8.6)
-          M12 机器通道（v0.12.0）：
+            → live session OR retained store of ended session 
+           机器通道（v0.12.0）：
             ?projection=compact → CompactTrafficView 瘦身视图（8 字段，不含
               headers/bodies/query；每条带 seq 每会话自增到达序号）——MCP/CLI 低带宽拉取
             ?since=N → 只返回 seq > N（增量游标；ID 为 ULID，同毫秒字典序不严格单调，
@@ -156,7 +156,7 @@ Create    POST /api/v1/devices/{app}/{did}/mock-rules {method,path,response,enab
             → ID = ULID; LastUsedAt = now; BumpRuleVersion
 Update    PUT  .../mock-rules/{ruleId} {response,note,enabled?} [requireAuth]
             → match key (Method+Path) and source snapshot are IMMUTABLE
-            → editing the canned response with blank note ⇒ 400 (ErrNoteRequired, M7)
+            → editing the canned response with blank note ⇒ 400 (ErrNoteRequired)
             → pure toggle may leave note blank
             → turning on conflicts ⇒ 409; bump version
 Delete    DELETE .../mock-rules/{ruleId}                        [requireAuth]
@@ -173,23 +173,23 @@ SDK pull  GET .../mock-rules?sinceVersion=N  [open; Web full-list branch needs a
             (the SDK applies only Effective rules)
 
 Session end  → disableDeviceRules: all enabled rules of that device flip off;
-               rules stay (re-enable manually next session) — F4.5 / decision #13
+               rules stay (re-enable manually next session) —  / decision #13
 
 Janitor   hourly: purge rules whose last use (LastUsedAt→UpdatedAt→CreatedAt)
             is older than retention (7d); bumps version per device
 ```
 
-### 5. Auth & ownership (M7)
+### 5. Auth & ownership 
 
 ```
 Register  POST /api/v1/auth/register {username,password}  [open]
             → validates username/password; creates role=dev ONLY
-Login     POST /api/v1/auth/login      → verify PBKDF2; issue AuthSession
+Login     POST /api/v1/auth/login      → verify PBKD; issue AuthSession
             (token = 32 random bytes hex, TTL 7d, persisted server-side)
 Logout    POST /api/v1/auth/logout     → delete session server-side (revocation)
 Me        GET  /api/v1/auth/me         → current user (page refresh)
 
-M12 长效 API Key（v0.12.0，机器原生通道凭证）：
+ 长效 API Key（v0.12.0，机器原生通道凭证）：
 Create    POST /api/v1/auth/keys                     [requireAuth]
             → 为当前用户签发 mnpk_ 前缀 key；明文仅在创建响应返回一次
             → store 只落 SHA-256 哈希；日志（访问日志）不落 Authorization/key 明文
@@ -208,7 +208,7 @@ Ownership authorizeDeviceAccess: admin OK; dev requires device.owner == username
 Admin creation: CLI only — mockd start --create-admin <user> --admin-password <pass>
 ```
 
-### 5.1 机器通道（M12，v0.13.0）
+### 5.1 机器通道
 
 MCP Server 与 CLI 是同一契约的两种消费端，共用 `pkg/mnpapi` 客户端：
 
@@ -223,9 +223,9 @@ MCP（cmd/mocknetpack-mcp，HTTP 网关 `--http-addr :PORT`，Bearer 直通逐 k
   get_share               ───────────────▶ share get <shareId>
   set_mock_rule_enabled   ───────────────▶ rule set-enabled <ruleId> --enable|--disable
   update_mock_rule        ───────────────▶ rule update <ruleId> ...（支持 clearBodyBase64）
-  list_mock_rules         ───────────────▶ rule list --app --did [--path]  （M12.3）
-  get_mock_rule           ───────────────▶ rule get <ruleId>             （M12.3）
-  delete_mock_rule        ───────────────▶ rule delete <ruleId>          （M12.3）
+  list_mock_rules         ───────────────▶ rule list --app --did [--path]  
+  get_mock_rule           ───────────────▶ rule get <ruleId>             
+  delete_mock_rule        ───────────────▶ rule delete <ruleId>          
 ```
 
 共同约定：
@@ -236,7 +236,7 @@ MCP（cmd/mocknetpack-mcp，HTTP 网关 `--http-addr :PORT`，Bearer 直通逐 k
     traffic export -o 落盘 JSON 数组供 jq/grep 二次消费
 ```
 
-### 6. Share links (M8.5)
+### 6. Share links 
 
 ```
 Create    POST /api/v1/shares {trafficId}         [requireAuth + device ownership]

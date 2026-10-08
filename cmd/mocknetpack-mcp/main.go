@@ -1,5 +1,5 @@
 // mocknetpack-mcp is the MCP (Model Context Protocol) gateway for MockNetPack
-// (M12): it wraps the admin API's high-frequency operations into 12 tools so an
+// : it wraps the admin API's high-frequency operations into 12 tools so an
 // Agent platform (Codex, Claude Desktop, IDE agents, etc.) can natively inspect
 // capture traffic and manage mock rules.
 //
@@ -54,7 +54,7 @@ func main() {
 	}
 
 	if *httpAddr == "" {
-		fmt.Fprintln(os.Stderr, "mocknetpack-mcp: --http-addr 必填（MCP 仅支持 HTTP 远程形态，业务侧只填 URL；接入方式见 tasks/M12.7-业务侧AI-MCP远程接入指引.md）")
+		fmt.Fprintln(os.Stderr, "mocknetpack-mcp: --http-addr 必填（MCP 仅支持 HTTP 远程形态，业务侧只填 URL；接入方式见 tasks/ 目录下的业务侧 AI-MCP 远程接入指引）")
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -131,7 +131,7 @@ func authGateway(next http.Handler) http.Handler {
 // registerTools wires the 12 MCP tools. Handlers build a per-request admin
 // client from the caller's bearer key (base is the mockd API base URL). Every
 // tool's description documents WHEN to use it, key parameter meanings, and
-// error handling — the tool contract itself is the model-facing doc (M12 §三 E).
+// error handling — the tool contract itself is the model-facing doc ( §三 E).
 func registerTools(srv *server.MCPServer, base string) {
 	srv.AddTool(toolListDevices(), mcpListDevices(base))
 	srv.AddTool(toolGetDeviceTraffic(), mcpGetDeviceTraffic(base))

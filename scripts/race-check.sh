@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# race-check.sh — M1 correctness gate: build + vet + race-enabled tests.
+# race-check.sh —  correctness gate: build + vet + race-enabled tests.
 #
 # Runs the server's production test suite under the Go race detector.
 # Exit non-zero on any build/vet/test failure (intended as a local gate until
@@ -24,7 +24,7 @@ go build ./...
 echo "==> [2/3] go vet ./..."
 go vet ./...
 
-# Scope: the packages MockNetPack owns and M1 actually touched (matches the
+# Scope: the packages MockNetPack owns and  actually touched (matches the
 # documented canonical test command in 阶段性总结: ./pkg/admin/... ./pkg/store/...).
 # We deliberately do NOT run the whole ./pkg/...: upstream mockd internals such
 # as pkg/testing, pkg/tunnel, pkg/websocket bind fixed local ports (e.g. 4281)

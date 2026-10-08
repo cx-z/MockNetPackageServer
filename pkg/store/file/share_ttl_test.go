@@ -10,7 +10,7 @@ import (
 	"github.com/getmockd/mockd/pkg/store"
 )
 
-// O5 分享持久化补充测试：7 天 TTL 的过期拒绝（懒检查）与 janitor 清理跨重启。
+//  分享持久化补充测试：7 天 TTL 的过期拒绝（懒检查）与 janitor 清理跨重启。
 // 重启恢复本身由 TestCaptureManager_SharePersistsAcrossRestart 覆盖（capture_registry_test.go）。
 
 func TestShare_ExpiredTTL_GetShareRejects(t *testing.T) {

@@ -1,4 +1,4 @@
-// PairingToken model for QR server discovery (M9, contract v0.8.0).
+// PairingToken model for QR server discovery .
 //
 // A logged-in Web user issues a short-lived pairing token for an app; the QR
 // code rendered on the device page carries it. The SDK presents the token in
@@ -17,7 +17,7 @@ package account
 import "time"
 
 // PairingUse records a device that registered using a pairing token
-// (M9.3-fix, contract v0.8.2): the Web polls the token status and closes the
+// : the Web polls the token status and closes the
 // QR modal automatically once a fresh registration appears.
 type PairingUse struct {
 	Did          string    `json:"did"`
@@ -33,7 +33,7 @@ type PairingToken struct {
 	CreatedAt time.Time `json:"createdAt"`
 	ExpiresAt time.Time `json:"expiresAt"`
 	// PairedDevices is the list of dids that registered with this token
-	// (M9.3-fix). Reusable tokens (D5) accumulate entries; validation never
+	// . Reusable tokens  accumulate entries; validation never
 	// consumes the token, so a token can keep onboarding devices until TTL.
 	PairedDevices []PairingUse `json:"pairedDevices,omitempty"`
 }

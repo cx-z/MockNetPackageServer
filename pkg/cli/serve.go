@@ -810,7 +810,7 @@ func startServers(sctx *serveContext) error {
 		if isAddrInUseError(err) {
 			// The engine management port is the common real conflict — a
 			// lingering mockd instance occupies 4281 while the HTTP port is
-			// free; blaming only the HTTP port misdirects the user (M4).
+			// free; blaming only the HTTP port misdirects the user .
 			return engineStartInUseError(f.port, sctx.server.ManagementPort())
 		}
 		return fmt.Errorf("failed to start mock server: %w", err)

@@ -24,7 +24,7 @@ var (
 	ErrSessionEnded = errors.New("capture session already ended")
 	// ErrRuleNotFound means no mock rule with the given ID exists for the device.
 	ErrRuleNotFound = errors.New("mock rule not found")
-	// ErrRuleForbidden means the caller may not mutate the rule (O4.2): only the
+	// ErrRuleForbidden means the caller may not mutate the rule : only the
 	// rule's owner or an admin may edit/toggle/delete it. For non-admin callers
 	// this error also masks non-existence (a missing ruleID returns
 	// ErrRuleForbidden, not ErrRuleNotFound) so the 403/404 difference cannot
@@ -37,20 +37,20 @@ var (
 	// (body/statusCode/headers changed) but carries a blank note (maps to HTTP 400).
 	// A pure toggle (response echoed unchanged) may leave the note blank — rules
 	// created from a capture ("Mock 此请求") have no note and must be enableable
-	// without forcing an edit (M7).
+	// without forcing an edit .
 	ErrNoteRequired = errors.New("mock rule note is required when editing the canned response")
 	// ErrPairingTokenInvalid means the presented QR pairing token does not
-	// exist, has expired, or is bound to a different app (M9; maps to HTTP 403
+	// exist, has expired, or is bound to a different app (; maps to HTTP 403
 	// pairing_token_invalid — the SDK surfaces "二维码已过期，请刷新").
 	ErrPairingTokenInvalid = errors.New("pairing token invalid or expired")
 )
 
 // MockRuleConflictMessage is the fixed popup message Web shows when an interface
-// falls into the abnormal multi-enabled state (requirement 6.5 / F4.6).
+// falls into the abnormal multi-enabled state (requirement 6.5 / ).
 const MockRuleConflictMessage = "不允许同一个接口同时开启多个 Mock 规则"
 
 // RuleCaller describes the authenticated user performing a rule mutation
-// (O4 权限与分享). nil means --no-auth smoke mode: no session user, full
+// ( 权限与分享). nil means --no-auth smoke mode: no session user, full
 // access (permission checks are skipped, matching requireAuth bypass).
 type RuleCaller struct {
 	Username string
@@ -58,7 +58,7 @@ type RuleCaller struct {
 }
 
 // CaptureConfig carries the MockNetPack capture runtime configuration.
-// All values are server-side configuration items (requirement 决策 #14).
+// All values are server-side configuration items (requirement ).
 type CaptureConfig struct {
 	// HeartbeatInterval is the interval the SDK is advised to heartbeat at.
 	HeartbeatInterval time.Duration
@@ -69,19 +69,19 @@ type CaptureConfig struct {
 	// periodically and expired leases are garbage-collected.
 	ViewerTTL time.Duration
 	// MockRuleRetention is how long persisted mock rules (and their source
-	// snapshots) are kept since their last use before being purged (M4,
-	// F8.3/决策15, sliding window).
+	// snapshots) are kept since their last use before being purged (
+	// /, sliding window).
 	MockRuleRetention time.Duration
 	// RetainedTrafficTTL is how long traffic of an ended session stays
-	// resolvable by ID for share-link creation (M8.6 断开后可分享). It bounds
+	// resolvable by ID for share-link creation ( 断开后可分享). It bounds
 	// the in-memory retained store; 0 means the default (7d, same as ShareTTL).
 	RetainedTrafficTTL time.Duration
 	// MaxSessionTrafficEntries caps the number of traffic entries kept per
-	// session (O2.1, contract: 超限丢最旧 rolling window). 0 means the server
+	// session . 0 means the server
 	// default (DefaultMaxSessionTrafficEntries = 20000).
 	MaxSessionTrafficEntries int
 	// TrafficRetention is how long an ended session and its traffic stay
-	// queryable before the janitor purges them (O3 48h 保留, from session end).
+	// queryable before the janitor purges them (48h retention from session end).
 	// 0 means the server default (48h).
 	TrafficRetention time.Duration
 }
@@ -112,17 +112,17 @@ type CaptureManager struct {
 	devices  DeviceStore
 	sessions CaptureSessionStore
 	rules    MockRuleStore
-	// pairingTokens persists QR pairing tokens (M9): short-lived credentials
+	// pairingTokens persists QR pairing tokens : short-lived credentials
 	// that let a scanned SDK register a device under the issuing user.
 	pairingTokens PairingTokenStore
-	// sharesStore persists request share snapshots (M8.5, 4.8): independent
+	// sharesStore persists request share snapshots : independent
 	// copies of a single traffic entry. Persisting them (instead of a
 	// memory-only map) keeps a share link valid for its full 7-day TTL across
 	// server restarts.
 	sharesStore ShareStore
 	cfg         CaptureConfig
 	log         *slog.Logger
-	dataFile    string // O2.4 存储水位：data.json 绝对路径（空=不输出水位日志）
+	dataFile    string //  存储水位：data.json 绝对路径（空=不输出水位日志）
 
 	// viewerMu guards the runtime viewer leases, keyed by session ID.
 	viewerMu sync.RWMutex
@@ -131,19 +131,19 @@ type CaptureManager struct {
 	// trafficMu guards the runtime traffic entries, keyed by session ID.
 	// Traffic is session-scoped temporary data (全量抓包、会话内可见): it lives
 	// in memory only, is never persisted, and moves to the retained store when
-	// the session ends (M8.6 keeps ended-session records shareable).
+	// the session ends ( keeps ended-session records shareable).
 	trafficMu sync.RWMutex
 	traffic   map[string][]*capture.TrafficEntry
 
 	// trafficSeq holds the per-session monotonic sequence counter used to
-	// stamp TrafficEntry.Seq at upload time (M12). Guarded by trafficMu —
+	// stamp TrafficEntry.Seq at upload time . Guarded by trafficMu —
 	// UploadTraffic assigns seq under the same lock. Keyed by session ID and
 	// cleaned up together with orphaned traffic keys.
 	trafficSeq map[string]int64
 
 	// retainedMu guards retainedTraffic: the traffic of ended sessions, kept
 	// for RetainedTrafficTTL so records the user saw on the page can still be
-	// shared after disconnect. M9 list semantics are unchanged — ended sessions
+	// shared after disconnect.  list semantics are unchanged — ended sessions
 	// are deleted and never listed again; retained entries are reachable only
 	// by ID (GetTraffic / share creation).
 	retainedMu sync.RWMutex
@@ -159,7 +159,7 @@ type CaptureManager struct {
 	trafficIndexMu sync.RWMutex
 	trafficIndex   map[string]*trafficIndexEntry
 
-	// sharesMu serializes share snapshot access (M8.5). The snapshots
+	// sharesMu serializes share snapshot access . The snapshots
 	// themselves live in sharesStore (persisted); the mutex guards the
 	// read-expire-delete compound in GetShare.
 	sharesMu sync.RWMutex
@@ -232,7 +232,7 @@ func (m *CaptureManager) ServerConfig() capture.ServerConfig {
 }
 
 // ============================================================================
-// QR pairing tokens (M9, contract v0.8.0)
+// QR pairing tokens 
 // ============================================================================
 
 // pairingTokenTTL is how long a QR pairing token stays valid (10 minutes,
@@ -298,7 +298,7 @@ func (m *CaptureManager) GetPairingToken(ctx context.Context, token string) (*ac
 }
 
 // RecordPairingUse appends a did to a token's paired-device list so the Web
-// can detect that the QR was scanned (M9.3-fix). The register handler calls
+// can detect that the QR was scanned . The register handler calls
 // this after a successful pairing registration; failures are logged and do
 // not fail the registration (status tracking is best-effort).
 func (m *CaptureManager) RecordPairingUse(ctx context.Context, token, did string) {

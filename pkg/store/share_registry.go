@@ -11,9 +11,9 @@ import (
 )
 
 // File: share_registry.go
-// Request share snapshots (M8.5): CreateShare/GetShare, TTL (pure move).
+// Request share snapshots : CreateShare/GetShare, TTL (pure move).
 // ============================================================================
-// M8.5: Request share snapshots
+// : Request share snapshots
 // ============================================================================
 
 // ShareTTL is how long a share link stays valid (7 days, per product decision).
@@ -33,7 +33,7 @@ type ShareSnapshot struct {
 
 // CreateShare copies the traffic entry identified by trafficID into a new
 // independent share snapshot and returns it. The entry may come from an
-// active session or from the retained store of an ended session (M8.6).
+// active session or from the retained store of an ended session .
 // Returns ErrNotFound if the entry does not exist (e.g. never existed, or its
 // retention window has passed).
 func (m *CaptureManager) CreateShare(ctx context.Context, trafficID string) (*ShareSnapshot, error) {

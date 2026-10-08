@@ -1,14 +1,14 @@
 "use strict";
 
-// MockNetPack web: 历史日志视图（M2 O3.3 + O2.3）。
+// MockNetPack web: 历史日志视图（  + ）。
 // 最近 48h 已结束会话的请求：服务端过滤（keyword/statusCode/from/to，
-// M2-3 下推参数）+ limit/offset「加载更多」分页。只读——不提供删除/清空
-// （O3.1 保留语义：服务端流量在 48h 窗口内由历史日志查询，Web 不再调
+//  下推参数）+ limit/offset「加载更多」分页。只读——不提供删除/清空
+// （ 保留语义：服务端流量在 48h 窗口内由历史日志查询，Web 不再调
 // DELETE）。打开时暂停实时轮询与设备详情轮询（互不干扰），关闭时恢复。
 
 const HISTORY_PAGE = 100; // 与 TRAFFIC_PAGE 一致，契约 limit 上限 500
 let history = null;       // { sid, offset, total, entries }
-// F2：历史视图打开标志。openHistory 暂停的轮询可能被「在途的 loadDetail 完成后
+// ：历史视图打开标志。openHistory 暂停的轮询可能被「在途的 loadDetail 完成后
 // 重建 detailPollTimer / bindSession 重启 trafficTimer」重新拉起，故 loadDetail
 // 与 bindSession 在 historyOpen 期间跳过计时器重建（traffic.js 引用）。
 let historyOpen = false;
@@ -20,7 +20,7 @@ async function openHistory() {
   stopTrafficPoll();                       // 暂停 2s 请求流轮询
   if (detailPollTimer) {                   // 暂停 5s 详情轮询——否则 loadDetail→
     clearInterval(detailPollTimer);        // bindSession 会在 ≤5s 内重启请求轮询，
-    detailPollTimer = null;                // 与「互不干扰」注释不符（F2 修复）
+    detailPollTimer = null;                // 与「互不干扰」注释不符（已修复）
   }
   $("historyView").classList.remove("hidden");
   history = null;
@@ -121,7 +121,7 @@ function toRfc3339(v) {
   return new Date(t).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-/** 从表单构建服务端过滤 query（M2-3 参数，下推，不在前端过滤）。 */
+/** 从表单构建服务端过滤 query（ 参数，下推，不在前端过滤）。 */
 function historyQuery(offset) {
   const p = new URLSearchParams();
   const kw = $("hKeyword").value.trim();
@@ -137,7 +137,7 @@ function historyQuery(offset) {
   return p.toString();
 }
 
-/** 应用过滤：offset 归零重拉（O2.2：过滤在服务端执行）。 */
+/** 应用过滤：offset 归零重拉（：过滤在服务端执行）。 */
 async function applyHistoryFilter() {
   if (!history) return;
   history.offset = 0;
@@ -146,7 +146,7 @@ async function applyHistoryFilter() {
   await loadHistoryPage(true);
 }
 
-/** 加载更多：offset += PAGE 追加（O2.3 分页）。 */
+/** 加载更多：offset += PAGE 追加（ 分页）。 */
 async function loadHistoryMore() {
   if (!history) return;
   await loadHistoryPage(false);
@@ -172,7 +172,7 @@ async function loadHistoryPage(replace) {
   }
 }
 
-/** 渲染历史请求行（只读：无 ✕ 删除按钮，符合 O3.1 保留语义）。 */
+/** 渲染历史请求行（只读：无 ✕ 删除按钮，符合  保留语义）。 */
 function renderHistoryList(replace) {
   const box = $("historyList");
   if (replace) box.innerHTML = "";

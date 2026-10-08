@@ -18,7 +18,7 @@ import (
 // ============================================================================
 
 // DefaultMaxSessionTrafficEntries is the default cap on the number of traffic
-// entries kept per active session (4.10, O2.1). A long capture must not grow
+// entries kept per active session (4.10). A long capture must not grow
 // server memory without bound: once the cap is reached, new uploads replace
 // the OLDEST entries (rolling window). The session's RequestCount still counts
 // every accepted upload, so the Web badge ("共收到 N 个请求") keeps growing
@@ -29,14 +29,14 @@ import (
 const DefaultMaxSessionTrafficEntries = 20000
 
 // DefaultTrafficRetention is how long an ended capture session and its traffic
-// stay queryable before the janitor purges them (O3, from session end).
+// stay queryable before the janitor purges them .
 // Overridable via --capture-traffic-retention-hours
 // (CaptureConfig.TrafficRetention).
 const DefaultTrafficRetention = 48 * time.Hour
 
 // retainedSession holds the traffic of an ended capture session for a bounded
 // window (RetainedTrafficTTL) so records the user saw on the page can still be
-// shared after disconnect (M8.6). M9 list semantics are preserved: ended
+// shared after disconnect .  list semantics are preserved: ended
 // sessions are deleted and never listed again; retained entries are reachable
 // only by ID. App/Did is kept because the session record is gone, and share
 // creation must still verify device ownership.
@@ -50,7 +50,7 @@ type retainedSession struct {
 // trafficIndexEntry locates a traffic entry by its server-generated ID (4.22).
 // retained=false ⇒ the entry lives in m.traffic[sid] and the owning device
 // resolves via the session record; retained=true ⇒ the entry lives in
-// m.retained[sid] (its session record is deleted under M9) and app/did snapshot
+// m.retained[sid] (its session record is deleted under ) and app/did snapshot
 // the owning device at end time. The entry pointer is immutable once written
 // (entries are never mutated after upload), so a lookup can safely copy its
 // value while holding the index read lock.
@@ -65,7 +65,7 @@ type trafficIndexEntry struct {
 // UploadTraffic appends a batch of traffic entries to a capturing session
 // (全量抓包, contract POST /traffic). Only traffic for an active session is
 // accepted: an unknown session returns ErrSessionNotFound, an ended session
-// returns ErrSessionEnded. Isolation (requirement 决策 #6) is enforced — the
+// returns ErrSessionEnded. Isolation (requirement ) is enforced — the
 // (app, did) carried by the upload must match the session's owning device.
 //
 // Partially-accepted semantics: entries with an empty method, empty url, or
@@ -118,7 +118,7 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 		m.trafficMu.Unlock()
 		return 0, ErrSessionNotFound
 	}
-	// M12: stamp per-session monotonic sequence numbers (arrival order). The
+	// : stamp per-session monotonic sequence numbers (arrival order). The
 	// SDK never sends Seq; it is a server-side + query-side field consumed by
 	// `since=<seq>` incremental queries only.
 	seq := m.trafficSeq[sessionID]
@@ -177,7 +177,7 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 	}
 	m.trafficMu.Unlock()
 
-	// M4: a mocked upload is proof the rule was hit; refresh its LastUsedAt so
+	// : a mocked upload is proof the rule was hit; refresh its LastUsedAt so
 	// the sliding cleanup window starts over. Heartbeats/polling don't reach here.
 	if hits := collectHits(stored); len(hits) > 0 {
 		m.touchHitRules(ctx, app, did, hits)
@@ -250,7 +250,7 @@ func (m *CaptureManager) touchHitRules(ctx context.Context, app, did string, hit
 	}
 }
 
-// TrafficFilter narrows ListSessionTraffic (O2.2 服务端过滤下推): the Web
+// TrafficFilter narrows ListSessionTraffic ( 服务端过滤下推): the Web
 // history view filters on the server instead of pulling the full list and
 // filtering client-side. Zero value = no filter. All set filters are ANDed.
 type TrafficFilter struct {
@@ -262,14 +262,14 @@ type TrafficFilter struct {
 	// From/To bound the entry timestamp inclusively (nil = open bound).
 	From *time.Time
 	To   *time.Time
-	// Method matches the entry's HTTP method, case-insensitive (M12; the SDK
+	// Method matches the entry's HTTP method, case-insensitive (; the SDK
 	// uploads uppercase, but a lowercase query stays forgiving). Empty = no
 	// filter.
 	Method string
-	// Scheme matches the entry's URL scheme exactly (M12: parsed from the URL
+	// Scheme matches the entry's URL scheme exactly (: parsed from the URL
 	// prefix before "://", e.g. https). Empty = no filter.
 	Scheme string
-	// Since returns only entries with Seq > Since (M12 incremental pulls).
+	// Since returns only entries with Seq > Since ( incremental pulls).
 	// Negative or zero means no sequence filter. Requires the server-assigned
 	// Seq (see TrafficEntry.Seq); combined with every other filter via AND.
 	Since int64
@@ -301,7 +301,7 @@ func (f TrafficFilter) matches(e *capture.TrafficEntry) bool {
 	return true
 }
 
-// SchemeOf extracts the URL scheme from the prefix before "://" (M12). URLs
+// SchemeOf extracts the URL scheme from the prefix before "://" . URLs
 // without a scheme delimiter yield "" (no match for a scheme filter). This is
 // deliberately a prefix parse — capture URLs may be non-standard, and a full
 // url.Parse would fail closed on malformed input.
@@ -314,10 +314,10 @@ func SchemeOf(raw string) string {
 
 // ListSessionTraffic returns a session's traffic entries in arrival order
 // (request timeline, ascending), with limit/offset paging and the total count.
-// The filter (O2.2) is applied BEFORE paging: total is the size of the
+// The filter  is applied BEFORE paging: total is the size of the
 // filtered set, and limit/offset page within it.
 //
-// M2 (O3 48h 保留): an ENDED session stays queryable during its retention
+//  ( 48h 保留): an ENDED session stays queryable during its retention
 // window (RetainUntil, default 48h from end) — the Web history view reads
 // real data from it. Once the window passes (even before the hourly janitor
 // runs) the session is reported not found, matching the contract
@@ -332,7 +332,7 @@ func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID strin
 		return nil, 0, err
 	}
 	if s.Status == capture.SessionStatusEnded {
-		// O3: expired-ended sessions are gone from the API even if the hourly
+		// : expired-ended sessions are gone from the API even if the hourly
 		// janitor has not run yet (record purge happens there).
 		if s.RetainUntil == nil || time.Now().After(*s.RetainUntil) {
 			return nil, 0, ErrSessionNotFound
@@ -344,7 +344,7 @@ func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID strin
 	entries := m.traffic[sessionID]
 	m.trafficMu.RUnlock()
 
-	// O2.2: server-side filter first, then page within the filtered set.
+	// : server-side filter first, then page within the filtered set.
 	filtered := entries
 	if filter.Keyword != "" || filter.StatusCode != nil || filter.From != nil || filter.To != nil ||
 		filter.Method != "" || filter.Scheme != "" || filter.Since > 0 {
@@ -377,7 +377,7 @@ func (m *CaptureManager) ListSessionTraffic(ctx context.Context, sessionID strin
 
 // GetTraffic returns a single traffic entry by its server-generated ID. The
 // entry may live in an active session or in the retained store of an ended
-// session (M8.6 断开后可分享, bounded by RetainedTrafficTTL). Entries that
+// session ( 断开后可分享, bounded by RetainedTrafficTTL). Entries that
 // never existed or whose retention window has passed are reported as not
 // found (contract: 404 not_found).
 //
@@ -401,7 +401,7 @@ func (m *CaptureManager) GetTraffic(ctx context.Context, id string) (*capture.Tr
 // GetTrafficWithOwner returns the owning device (app, did) of a traffic entry,
 // whether the entry lives in an active session or in the retained store of an
 // ended session. It is used to authorize share creation after the owning
-// session record is gone (M9 deletes it on end). Returns ErrNotFound when the
+// session record is gone ( deletes it on end). Returns ErrNotFound when the
 // entry does not exist.
 //
 // 4.22: resolved through the ID index. Active entries still resolve the owner
@@ -436,7 +436,7 @@ func (m *CaptureManager) GetTrafficWithOwner(ctx context.Context, id string) (ap
 }
 
 // DeleteTraffic deletes a single traffic entry by its server-generated ID
-// (M9.5: Web per-row "删除"). The entry may live in an active session or in
+// (: Web per-row "删除"). The entry may live in an active session or in
 // the retained store of an ended session (4.11): a deleted session's record
 // is gone, but its retained rows are still deletable by the owning device.
 // The owning session's persisted RequestCount is decremented when the session
@@ -457,7 +457,7 @@ func (m *CaptureManager) DeleteTraffic(ctx context.Context, id string) error {
 			m.traffic[sid] = append(entries[:i], entries[i+1:]...)
 			m.unindexTraffic([]*capture.TrafficEntry{e}) // 4.22
 			// Keep the persisted session count in sync (best-effort; sessions
-			// may already be gone under M9 delete-on-end semantics).
+			// may already be gone under  delete-on-end semantics).
 			if s, err := m.sessions.Get(ctx, sid); err == nil && s.RequestCount > 0 {
 				s.RequestCount--
 				_ = m.sessions.Update(ctx, s)
@@ -493,9 +493,9 @@ func (m *CaptureManager) DeleteTraffic(ctx context.Context, id string) error {
 }
 
 // ClearSessionTraffic clears all traffic of an active session and resets its
-// request count to 0 (M9.5: Web "清空日志" — the timeline restarts, new
+// request count to 0 (: Web "清空日志" — the timeline restarts, new
 // uploads accumulate again). An unknown session returns ErrSessionNotFound;
-// an ended session is rejected (M9: ended sessions are deleted anyway).
+// an ended session is rejected (: ended sessions are deleted anyway).
 func (m *CaptureManager) ClearSessionTraffic(ctx context.Context, sessionID string) error {
 	// Same serialization as UploadTraffic: the status check and the traffic
 	// mutation happen under trafficMu, so a concurrent EndSession cannot
@@ -526,7 +526,7 @@ func (m *CaptureManager) ClearSessionTraffic(ctx context.Context, sessionID stri
 }
 
 // ============================================================================
-// Retained traffic janitor (M8.6 断开后可分享)
+// Retained traffic janitor ( 断开后可分享)
 // ============================================================================
 
 // PurgeExpiredRetainedTraffic drops retained traffic of ended sessions older
@@ -557,7 +557,7 @@ func (m *CaptureManager) purgeRetainedBefore(ctx context.Context, cutoff time.Ti
 		if _, err := m.sessions.Get(ctx, sid); err != nil {
 			m.unindexTraffic(m.traffic[sid]) // 4.22
 			delete(m.traffic, sid)
-			delete(m.trafficSeq, sid) // M12: release the seq counter with its session
+			delete(m.trafficSeq, sid) // release the seq counter with its session
 		}
 	}
 }

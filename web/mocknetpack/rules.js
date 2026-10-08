@@ -3,7 +3,7 @@
 // MockNetPack web: mock rule list, detail/editor (CodeMirror JSON), save/
 // delete/toggle, and "Mock this request". Pure move from app.js.
 // ============================================================================
-// Mock 规则（M3.5）
+// Mock 规则
 // ============================================================================
 
 async function loadRules() {
@@ -20,9 +20,9 @@ async function loadRules() {
   }
 }
 
-// O4.4 前端可管理性判定（UX 隐藏，非安全边界——服务端仍强制 403）。
+//  前端可管理性判定（UX 隐藏，非安全边界——服务端仍强制 403）。
 // authUser 为 null（未登录；--no-auth 且未带 token）下服务端不校验权限，
-// 全量渲染；已登录（含 --no-auth 但带有效 token，M4）且非 admin：仅规则
+// 全量渲染；已登录（含 --no-auth 但带有效 token）且非 admin：仅规则
 // owner 可管理。owner 空的存量规则仅 admin 可管理。
 function canManageRule(r) {
   if (!authUser) return true;
@@ -30,7 +30,7 @@ function canManageRule(r) {
   return !!(r.owner && r.owner === authUser.username);
 }
 
-// ruleOwnersText 渲染"创建人 / 最后编辑人"（O4.4）：空 owner 显示 "—"。
+// ruleOwnersText 渲染"创建人 / 最后编辑人"：空 owner 显示 "—"。
 function ruleOwnersText(r) {
   const owner = r.owner || "—";
   const updater = r.updatedBy || "—";
@@ -40,7 +40,7 @@ function ruleOwnersText(r) {
   return "创建人 — · 最后编辑 " + esc(updater);
 }
 
-// M11 Step4（D7）：命中可见性徽章文案。创建时 LastUsedAt 与 CreatedAt 同刻
+//  Step4：命中可见性徽章文案。创建时 LastUsedAt 与 CreatedAt 同刻
 // （7 天滑动清理基线需要），若二者时刻差 < 5s 说明这条规则创建后从未被命中/
 // 编辑/启停触动 → 灰字「从未命中」，提示开发者检查路径是否写错；否则显示
 // 最近命中的相对时间。
@@ -86,7 +86,7 @@ function renderRules(data) {
       ? (r.effective ? '<span class="badge eff">生效中</span>' : '<span class="badge stopped">冲突未生效</span>')
       : '<span class="badge stopped">已停用</span>';
     // 回包体摘要：文本规则显示正文前 80 字符；二进制规则（bodyBase64）优先显示
-    // 抓包解码文本片段（M8.1 解码，仅展示），无解码时才显示 "[二进制 N 字节]"。
+    // 抓包解码文本片段（ 解码，仅展示），无解码时才显示 "[二进制 N 字节]"。
     const respL = r.response || {};
     let bodySnippet = "";
     if (respL.bodyBase64) {
@@ -107,7 +107,7 @@ function renderRules(data) {
         '<div class="r-owner">' + ruleOwnersText(r) + "</div>" +
       "</div>";
 
-    // 点击规则体 → 右列展示详情/编辑（M8.2 两列布局）。
+    // 点击规则体 → 右列展示详情/编辑（ 两列布局）。
     el.querySelector(".r-body").onclick = () => {
       detail._activeRule = r.id;
       document.querySelectorAll(".rule-row").forEach((el2) =>
@@ -115,7 +115,7 @@ function renderRules(data) {
       renderRuleDetail(r);
     };
 
-    // O4.4：权限不符（非 owner 非 admin）时不渲染开关/删除入口（服务端仍强制 403）。
+    // ：权限不符（非 owner 非 admin）时不渲染开关/删除入口（服务端仍强制 403）。
     const manageable = canManageRule(r);
     if (manageable) {
       const sw = document.createElement("label");
@@ -143,7 +143,7 @@ function renderRules(data) {
 
 /** 渲染单条规则详情（状态码/响应头/回包体/备注/来源快照）。 */
 function renderRuleDetail(r) {
-  ruleBodyEditor = null;   // M8.6 离开编辑表单即释放 CM 引用（DOM 由 innerHTML 整体替换）
+  ruleBodyEditor = null;   //  离开编辑表单即释放 CM 引用（DOM 由 innerHTML 整体替换）
   showDetailPane("rule");
   detail._activeTraffic = null;
   document.querySelectorAll(".traffic-row").forEach((el) => el.classList.remove("active"));
@@ -154,7 +154,7 @@ function renderRuleDetail(r) {
   const resp = r.response || {};
   const src = r.source;
   // 二进制规则（bodyBase64 存在）：SDK 回放仍按 bodyBase64 原始字节。详情里
-  // 优先展示来源快照的抓包解码文本（M8.1 解码，仅展示），让"Mock 此请求"创建
+  // 优先展示来源快照的抓包解码文本（ 解码，仅展示），让"Mock 此请求"创建
   // 的规则无需进入编辑即可看到 JSON 详情；无解码文本时才回退二进制占位。
   let bodyDisp = resp.body || "";
   let bodyReplayNote = "";
@@ -191,7 +191,7 @@ function renderRuleDetail(r) {
 
   box.innerHTML =
     '<div class="detail-panel">' +
-      // O4.4：权限不符时不渲染编辑入口（服务端仍强制 403）。
+      // ：权限不符时不渲染编辑入口（服务端仍强制 403）。
       (canManageRule(r)
         ? '<div class="d-actions"><button id="ruleEditBtn" class="small">编辑</button></div>'
         : '<div class="d-actions"><span class="sub">只读（仅创建人/admin 可编辑）</span></div>') +
@@ -240,7 +240,7 @@ function headersToText(h) {
     .join("\n");
 }
 
-/** 编辑规则表单（M5）：回包体/备注可改；method/path 与回包状态码/响应头只读不可改。 */
+/** 编辑规则表单：回包体/备注可改；method/path 与回包状态码/响应头只读不可改。 */
 function openEditRuleForm(r) {
   const box = $("ruleDetail");
   const resp = r.response || {};
@@ -264,8 +264,8 @@ function openEditRuleForm(r) {
         : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
 
   // 响应页签：备注/回退按钮在上，回包体 JSON 折叠编辑器在下并撑满剩余高度。
-  // M11 Step3（D3）：手填规则（无 source）的回包状态码/响应头可编辑（输入框/多行文本）；
-  // 日志规则（有 source）维持 M8.8 只读（与抓包快照绑定，只读 KV 展示）。
+  //  Step3：手填规则（无 source）的回包状态码/响应头可编辑（输入框/多行文本）；
+  // 日志规则（有 source）维持  只读（与抓包快照绑定，只读 KV 展示）。
   const handAuthored = !src;
   const respHeadersRows = (resp.headers) ? Object.entries(resp.headers)
     .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
@@ -320,14 +320,14 @@ function openEditRuleForm(r) {
       box.querySelectorAll(".tab-pane").forEach((p) => {
         p.classList.toggle("hidden", p.dataset.pane !== btn.dataset.tab);
       });
-      // M8.6：从隐藏页签切回响应页时 CM 需重算尺寸，否则空白/错位
+      // ：从隐藏页签切回响应页时 CM 需重算尺寸，否则空白/错位
       if (btn.dataset.tab === "resp" && ruleBodyEditor) {
         setTimeout(() => ruleBodyEditor.refresh(), 0);
       }
     };
   });
 
-  // M8.6：回包体 JSON 折叠编辑器（vendored CodeMirror，同源加载见 lib/codemirror/README.md）。
+  // ：回包体 JSON 折叠编辑器（vendored CodeMirror，同源加载见 lib/codemirror/README.md）。
   // fromTextArea 会把 textarea 隐藏并替换为编辑器；保存前 cm.save() 回写 textarea 统一取值。
   ruleBodyEditor = CodeMirror.fromTextArea($("editBody"), {
     mode: { name: "javascript", json: true },
@@ -361,7 +361,7 @@ function openEditRuleForm(r) {
           body: JSON.stringify({ response: newResp }),
         });
         await loadRules();
-        // M8.6 修正：按当前规则 id 从刷新后的列表取最新数据重渲染详情
+        //  修正：按当前规则 id 从刷新后的列表取最新数据重渲染详情
         //（此前误用不存在的 detail._activeRuleId/rulesList，回退后表单不刷新）。
         const updated = (ruleStore || []).find((x) => x.id === r.id);
         if (updated) renderRuleDetail(updated);
@@ -381,8 +381,8 @@ function openEditRuleForm(r) {
 async function saveRuleEdit(rule) {
   if (!detail) return;
   const storedResp = (rule && rule.response) || {};
-  // M11 Step3（D3）：手填规则（无 source 快照）的回包状态码/响应头在编辑表单
-  // 里可改，保存时从表单输入读取；日志规则（有 source）维持 M8.8 只读语义——
+  //  Step3：手填规则（无 source 快照）的回包状态码/响应头在编辑表单
+  // 里可改，保存时从表单输入读取；日志规则（有 source）维持  只读语义——
   // 与抓包快照绑定的状态码/响应头原样回传，不从表单读取。
   const handAuthored = !rule.source;
   let statusCode = Number(storedResp.statusCode) || 200;
@@ -398,10 +398,10 @@ async function saveRuleEdit(rule) {
   const note = $("editNote").value.trim();
   if (!note) { showError("备注必填，请填写后再保存"); return; }
 
-  // M8.6：CodeMirror 内容先回写隐藏 textarea，再统一按 textarea 取值/校验。
+  // ：CodeMirror 内容先回写隐藏 textarea，再统一按 textarea 取值/校验。
   if (ruleBodyEditor) ruleBodyEditor.save();
-  // M8.2：保存前 JSON 合法性校验——回包体形如 JSON（{…}/[…]）时必须可解析，
-  // 拦截全角符号/多余逗号等低级错误（M6.4 真机教训），避免坏 JSON 以"无网络"误导。
+  // ：保存前 JSON 合法性校验——回包体形如 JSON（{…}/[…]）时必须可解析，
+  // 拦截全角符号/多余逗号等低级错误（ 真机教训），避免坏 JSON 以"无网络"误导。
   const bodyText = $("editBody").value;
   const trimmedBody = bodyText.trim();
   if (trimmedBody && (trimmedBody.startsWith("{") || trimmedBody.startsWith("["))) {
@@ -419,7 +419,7 @@ async function saveRuleEdit(rule) {
       encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(rule.id), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      // M5: 不传 method/path/source；不传 enabled（保持当前开关）。
+      // : 不传 method/path/source；不传 enabled（保持当前开关）。
       body: JSON.stringify({
         response: { statusCode: statusCode, headers: headers, body: bodyText },
         note: note,
@@ -466,7 +466,7 @@ async function toggleRule(rule, enabled) {
       encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(rule.id), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      // M5: edit body carries only response + note + enabled; method/path/source
+      // : edit body carries only response + note + enabled; method/path/source
       // are immutable. note is required server-side — toggle sends the current
       // note (a blank legacy rule is rejected and the error prompt steers to edit).
       body: JSON.stringify({
@@ -544,14 +544,14 @@ async function mockThisRequest(e) {
 }
 
 // ============================================================================
-// M11 Step2：从零创建 Mock 规则（空表单手填，无抓包背书）
+//  Step2：从零创建 Mock 规则（空表单手填，无抓包背书）
 // ============================================================================
 
 /** 打开「新建 Mock 规则」空表单（右列 ruleDetail 面板）。与 openEditRuleForm
  *  复用同一套 .edit-row/.edit-pane 样式与 CodeMirror 配置；提交不带 source。 */
 function openCreateRuleForm() {
   if (!detail) return;
-  ruleBodyEditor = null;   // M8.6 离开编辑表单即释放 CM 引用
+  ruleBodyEditor = null;   //  离开编辑表单即释放 CM 引用
   showDetailPane("rule");
   detail._activeRule = null;
   detail._activeTraffic = null;
@@ -674,7 +674,7 @@ async function submitCreateRule() {
   }
 }
 
-// M11 Step2：规则区头部「新建 Mock 规则」入口（脚本在 body 末尾加载，DOM 已就绪）。
+//  Step2：规则区头部「新建 Mock 规则」入口（脚本在 body 末尾加载，DOM 已就绪）。
 (function () {
   const btn = document.getElementById("ruleCreateBtn");
   if (btn) btn.onclick = openCreateRuleForm;

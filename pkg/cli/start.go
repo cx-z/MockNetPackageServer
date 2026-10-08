@@ -135,8 +135,8 @@ func init() {
 	startCmd.Flags().StringVar(&startServerFlags.DataDir, "data-dir", "", "Data directory for persistent storage (default: ~/.local/share/mockd)")
 	startCmd.Flags().BoolVar(&startServerFlags.NoAuth, "no-auth", false, "Disable API key authentication on admin API")
 
-	// MockNetPack account flags (M7.1): admin creation is CLI-only.
-	startCmd.Flags().StringVar(&startServerFlags.CreateAdmin, "create-admin", "", "Create an admin account (MockNetPack M7): mockd start --create-admin <user> --admin-password <pass>")
+	// MockNetPack account flags : admin creation is CLI-only.
+	startCmd.Flags().StringVar(&startServerFlags.CreateAdmin, "create-admin", "", "Create an admin account (MockNetPack): mockd start --create-admin <user> --admin-password <pass>")
 	startCmd.Flags().StringVar(&startServerFlags.AdminPassword, "admin-password", "", "Password for --create-admin")
 
 	// Start-specific flags
@@ -195,7 +195,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Build server configuration using shared builders
 	serverCfg := BuildServerConfig(&sf)
 
-	// Engine management port pre-check (M4): the engine binds this port itself.
+	// Engine management port pre-check : the engine binds this port itself.
 	// ManagementPort==0 means dynamic allocation (engine picks a free port from
 	// 4281, self-healing onto 4282+ when 4281 is busy) — skip then. The CLI
 	// does not expose ManagementPort today, so this check is a no-op until it
@@ -304,7 +304,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start admin API: %w", err)
 	}
 
-	// MockNetPack M7.1: --create-admin — the only admin creation path.
+	// MockNetPack : --create-admin — the only admin creation path.
 	// Open registration only produces dev accounts (contract v0.6.0); admins
 	// are created via CLI. An existing username is an error (no overwrite).
 	if sf.CreateAdmin != "" {
@@ -515,7 +515,7 @@ Suggestions:
 // The engine binds it itself (default 4281, config managementPort); a lingering
 // mockd instance occupying it is the classic failure where the HTTP/admin
 // pre-checks pass yet server.Start() dies with a misleading HTTP-port error
-// (M4). 0 means dynamic allocation (findFreePort) — nothing to pre-check.
+// . 0 means dynamic allocation (findFreePort) — nothing to pre-check.
 func checkEngineManagementPort(mgmtPort int) error {
 	if mgmtPort <= 0 {
 		return nil
@@ -528,7 +528,7 @@ func checkEngineManagementPort(mgmtPort int) error {
 
 // engineStartInUseError formats a server.Start() addr-in-use failure,
 // surfacing the engine management port as the common real conflict instead of
-// blaming only the HTTP port (M4).
+// blaming only the HTTP port .
 func engineStartInUseError(httpPort, mgmtPort int) error {
 	return fmt.Errorf("startup failed: port %d (mock HTTP) or the engine management port %d is already in use — the management port is the common real conflict (a lingering mockd instance); check: lsof -i :%d -i :%d", httpPort, mgmtPort, httpPort, mgmtPort)
 }

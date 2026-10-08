@@ -15,10 +15,10 @@ import (
 // Devices
 // ============================================================================
 
-// CreateManualDevice creates a device entry from the Web UI (M7.2.1): it does
+// CreateManualDevice creates a device entry from the Web UI : it does
 // NOT upsert — an existing (App, Did) returns ErrAlreadyExists so the Web can
 // report a conflict. The caller (handler) stamps Owner and Name; this is the
-// only device-creation path once M7.2.3 stops SDK auto-registration.
+// only device-creation path once  stops SDK auto-registration.
 func (m *CaptureManager) CreateManualDevice(ctx context.Context, d *capture.Device) (*capture.Device, error) {
 	if _, err := m.devices.Get(ctx, d.App, d.Did); err == nil {
 		return nil, ErrAlreadyExists
@@ -40,7 +40,7 @@ func (m *CaptureManager) CreateManualDevice(ctx context.Context, d *capture.Devi
 // active (LastSeenAt = now). Registration is only accepted for a device
 // that already exists OR is new; nothing is rejected here — offline devices
 // come back online on their next register/heartbeat.
-// UpdateDeviceName changes a device's display name (M7.2.2). Returns
+// UpdateDeviceName changes a device's display name . Returns
 // ErrNotFound when the (app, did) does not exist; ownership is checked by the
 // admin handler layer before calling this.
 func (m *CaptureManager) UpdateDeviceName(ctx context.Context, app, did, name string) (*capture.Device, error) {
@@ -90,7 +90,7 @@ func (m *CaptureManager) RegisterDevice(ctx context.Context, d *capture.Device) 
 }
 
 // RegisterDeviceWithPairing registers a device via a validated QR pairing
-// token (M9, D7 idempotency). This is the auto-registration path the QR scan
+// token . This is the auto-registration path the QR scan
 // unlocks:
 //   - (app, did) unknown → create with owner = the token's user and
 //     name = deviceName (or a platform+did fallback).
@@ -121,7 +121,7 @@ func (m *CaptureManager) RegisterDeviceWithPairing(ctx context.Context, d *captu
 		return nil, err
 	}
 
-	// Reuse (D7): never reset owner/name; only fill owner when it was empty.
+	// Reuse : never reset owner/name; only fill owner when it was empty.
 	if existing.Owner == "" && owner != "" {
 		existing.Owner = owner
 	}

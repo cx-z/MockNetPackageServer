@@ -16,7 +16,7 @@ func ruleInput(method, path string, enabled bool) *capture.MockRuleInput {
 		Path:     path,
 		Response: capture.MockResponse{StatusCode: 200, Body: `{"ok":true}`},
 		Enabled:  enabled,
-		// M11 Step1: existing tests model capture-originated rules ("Mock 此
+		//  Step1: existing tests model capture-originated rules ("Mock 此
 		// 请求") — they carry a source snapshot and may omit the note (D6
 		// exempts source-bearing creates). Hand-authored rules are exercised
 		// explicitly in TestMockRule_HandAuthoredNoteRequired below.
@@ -24,7 +24,7 @@ func ruleInput(method, path string, enabled bool) *capture.MockRuleInput {
 	}
 }
 
-// updateInput builds an edit payload (M5 UpdateMockRuleInput). The match key
+// updateInput builds an edit payload ( UpdateMockRuleInput). The match key
 // (method/path) is intentionally absent: it is immutable on edit. enabled may
 // be nil to leave the switch untouched.
 func updateInput(body, note string, enabled *bool) *capture.UpdateMockRuleInput {
@@ -237,7 +237,7 @@ func TestMockRule_UpdateNoteRequiredOnlyOnEdit(t *testing.T) {
 		t.Fatalf("Create = %v", err)
 	}
 
-	// Pure toggle (response echoed unchanged) with blank note -> allowed (M7):
+	// Pure toggle (response echoed unchanged) with blank note -> allowed :
 	// a rule created from a capture has no note and must be enableable directly.
 	updated, _, err := m.UpdateMockRule(ctx, "app", "d1", r.ID, updateInput(`{"ok":true}`, "", boolPtr(true)), nil)
 	if err != nil {
@@ -313,7 +313,7 @@ func TestMockRule_UpdateNotFoundAndCrossDevice(t *testing.T) {
 
 func intPtr(i int) *int { return &i }
 
-// --- M4.2: sliding-window retention & lastUsedAt -----------------------------
+// --- : sliding-window retention & lastUsedAt -----------------------------
 
 func TestMockRule_LastUsedAt_CreateAndEdit(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
@@ -412,7 +412,7 @@ func TestMockRule_HitTouchesLastUsedAt(t *testing.T) {
 	}
 }
 
-// --- M4.3: session end disables all device rules ----------------------------
+// --- : session end disables all device rules ----------------------------
 
 func TestMockRule_SessionEndDisablesRules(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
@@ -461,13 +461,13 @@ func TestMockRule_SessionEndDisablesRules(t *testing.T) {
 	}
 }
 
-// --- M5: note persistence & immutable match key ------------------------------
+// --- : note persistence & immutable match key ------------------------------
 
 func TestMockRule_UpdateNoteAndKeepEnabled(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
 
-	// Create a disabled rule with no note (M4-era legacy row).
+	// Create a disabled rule with no note ( legacy row).
 	r, _, err := m.CreateMockRule(ctx, "app", "d1", ruleInput("POST", "/api/a", false), nil)
 	if err != nil {
 		t.Fatalf("Create = %v", err)
@@ -507,13 +507,13 @@ func TestMockRule_UpdateNoteAndKeepEnabled(t *testing.T) {
 	}
 }
 
-// --- M11 Step1: hand-authored rules (Source == nil) --------------------------
+// ---  Step1: hand-authored rules (Source == nil) --------------------------
 
 func TestMockRule_HandAuthoredNoteRequired(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ctx := context.Background()
 
-	// S2: hand-authored create with a blank note -> rejected (D6).
+	// S2: hand-authored create with a blank note -> rejected .
 	blank := &capture.MockRuleInput{
 		Method:   "GET",
 		Path:     "/api/hello",

@@ -13,7 +13,7 @@ import (
 // 4.22: the runtime traffic ID index must stay consistent with the slices
 // across every mutation — rolling-window trim unindexes the oldest entries,
 // clear unindexes the whole session, session end keeps entries in the session
-// (O3: traffic stays queryable during the retention window), and the janitor
+// (: traffic stays queryable during the retention window), and the janitor
 // unindexes purged expired-ended-session entries.
 func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 	fs := newTestStore(t)
@@ -77,7 +77,7 @@ func TestCaptureManager_TrafficIndexConsistency(t *testing.T) {
 	}
 
 	// Re-upload one entry and end the session: the entry STAYS in the session
-	// (O3 retention) — still resolvable, owner via the kept session record.
+	// ( retention) — still resolvable, owner via the kept session record.
 	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
 		[]*capture.TrafficEntry{trafficEntry("POST", "http://example.com/retain", base)}); err != nil {
 		t.Fatalf("UploadTraffic(retain) = %v", err)

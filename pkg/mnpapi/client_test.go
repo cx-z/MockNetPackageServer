@@ -169,7 +169,7 @@ func TestClient_CreateMockRuleFromTraffic(t *testing.T) {
 			require.NotNil(t, in.Source)
 			assert.Equal(t, "https://a.com/api/feed?x=1", in.Source.URL)
 			assert.Equal(t, "my note", in.Note)
-			// M12.4: the frozen source must carry the app-decoded bodies exactly
+			// : the frozen source must carry the app-decoded bodies exactly
 			// like the Web "Mock 此请求" path, so the rule detail view can show
 			// the decoded request/response JSON of binary (xcp) traffic.
 			assert.Equal(t, `{"h_ch":"appstore"}`, in.Source.RequestBodyDecoded)
@@ -227,7 +227,7 @@ func TestClient_UpdateAndSetEnabled(t *testing.T) {
 	assert.Equal(t, "old", got.Response.Body)
 }
 
-// TestClient_ErrorGuidance asserts M3: 401/403/404/409 surface with the
+// TestClient_ErrorGuidance asserts : 401/403/404/409 surface with the
 // AI-facing guidance text (给 AI 的指引).
 func TestClient_ErrorGuidance(t *testing.T) {
 	cases := []struct {

@@ -36,7 +36,7 @@ func newCaptureTestAPI(t *testing.T) *httptest.Server {
 }
 
 // mustSeedDevice creates a device via the Web manual-registration endpoint
-// (M7.2.3 retired SDK auto-register). no-auth test mode stamps owner="".
+// ( retired SDK auto-register). no-auth test mode stamps owner="".
 func mustSeedDevice(t *testing.T, srv *httptest.Server, app, did string) {
 	t.Helper()
 	var sb bytes.Buffer
@@ -69,7 +69,7 @@ func doJSON(t *testing.T, method, url string, body any, out any) *http.Response 
 func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 
-	// M7.2.3: device must pre-exist; register refreshes metadata.
+	// : device must pre-exist; register refreshes metadata.
 	mustSeedDevice(t, srv, "com.example.integrating", "dev-1")
 	var reg RegisterDeviceResponse
 	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
@@ -79,7 +79,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	assert.Equal(t, "com.example.integrating", reg.Device.App)
 	assert.Equal(t, "dev-1", reg.Device.Did)
 	assert.Equal(t, capture.DeviceStatusIdle, reg.Device.Status)
-	assert.Equal(t, 5, reg.ServerConfig.HeartbeatIntervalSeconds, "M8.2: register returns idle 5s")
+	assert.Equal(t, 5, reg.ServerConfig.HeartbeatIntervalSeconds, "register returns idle 5s")
 	assert.Equal(t, 60, reg.ServerConfig.HeartbeatTimeoutSeconds)
 
 	// Heartbeat with no session.
@@ -88,7 +88,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, hb.OK)
 	assert.Nil(t, hb.Session, "heartbeat before activation must carry no session")
-	assert.Equal(t, 5, hb.ServerConfig.HeartbeatIntervalSeconds, "M8.2: idle heartbeat 5s")
+	assert.Equal(t, 5, hb.ServerConfig.HeartbeatIntervalSeconds, "idle heartbeat 5s")
 
 	// Activate from Web.
 	var session capture.CaptureSession
@@ -104,7 +104,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NotNil(t, hb.Session)
 	assert.Equal(t, sessionID, hb.Session.ID)
-	assert.Equal(t, 3, hb.ServerConfig.HeartbeatIntervalSeconds, "M8.3: capturing heartbeat 3s")
+	assert.Equal(t, 3, hb.ServerConfig.HeartbeatIntervalSeconds, "capturing heartbeat 3s")
 
 	// Device list shows capturing.
 	var devices DeviceListResponse
@@ -125,7 +125,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 
-	// O3 (48h 保留): the session record stays, marked ended.
+	// (48h retention): the session record stays, marked ended.
 	var endedSession capture.CaptureSession
 	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &endedSession)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -137,7 +137,7 @@ func TestCaptureAPI_DeviceHeartbeatSessionLifecycle(t *testing.T) {
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/com.example.integrating/dev-1/heartbeat", nil, &hb)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Nil(t, hb.Session, "heartbeat after session end must carry no session")
-	assert.Equal(t, 5, hb.ServerConfig.HeartbeatIntervalSeconds, "M8.2: back to idle heartbeat 5s")
+	assert.Equal(t, 5, hb.ServerConfig.HeartbeatIntervalSeconds, "back to idle heartbeat 5s")
 
 	// Device back to idle.
 	devices = DeviceListResponse{}
@@ -229,7 +229,7 @@ func TestCaptureAPI_ViewerLifecycle(t *testing.T) {
 	assert.Equal(t, 1, got.ViewerCount)
 	assert.Equal(t, capture.SessionStatusCapturing, got.Status)
 
-	// Release the last viewer: session ends (record kept, O3 保留).
+	// Release the last viewer: session ends (record kept).
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID+"/viewers/v2", nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	var endedSession capture.CaptureSession
@@ -368,7 +368,7 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	require.Len(t, page.Entries, 1)
 	assert.Equal(t, "GET", page.Entries[0].Method)
 
-	// M9.5: single-entry delete (Web per-row 删除) — 204, detail 404, total drops.
+	// : single-entry delete (Web per-row 删除) — 204, detail 404, total drops.
 	var errResp ErrorResponse
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/traffic/"+first.ID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
@@ -379,7 +379,7 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 1, list.Total)
 
-	// M9.5: clear session traffic (Web 清空日志) — 204, total 0, session stays.
+	// : clear session traffic (Web 清空日志) — 204, total 0, session stays.
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &list)
@@ -405,7 +405,7 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	require.Len(t, keptList.Entries, 1)
 	keptID := keptList.Entries[0].ID
 
-	// End session (O3 48h 保留): session record + traffic stay queryable.
+	// End session (48h retention): session record + traffic stay queryable.
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID, nil, &gotSession)
@@ -479,7 +479,7 @@ func TestCaptureAPI_TrafficErrors(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, "session_not_found", errResp.Error)
 
-	// Ended session (O3: record kept) upload -> 409 session_ended.
+	// Ended session (record kept) upload -> 409 session_ended.
 	resp = doJSON(t, http.MethodDelete, srv.URL+"/api/v1/sessions/"+sessionID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
@@ -488,7 +488,7 @@ func TestCaptureAPI_TrafficErrors(t *testing.T) {
 	assert.Equal(t, "session_ended", errResp.Error)
 }
 
-// TestCaptureAPI_TrafficList_FilterParams asserts the O2.2 server-side filter
+// TestCaptureAPI_TrafficList_FilterParams asserts the  server-side filter
 // parameters on GET /sessions/{id}/traffic: keyword / statusCode / from / to
 // narrow the list (ANDed), paging pages within the filtered set, and invalid
 // values are rejected with 400 invalid_field.

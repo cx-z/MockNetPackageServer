@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 "use strict";
 
-// MockNetPack web: M11 Step3 编辑放开回归（node，无浏览器依赖）。
+// MockNetPack web:  Step3 编辑放开回归（node，无浏览器依赖）。
 // 运行：node tests/rules-edit-source.test.js（在 web/mocknetpack 目录下）。
 // ============================================================================
 // D3：编辑表单按 rule.source 有无分叉——
 //   · 手填规则（source=null）：回包状态码/响应头可编辑（输入框/多行文本），
 //     PUT 全量回传表单值；
-//   · 日志规则（source 存在）：状态码/响应头维持 M8.8 只读，PUT 原样回传存储值。
+//   · 日志规则（source 存在）：状态码/响应头维持  只读，PUT 原样回传存储值。
 // ============================================================================
 
 const fs = require("fs");
@@ -105,7 +105,7 @@ function logRule(over) {
     check("W7 PUT body/备注透传", body.response.body === '{"changed":1}' && body.note === "updated memo");
   }
 
-  // ---- 3) 日志规则编辑表单：状态码/响应头只读（W8，M8.8 回归） ----
+  // ---- 3) 日志规则编辑表单：状态码/响应头只读（W8， 回归） ----
   r = logRule();
   detailBox.innerHTML = "";
   ctx.openEditRuleForm(r);

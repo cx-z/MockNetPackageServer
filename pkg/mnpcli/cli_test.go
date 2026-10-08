@@ -186,7 +186,7 @@ func TestCLI_ExitCodes(t *testing.T) {
 }
 
 func TestCLI_RuleCreateFromTraffic_NoteRequired(t *testing.T) {
-	// Empty note is a usage error (M11 语义透传).
+	// Empty note is a usage error ( 语义透传).
 	code, _, errOut := runCLI(nil, map[string]string{"MOCKNETPACK_API_KEY": "k"},
 		"rule", "create-from-traffic", "t1", "--app", "com.a", "--did", "d1", "--note", "  ")
 	assert.Equal(t, 2, code)

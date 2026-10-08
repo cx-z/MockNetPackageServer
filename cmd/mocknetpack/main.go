@@ -1,4 +1,4 @@
-// mocknetpack is the MockNetPack CLI (M12, contract v0.12.0): a machine-native
+// mocknetpack is the MockNetPack CLI : a machine-native
 // channel for scripts and Agent tooling. See `mocknetpack --help`.
 package main
 

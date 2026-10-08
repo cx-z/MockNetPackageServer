@@ -272,7 +272,7 @@ type DeviceFilter struct {
 
 // DeviceStore handles persistence for devices. A device is uniquely
 // identified by (App, Did) — the same did may exist under different apps
-// (requirement 决策 #2), so every lookup carries both dimensions.
+// (requirement ), so every lookup carries both dimensions.
 type DeviceStore interface {
 	// List returns all devices matching the filter.
 	List(ctx context.Context, filter *DeviceFilter) ([]*capture.Device, error)
@@ -309,7 +309,7 @@ type SessionFilter struct {
 
 // CaptureSessionStore handles persistence for capture sessions.
 // Session records persist across restarts (summary: times, status, counts);
-// the temporary traffic inside a session is NOT stored here (M2 defines its
+// the temporary traffic inside a session is NOT stored here ( defines its
 // own session-scoped store and clears it when the session ends).
 type CaptureSessionStore interface {
 	// List returns all sessions matching the filter, most recent first.
@@ -344,7 +344,7 @@ type MockRuleFilter struct {
 
 // MockRuleStore handles persistence for MockNetPack mock rules and the
 // per-device monotonic rule-set version. Rules are persisted across restarts
-// (requirement F4.5); the runtime Effective flag is computed by the manager,
+// (requirement ); the runtime Effective flag is computed by the manager,
 // never stored here.
 type MockRuleStore interface {
 	// List returns all rules matching the filter (device-scoped).
@@ -373,7 +373,7 @@ type MockRuleStore interface {
 }
 
 // ============================================================================
-// MockNetPack account entities (User / AuthSession, M7.1, contract v0.6.0)
+// MockNetPack account entities (User / AuthSession)
 // ============================================================================
 
 // UserStore handles persistence for accounts. Username is the unique key.
@@ -391,7 +391,7 @@ type UserStore interface {
 	Delete(ctx context.Context, username string) error
 }
 
-// AuthSessionStore handles persistence for server-issued session tokens (M7.1).
+// AuthSessionStore handles persistence for server-issued session tokens .
 // Sessions persist across restarts so a logged-in Web page survives a server
 // restart until its token expires or is revoked.
 type AuthSessionStore interface {
@@ -407,7 +407,7 @@ type AuthSessionStore interface {
 	DeleteExpired(ctx context.Context, now time.Time) (int, error)
 }
 
-// PairingTokenStore handles persistence for QR pairing tokens (M9, contract
+// PairingTokenStore handles persistence for QR pairing tokens ( contract
 // v0.8.0). Tokens persist across restarts so a just-scanned QR survives a
 // server restart until its TTL expires (10 minutes).
 type PairingTokenStore interface {
@@ -417,7 +417,7 @@ type PairingTokenStore interface {
 	// GetByToken returns a single pairing token by token.
 	GetByToken(ctx context.Context, token string) (*account.PairingToken, error)
 	// RecordPairingUse appends a did to a token's paired-device list
-	// (M9.3-fix, idempotent per did) so the Web can detect scan completion.
+	//  so the Web can detect scan completion.
 	// Unknown token is store.ErrNotFound; expiry is not enforced here
 	// (validation already rejected the register request before this call).
 	RecordPairingUse(ctx context.Context, token, did string, at time.Time) error
@@ -427,7 +427,7 @@ type PairingTokenStore interface {
 	DeleteExpired(ctx context.Context, now time.Time) (int, error)
 }
 
-// ShareStore handles persistence for request share snapshots (M8.5). Shares
+// ShareStore handles persistence for request share snapshots . Shares
 // are independent read-only copies of a single traffic entry, decoupled from
 // the owning session/traffic. They persist across restarts so a share link
 // keeps its full 7-day validity (the product promise) instead of dying with
@@ -447,7 +447,7 @@ type ShareStore interface {
 	DeleteExpired(ctx context.Context, now time.Time) (int, error)
 }
 
-// APIKeyStore handles persistence for long-lived API keys (M12, contract
+// APIKeyStore handles persistence for long-lived API keys ( contract
 // v0.12.0). Keys persist across restarts so a script/Agent configured once
 // keeps working until the key is revoked or expires. Only the SHA-256 hash is
 // stored — the plaintext exists at creation time only and is never persisted.

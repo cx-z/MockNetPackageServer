@@ -1,4 +1,4 @@
-// Package mnpcli implements the `mocknetpack` CLI (M12, contract v0.12.0): a
+// Package mnpcli implements the `mocknetpack` CLI : a
 // machine-native channel for scripts and Agent tooling covering the 7
 // high-frequency operations of MockNetPack.
 //
@@ -106,7 +106,7 @@ func printVersion(w io.Writer) {
 
 // printUsage writes the full command help to w.
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, `mocknetpack — MockNetPack 命令行通道（M12，契约 v0.12.0）
+	fmt.Fprint(w, `mocknetpack — MockNetPack 命令行通道
 
 用法：
   mocknetpack [--server <url>] [--api-key <key>] <command> [args]

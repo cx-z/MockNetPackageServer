@@ -3,7 +3,7 @@
 // MockNetPack web: device detail view, live request-stream polling,
 // page log merge/filter and traffic detail rendering. Pure move from app.js.
 // ============================================================================
-// 设备详情 + 请求流（M2.5）
+// 设备详情 + 请求流
 // ============================================================================
 
 async function openDetail(app, did) {
@@ -15,7 +15,7 @@ async function enterDetail(app, did) {
   // 避免 A→B 直跳后 A 会话的续租定时器继续运行、服务端永不超时结束会话。
   if (detail && detail.sessionId) stopViewer(detail.sessionId);
   detail = { app, did, sessionId: null };
-  pageLog = [];   // M9.4：进入设备详情（含跨设备跳转）即重新开始页面日志
+  pageLog = [];   // ：进入设备详情（含跨设备跳转）即重新开始页面日志
   $("listView").classList.add("hidden");
   $("detailView").classList.remove("hidden");
   $("dDid").textContent = did;
@@ -27,7 +27,7 @@ async function enterDetail(app, did) {
   await loadDetail();
 }
 
-/** 加载设备信息；绑定当前抓包会话（M9：仅当前会话，无历史）。 */
+/** 加载设备信息；绑定当前抓包会话（：仅当前会话，无历史）。 */
 async function loadDetail() {
   if (!detail) return;
   const { app, did } = detail;
@@ -56,13 +56,13 @@ async function loadDetail() {
     }
 
     loadRules();
-    // M9：只绑定当前抓包会话（无则空态），不展示历史会话。
-    // F2：历史日志视图打开期间跳过绑定——bindSession 会重启 trafficTimer 轮询，
+    // ：只绑定当前抓包会话（无则空态），不展示历史会话。
+    // ：历史日志视图打开期间跳过绑定——bindSession 会重启 trafficTimer 轮询，
     // 与 openHistory 的暂停意图冲突；关闭历史后由 closeHistory 恢复。
     if (historyOpen) return;
     bindSession(cur && cur.status === "capturing" ? cur : null);
-    // M7.2.4: 详情页定时刷新设备状态（熄屏重启后 offline→online 同步）
-    // F2：历史打开期间不重建（openHistory 已 clear，在途 loadDetail 完成后
+    // : 详情页定时刷新设备状态（熄屏重启后 offline→online 同步）
+    // ：历史打开期间不重建（openHistory 已 clear，在途 loadDetail 完成后
     // 不得把它重新拉起来）。
     if (!detailPollTimer && !historyOpen) {
       detailPollTimer = setInterval(loadDetail, POLL_MS);
@@ -72,10 +72,10 @@ async function loadDetail() {
   }
 }
 
-/** M9.4：绑定当前会话。capturing → 注册 viewer + 2s 轮询，日志合并进 pageLog 继续累积；
+/** ：绑定当前会话。capturing → 注册 viewer + 2s 轮询，日志合并进 pageLog 继续累积；
  *  无会话（断开）→ 停止轮询，已展示日志保留不清空（离开页面才清空）。 */
 function bindSession(session) {
-  // F2：历史日志视图打开期间不绑定/重启轮询（openHistory 已暂停；在途调用
+  // ：历史日志视图打开期间不绑定/重启轮询（openHistory 已暂停；在途调用
   // 不得把 trafficTimer 重新拉起），关闭历史后由 closeHistory 恢复。
   if (historyOpen) return;
   stopTrafficPoll();
@@ -104,13 +104,13 @@ function stopTrafficPoll() {
   if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
 }
 
-/** M8.2：右列详情面板切换（请求详情 / 规则详情）。 */
+/** ：右列详情面板切换（请求详情 / 规则详情）。 */
 function showDetailPane(kind) {
   $("ruleDetail").classList.toggle("hidden", kind !== "rule");
   $("trafficDetail").classList.toggle("hidden", kind !== "traffic");
 }
 
-/** 请求流轮询：拉当前会话最新一页，合并进页面日志 pageLog（M9.4 跨会话保留、时间线混排）。 */
+/** 请求流轮询：拉当前会话最新一页，合并进页面日志 pageLog（ 跨会话保留、时间线混排）。 */
 async function pollTraffic() {
   if (!detail || !detail.sessionId) return;
   const sid = detail.sessionId;
@@ -128,7 +128,7 @@ async function pollTraffic() {
 }
 
 /** 合并日志：按 id 去重、timestamp 升序，保留最近 LOG_CAP 条（跨会话时间线混排）。
- *  O3.1 复活抑制：被前端删除（✕/清空）的条目不再被轮询拉回——
+ *   复活抑制：被前端删除（✕/清空）的条目不再被轮询拉回——
  *  _deletedIds 精确丢弃单条；_logClearedAt 之前的旧条目在清空后一律丢弃。 */
 function mergeLog(base, fresh) {
   const seen = new Map();
@@ -195,7 +195,7 @@ function renderTraffic(entries) {
   }
 }
 
-/** M2 (O3.1 保留语义)：删除单条日志 = 只清前端页面日志，不再调服务端
+/**  ( 保留语义)：删除单条日志 = 只清前端页面日志，不再调服务端
  *  DELETE（服务端流量按 48h 保留供历史日志查询）。只动日志，不影响已创建的
  *  Mock 规则。 */
 async function deleteTrafficEntry(e) {
@@ -211,7 +211,7 @@ async function deleteTrafficEntry(e) {
   renderTraffic(pageLog);
 }
 
-/** M2 (O3.1 保留语义)：清空本页日志 = 只清前端页面日志，不再调服务端
+/**  ( 保留语义)：清空本页日志 = 只清前端页面日志，不再调服务端
  *  DELETE（服务端流量按 48h 保留供历史日志查询）。连接中清空后新流量继续
  *  累积。只动日志，不影响已创建的 Mock 规则。 */
 async function clearTrafficLog() {
@@ -251,7 +251,7 @@ function renderTrafficDetail(e) {
       "</span></div>" +
       '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + e.durationMs + " ms</span></div>" +
       '<div class="d-kv"><span class="d-k">时间</span><span class="d-v">' + esc(e.timestamp || "—") + "</span></div>" +
-      (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是（M3 起标记）</span></div>' : "") +
+      (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是</span></div>' : "") +
       '<div class="d-block"><div class="d-title">响应头</div>' +
         (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
       '<div class="d-block"><div class="d-title">响应体</div>' + bodyHtml(e.responseBodyDecoded || e.responseBody, { contentType: headerValue(e.responseHeaders, "Content-Type"), base64: e.responseBodyBase64 }) + "</div>";

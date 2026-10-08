@@ -65,20 +65,20 @@ func (m *CaptureManager) ActivateSession(ctx context.Context, app, did string) (
 // or heartbeat timeout). Idempotent: ending an already-ended session is a
 // no-op. Viewer leases for the session are cleared.
 //
-// M2 (O3 48h 保留): ending a session marks it ended and stamps RetainUntil
+// (48h retention): ending a session marks it ended and stamps RetainUntil
 // (now + TrafficRetention, default 48h). The session record and its traffic
 // are KEPT and stay queryable via ListSessionTraffic during the window — the
 // Web history view reads them; after the window the janitor purges both. This
-// replaces the M9 "结束即删" model: the record is no longer deleted on end.
+// replaces the  "结束即删" model: the record is no longer deleted on end.
 //
-// M8.6 (断开后可分享): share creation still works after disconnect — traffic
+//  (断开后可分享): share creation still works after disconnect — traffic
 // stays in the session (index retained=false) and the owner resolves via the
 // session record, which now survives the end. The separate retained store is
-// no longer written by EndSession; legacy retained data (pre-M2) is purged by
+// no longer written by EndSession; legacy retained data (pre-) is purged by
 // PurgeExpiredRetainedTraffic as before.
 //
 // Mock rules are NOT deleted: they persist per device and are disabled on
-// session end (M4/F4.5 决策13), re-enabled manually on the next session.
+// session end (/ ), re-enabled manually on the next session.
 func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	// The whole end sequence runs under trafficMu, the same lock UploadTraffic
 	// and ClearSessionTraffic hold for their authoritative session check +
@@ -103,7 +103,7 @@ func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	delete(m.viewers, id)
 	m.viewerMu.Unlock()
 
-	// M2 (O3): mark ended + retention deadline instead of deleting the record
+	// mark ended + retention deadline instead of deleting the record
 	// and moving traffic to the retained store. Traffic stays in m.traffic[id];
 	// the ID index keeps retained=false, and ownership still resolves through
 	// the (now persisted) session record.
@@ -120,7 +120,7 @@ func (m *CaptureManager) EndSession(ctx context.Context, id string) error {
 	}
 	m.trafficMu.Unlock()
 
-	// M4 (F4.5/决策13): any session end disables all of the device mock rules;
+	//  (/): any session end disables all of the device mock rules;
 	// they stay but must be re-enabled manually.
 	m.disableDeviceRules(ctx, s.App, s.Did)
 	return nil
@@ -140,7 +140,7 @@ func (m *CaptureManager) GetSession(ctx context.Context, id string) (*capture.Ca
 		}
 		return nil, err
 	}
-	// O3 / v0.10.0: an ended session whose 48h retention window (RetainUntil)
+	// v0.10.0: an ended session whose 48h retention window (RetainUntil)
 	// has passed is gone for readers even if the janitor has not purged the
 	// record yet — same expiry-first semantics as ListSessionTraffic.
 	if s.Status == capture.SessionStatusEnded && s.RetainUntil != nil && time.Now().After(*s.RetainUntil) {
@@ -227,7 +227,7 @@ func (m *CaptureManager) ReleaseViewer(ctx context.Context, sessionID, viewerID 
 		return err
 	}
 
-	// M9: last viewer released while capturing => the session ends and its
+	// : last viewer released while capturing => the session ends and its
 	// record is deleted (EndSession: clears traffic, disables rules, removes).
 	if count == 0 && s.Status == capture.SessionStatusCapturing {
 		return m.EndSession(ctx, sessionID)
@@ -251,8 +251,8 @@ func (m *CaptureManager) ReleaseViewer(ctx context.Context, sessionID, viewerID 
 //  2. garbage-collects expired viewer leases, ending a session when its last
 //     lease expires without a page-close event (beforeunload is unreliable).
 //     A single hourly janitor also purges expired mock rules, expired ended
-//     sessions (O3 48h retention), retained traffic, QR pairing tokens (M9) and
-//     share snapshots (M8.5) — one ticker instead of five (4.22: the janitors
+//     sessions (48h retention), retained traffic, QR pairing tokens  and
+//     share snapshots  — one ticker instead of five (4.22: the janitors
 //     are independent and cheap, and running them sequentially in the same
 //     goroutine loses nothing).
 func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
@@ -275,7 +275,7 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 				m.checkDeviceHealth(ctx)
 				m.checkViewerLeases(ctx)
 			case <-hourly.C:
-				m.LogDataFileSize() // O2.4 存储水位：每小时一行 data.json 体积
+				m.LogDataFileSize() //  存储水位：每小时一行 data.json 体积
 				m.PurgeExpiredRules(ctx)
 				m.PurgeExpiredEndedSessions(ctx)
 				m.PurgeExpiredRetainedTraffic(ctx)
@@ -287,7 +287,7 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 }
 
 // PurgeExpiredEndedSessions deletes ended sessions whose retention window
-// (RetainUntil) has passed, together with their in-memory traffic (O3 48h 保留:
+// (RetainUntil) has passed, together with their in-memory traffic ( 48h 保留:
 // 会话结束后流量保留 48h，之后 janitor 清理释放内存). It coexists with the 7-day
 // mock-rule sliding cleanup (PurgeExpiredRules) — the two janitors are
 // independent. Best-effort; called hourly by the health check. A session whose
@@ -399,7 +399,7 @@ func (m *CaptureManager) checkViewerLeases(ctx context.Context) {
 		if s.Status != capture.SessionStatusCapturing {
 			continue
 		}
-		// M9: last viewer lease expired => end = delete the session record.
+		// : last viewer lease expired => end = delete the session record.
 		if err := m.EndSession(ctx, sessionID); err != nil {
 			m.log.Warn("capture health check: end session after viewer expiry failed", "session", sessionID, "error", err)
 		}
@@ -426,7 +426,7 @@ func (m *CaptureManager) activeSessionFor(ctx context.Context, app, did string) 
 var activeStatus = capture.SessionStatusCapturing
 
 // ============================================================================
-// O2.4 存储水位监控
+//  存储水位监控
 // ============================================================================
 
 // DefaultDataFileWarnBytes is the data.json size watermark at which the
@@ -434,13 +434,13 @@ var activeStatus = capture.SessionStatusCapturing
 const DefaultDataFileWarnBytes = 500 * 1024 * 1024
 
 // SetDataFilePath points the storage-watermark check at the persisted
-// data.json file (O2.4). An empty path disables the check (tests / pure
+// data.json file . An empty path disables the check (tests / pure
 // in-memory runs).
 func (m *CaptureManager) SetDataFilePath(p string) {
 	m.dataFile = p
 }
 
-// LogDataFileSize emits one line with the current data.json size (O2.4):
+// LogDataFileSize emits one line with the current data.json size :
 // INFO when under the watermark, WARN at or above it. Best-effort and
 // non-blocking; a missing file is reported as size 0 without error spam.
 func (m *CaptureManager) LogDataFileSize() {
@@ -454,12 +454,12 @@ func (m *CaptureManager) LogDataFileSize() {
 	}
 	n := fi.Size()
 	if n >= DefaultDataFileWarnBytes {
-		m.log.Warn("data.json size exceeds warning threshold (O2.4)",
+		m.log.Warn("data.json size exceeds warning threshold ",
 			"path", m.dataFile, "bytes", n, "human", humanBytes(n),
 			"warnThreshold", DefaultDataFileWarnBytes)
 		return
 	}
-	m.log.Info("data.json size (O2.4)",
+	m.log.Info("data.json size ",
 		"path", m.dataFile, "bytes", n, "human", humanBytes(n))
 }
 
