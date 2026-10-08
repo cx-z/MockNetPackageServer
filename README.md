@@ -1,16 +1,16 @@
 <!--
-  MockNetPack 二次开发声明（fork notice）
-  本仓库基于开源项目 getmockd/mockd 二次开发。
-  上游基线 commit: 45c2906b095a0428842faaa931afab0edbde3fdb (v0.7.1)
-  上游仓库: https://github.com/getmockd/mockd
+  MockNetPack fork notice
+  This repository is a secondary development based on the open-source project getmockd/mockd.
+  Upstream baseline commit: 45c2906b095a0428842faaa931afab0edbde3fdb (v0.7.1)
+  Upstream repository: https://github.com/getmockd/mockd
   Fork: https://github.com/cx-z/mockd
-  上游版权: Copyright 2025 GetMockd LLC, Apache License 2.0（见 LICENSE 与 NOTICE，未作修改）
-  下方为上游原始 README，保留以说明基线行为。
+  Upstream copyright: Copyright 2025 GetMockd LLC, Apache License 2.0 (see LICENSE and NOTICE, unmodified)
+  Below is the upstream original README, kept to document the baseline behavior.
 -->
 
-> **MockNetPack 中央 Mock 服务器** —— 本仓库为内部 HTTP 抓包与 Mock 平台的服务端，
-> **基于 getmockd/mockd @ [`45c2906`](https://github.com/cx-z/mockd/commit/45c2906b095a0428842faaa931afab0edbde3fdb)（v0.7.1）二次开发**。
-> 上游 LICENSE（Apache-2.0）与 NOTICE 保持原样未改。下方为上游原始 README。
+> **MockNetPack central Mock server** — the server side of the internal HTTP capture & Mock platform,
+> **a secondary development based on [getmockd/mockd @ [`45c2906`](https://github.com/cx-z/mockd/commit/45c2906b095a0428842faaa931afab0edbde3fdb) (v0.7.1)]**.
+> The upstream LICENSE (Apache-2.0) and NOTICE are kept unmodified. Below is the upstream original README.
 
 ---
 

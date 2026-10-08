@@ -54,14 +54,14 @@ pkg/capture (models) ◄── pkg/store.CaptureManager ◄── pkg/store inte
 | Account | `pkg/account/account.go` | `User`, `Role`, `AuthSession`, PBKD-SHA256 hashing, `NewToken` |
 | HTTP (custom) | `pkg/admin/{capture_handlers,device_handlers,traffic_handlers,auth_handlers,auth_middleware,mock_rule_handlers,mocknetpack_web}.go` + `routes.go` + `api.go` | `/api/v1` handlers, auth gate, ownership filtering, static web serving |
 | HTTP (upstream) | rest of `pkg/admin/*.go` | mockd native admin API (mocks, workspaces, engines, proxy, recording, chaos, …) |
-| Contract | `openapi/mocknetpack.yaml` | `/api/v1` schemas + paths (v0.8.0;  adds `/pairing-tokens`, register `pairingToken`/`deviceName`, `403 pairing_token_invalid`) |
+| Contract | `openapi/mocknetpack.yaml` | `/api/v1` schemas + paths (v0.8.0: adds `/pairing-tokens`, register `pairingToken`/`deviceName`, `403 pairing_token_invalid`) |
 
 ## Domain flows
 
 ### 1. Device registration & heartbeat
 
 ```
-Web manual registration (only creation path, +)
+Web manual registration (only creation path)
   POST /api/v1/devices  {app, did, name}            [requireAuth]
     → allowedApps check (catalog) → owner = current user
     → CaptureManager.CreateManualDevice (no upsert; (App,did) conflict ⇒ 409 device_taken)
@@ -69,17 +69,17 @@ Web manual registration (only creation path, +)
 SDK register (metadata refresh only; pairingToken enables auto-create)
   POST /api/v1/devices/register                     [open]
     body {app, did, pairingToken?, deviceName?}
-    no token  → GetDevice first: unknown (app,did) ⇒ 404 device_not_registered 
+    no token  → GetDevice first: unknown (app,did) ⇒ 404 device_not_registered
     with token→ ValidatePairingToken(token, app): expired/invalid ⇒ 403 pairing_token_invalid
-                RegisterDeviceWithPairing (/D1+D7): unknown ⇒ create (owner=token user,
+                RegisterDeviceWithPairing (D1+D7): unknown ⇒ create (owner=token user,
                 name=deviceName ?? "platform·did[:12]"); known ⇒ reuse — owner only filled if
                 empty, name never overwritten, refresh OS/SDK/version/platform/LastSeenAt
     → returns DeviceView + ServerConfig (idle heartbeat interval 5s)
 
-Pairing token issue 
+Pairing token issue
   POST /api/v1/pairing-tokens {app}                 [requireAuth]
     → allowedApps check → token TTL 10min (pairingTokenTTL), owner = current user
-    → returns {token, app, expiresAt}; same token reusable for multiple devices 
+    → returns {token, app, expiresAt}; same token reusable for multiple devices
     → hourly janitor purges expired tokens (aligned with health check)
 
 SDK heartbeat (keep-alive + session-state channel)
@@ -106,7 +106,7 @@ End        DELETE /api/v1/sessions/{id}             [requireAuth]
              → EndSession (idempotent):
                 1) delete viewer leases
                 2) move session traffic → retained store (7d, shareable by ID)
-                3) DELETE the session record (: delete-on-end)
+                3) DELETE the session record (delete-on-end)
                 4) disableDeviceRules (rules persist but Enabled=false; version bump)
 
 Timeout    background health check (every HeartbeatTimeout/2)
@@ -129,15 +129,18 @@ Query     GET /api/v1/sessions/{id}/traffic?limit&offset        [requireAuth]
             → active session: entries in arrival order (default limit 100, ≤500)
             → ended session: [] + total 0 (record is gone)
           GET /api/v1/traffic/{id}                              [requireAuth]
-            → live session OR retained store of ended session 
-           机器通道（v0.12.0）：
-            ?projection=compact → CompactTrafficView 瘦身视图（8 字段，不含
-              headers/bodies/query；每条带 seq 每会话自增到达序号）——MCP/CLI 低带宽拉取
-            ?since=N → 只返回 seq > N（增量游标；ID 为 ULID，同毫秒字典序不严格单调，
-              故新增独立 seq；since 先过滤再分页）
-            ?method=GET&scheme=https → 过滤（method 大小写不敏感；scheme 按 URL 前缀）
-            （过滤与既有 keyword/statusCode/from/to AND 组合）
-            （缺省无 projection 时响应形状与 v0.11.0 完全一致——Web UI 不回归）
+            → live session OR retained store of ended session
+          Machine channels (v0.12.0):
+            ?projection=compact → CompactTrafficView slim view (8 fields, no
+              headers/bodies/query; each entry carries seq — a per-session arrival
+              sequence number) — low-bandwidth pull for MCP/CLI
+            ?since=N → return only entries with seq > N (incremental cursor; IDs are
+              ULIDs, not strictly monotonic lexicographically within the same
+              millisecond, hence the dedicated seq; since filters before paging)
+            ?method=GET&scheme=https → filtering (method case-insensitive; scheme
+              matched by URL prefix)
+            (filters AND-combine with the existing keyword/statusCode/from/to)
+            (without projection the response shape is identical to v0.11.0 — no Web UI regression)
 
 Delete    DELETE /api/v1/traffic/{id}                           [requireAuth]
             → per-row delete; RequestCount decremented best-effort
@@ -165,7 +168,8 @@ Delete    DELETE .../mock-rules/{ruleId}                        [requireAuth]
 Evaluate  every read recomputes:
             Effective = enabled && sole-enabled-on-interface
             multi-enabled interface ⇒ no rule on it is Effective ⇒ NOT mocked,
-            reported as conflict (fixed message 不允许同一个接口同时开启多个 Mock 规则)
+            reported as conflict (fixed message 不允许同一个接口同时开启多个 Mock 规则 —
+            "multiple mock rules cannot be enabled for the same interface at once")
 
 SDK pull  GET .../mock-rules?sinceVersion=N  [open; Web full-list branch needs auth]
             → version == sinceVersion ⇒ {version, rules: []} (no change)
@@ -173,13 +177,13 @@ SDK pull  GET .../mock-rules?sinceVersion=N  [open; Web full-list branch needs a
             (the SDK applies only Effective rules)
 
 Session end  → disableDeviceRules: all enabled rules of that device flip off;
-               rules stay (re-enable manually next session) —  / decision #13
+               rules stay (re-enable manually next session) — decision #13
 
 Janitor   hourly: purge rules whose last use (LastUsedAt→UpdatedAt→CreatedAt)
             is older than retention (7d); bumps version per device
 ```
 
-### 5. Auth & ownership 
+### 5. Auth & ownership
 
 ```
 Register  POST /api/v1/auth/register {username,password}  [open]
@@ -189,16 +193,20 @@ Login     POST /api/v1/auth/login      → verify PBKD; issue AuthSession
 Logout    POST /api/v1/auth/logout     → delete session server-side (revocation)
 Me        GET  /api/v1/auth/me         → current user (page refresh)
 
- 长效 API Key（v0.12.0，机器原生通道凭证）：
+  Long-lived API Keys (v0.12.0, machine-native credentials):
 Create    POST /api/v1/auth/keys                     [requireAuth]
-            → 为当前用户签发 mnpk_ 前缀 key；明文仅在创建响应返回一次
-            → store 只落 SHA-256 哈希；日志（访问日志）不落 Authorization/key 明文
+            → issues an mnpk_-prefixed key for the current user; plaintext returned
+              only once, in the create response
+            → store persists only the SHA-256 hash; logs (access logs) never carry
+              Authorization/key plaintext
 List      GET  /api/v1/auth/keys                     [requireAuth]
-            → 当前用户 key 列表（id/keyPrefix/createdAt/expiresAt，无明文无哈希）
+            → current user's key list (id/keyPrefix/createdAt/expiresAt; no plaintext, no hash)
 Revoke    DELETE /api/v1/auth/keys/{id}              [requireAuth + owner/admin]
-            → 吊销即失效；非 owner 非 admin 统一 404（不泄露 key 存在性）
-认证      authenticate() 双识别：session token 与 mnpk_ API Key 前缀分流；
-            API Key 归属用户角色，401/403 语义与会话 token 一致
+            → revoke = immediately invalid; non-owner/non-admin gets a uniform 404
+              (no key-existence leak)
+Auth      authenticate() dual recognition: session token and mnpk_-prefixed API Keys
+            split by prefix; an API Key carries its owning user's role, and 401/403
+            semantics are identical to session tokens
 
 Middleware requireAuth: Bearer token|API Key → UserCtx; invalid/expired ⇒ 401
           (skipped when --no-auth, smoke only)
@@ -208,12 +216,12 @@ Ownership authorizeDeviceAccess: admin OK; dev requires device.owner == username
 Admin creation: CLI only — mockd start --create-admin <user> --admin-password <pass>
 ```
 
-### 5.1 机器通道
+### 5.1 Machine channels
 
-MCP Server 与 CLI 是同一契约的两种消费端，共用 `pkg/mnpapi` 客户端：
+The MCP Server and CLI are two consumers of the same contract, sharing the `pkg/mnpapi` client:
 
 ```
-MCP（cmd/mocknetpack-mcp，HTTP 网关 `--http-addr :PORT`，Bearer 直通逐 key 校验，12 tools）  CLI（cmd/mocknetpack，10 叶子命令）
+MCP (cmd/mocknetpack-mcp, HTTP gateway `--http-addr :PORT`, per-key Bearer passthrough validation, 12 tools)   CLI (cmd/mocknetpack, 10 leaf commands)
   list_devices            ───────────────▶ devices list
   get_device_traffic      ───────────────▶ traffic list --app --did [--since --method --scheme --compact]
   get_traffic             ───────────────▶ traffic get <id>
@@ -222,21 +230,20 @@ MCP（cmd/mocknetpack-mcp，HTTP 网关 `--http-addr :PORT`，Bearer 直通逐 k
   create_share            ───────────────▶ share create <trafficId>
   get_share               ───────────────▶ share get <shareId>
   set_mock_rule_enabled   ───────────────▶ rule set-enabled <ruleId> --enable|--disable
-  update_mock_rule        ───────────────▶ rule update <ruleId> ...（支持 clearBodyBase64）
-  list_mock_rules         ───────────────▶ rule list --app --did [--path]  
-  get_mock_rule           ───────────────▶ rule get <ruleId>             
-  delete_mock_rule        ───────────────▶ rule delete <ruleId>          
+  update_mock_rule        ───────────────▶ rule update <ruleId> ... (supports clearBodyBase64)
+  list_mock_rules         ───────────────▶ rule list --app --did [--path]
+  get_mock_rule           ───────────────▶ rule get <ruleId>
+  delete_mock_rule        ───────────────▶ rule delete <ruleId>
+
+Shared conventions:
+  - Auth: Authorization: Bearer <MOCKNETPACK_API_KEY> (long-lived API Key)
+  - Traffic pulls default to projection=compact + since incremental cursor (low bandwidth, resumable)
+  - Error responses carry "guidance for the AI": 401→configure an API Key; 404/409/403→cause + next step
+  - CLI: stdout pure JSON, errors to stderr, exit codes 0 success / 1 business error / 2 usage error;
+    traffic export -o writes a JSON array to disk for jq/grep post-processing
 ```
 
-共同约定：
-  - 鉴权：Authorization: Bearer <MOCKNETPACK_API_KEY>（长效 API Key）
-  - 流量拉取默认 projection=compact + since 增量游标（低带宽、可续拉）
-  - 错误响应带「给 AI 的指引」：401→配置 API Key；404/409/403→原因 + 下一步
-  - CLI：stdout 纯 JSON、错误走 stderr、退出码 0 成功/1 业务错误/2 用法错误；
-    traffic export -o 落盘 JSON 数组供 jq/grep 二次消费
-```
-
-### 6. Share links 
+### 6. Share links
 
 ```
 Create    POST /api/v1/shares {trafficId}         [requireAuth + device ownership]

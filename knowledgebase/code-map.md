@@ -12,10 +12,10 @@
 | `pkg/capture/` | MockNetPack model layer | **custom** |
 | `pkg/store/` | Store interfaces + `CaptureManager` | **custom** (reuses upstream storage infra) |
 | `pkg/store/file/` | File-backed store implementations | **custom** |
-| `pkg/account/` | Account/auth model & primitives  | **custom** |
+| `pkg/account/` | Account/auth model & primitives | **custom** |
 | `pkg/engine/`, `pkg/matching/`, `pkg/mcp/`, `pkg/proxy/`, `pkg/recording/`, `pkg/requestlog/`, `pkg/graphql/`, `pkg/mqtt/`, `pkg/websocket/`, `pkg/sse/`, `pkg/chaos/`, `pkg/stateful/`, `pkg/tunnel/`, `pkg/soap/`, `pkg/portability/`, `internal/*` … | mockd features (matching, store, engine, protocols) | upstream |
 | `web/mocknetpack/` | Web UI (see [web KB](../web/knowledgebase/overview.md)) | **custom** |
-| `openapi/mocknetpack.yaml` | `/api/v1` contract v0.8.0 (: `/pairing-tokens`, register `pairingToken`/`deviceName`, `403 pairing_token_invalid`) | **custom** |
+| `openapi/mocknetpack.yaml` | `/api/v1` contract v0.8.0 (adds `/pairing-tokens`, register `pairingToken`/`deviceName`, `403 pairing_token_invalid`) | **custom** |
 | `docs/` | Upstream mockd docs site (Astro) | upstream |
 | `tests/`, `benchmarks/`, `charts/`, `observability/`, `schema/`, `contrib/`, `bin/` | Upstream auxiliary material | upstream |
 | `README.md`, `ARCHITECTURE.md`, `CLAUDE.md`, `CHANGELOG.md`, `LICENSE`, `NOTICE`, `SECURITY.md`, `MAINTAINERS.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md` | Upstream docs/license | upstream (README head documents the fork) |
@@ -27,20 +27,20 @@
 
 | File | Contents |
 |---|---|
-| `types.go` | `Platform`, `DeviceStatus`, `Device`, `DeviceView`, `DeriveDeviceStatus`, `SessionStatus`, `CaptureSession`, `ViewerLease`, `TrafficEntry`（ 增 `Seq` 每会话自增到达序号，增量游标，SDK 不消费）, `ServerConfig`, `MockResponse`, `MockRuleSource`, `MockRule`, `MockRuleInput`, `UpdateMockRuleInput`, `MockRuleView`, `MockRuleConflict` |
+| `types.go` | `Platform`, `DeviceStatus`, `Device`, `DeviceView`, `DeriveDeviceStatus`, `SessionStatus`, `CaptureSession`, `ViewerLease`, `TrafficEntry` (adds `Seq` — a per-session arrival sequence number serving as the incremental cursor; not consumed by the SDK), `ServerConfig`, `MockResponse`, `MockRuleSource`, `MockRule`, `MockRuleInput`, `UpdateMockRuleInput`, `MockRuleView`, `MockRuleConflict` |
 | `doc.go` | Package doc |
 
 ### `pkg/store/`
 
 | File | Contents |
 |---|---|
-| `capture_registry.go` | Core shell: `CaptureConfig` + `DefaultCaptureConfig`, `CaptureManager` struct + `NewCaptureManager` (+ `pairingTokens` store), `SetLogger`/`Config`/`ServerConfig`, store error vars (`ErrPairingTokenInvalid` ), `MockRuleConflictMessage`, `CreatePairingToken`/`ValidatePairingToken`/`PurgeExpiredPairingTokens` |
-| `device_registry.go` | Device lifecycle: `CreateManualDevice`, `RegisterDevice`, `RegisterDeviceWithPairing` (/D7: token auto-create, idempotent reuse, owner fill-if-empty, name never overwritten, `defaultDeviceName`), `Heartbeat`, `ListDevices`, `GetDevice`, `UpdateDeviceName`, `DeleteDevice` |
+| `capture_registry.go` | Core shell: `CaptureConfig` + `DefaultCaptureConfig`, `CaptureManager` struct + `NewCaptureManager` (+ `pairingTokens` store), `SetLogger`/`Config`/`ServerConfig`, store error vars (`ErrPairingTokenInvalid`), `MockRuleConflictMessage`, `CreatePairingToken`/`ValidatePairingToken`/`PurgeExpiredPairingTokens` |
+| `device_registry.go` | Device lifecycle: `CreateManualDevice`, `RegisterDevice`, `RegisterDeviceWithPairing` (D7: token auto-create, idempotent reuse, owner fill-if-empty, name never overwritten, `defaultDeviceName`), `Heartbeat`, `ListDevices`, `GetDevice`, `UpdateDeviceName`, `DeleteDevice` |
 | `session_registry.go` | Session lifecycle + viewer leases + health check: `ActivateSession`, `EndSession`, `ListSessions`, `GetSession`, `RegisterViewer`/`ReleaseViewer`, `StartHealthCheck`/`Stop` (hourly janitor includes pairing-token purge), `activeSessionFor`, `activeStatus` |
-| `traffic_registry.go` | Session-scoped traffic + retained store: `UploadTraffic`（ 锁内 stamp 每会话自增 seq）、`ListSessionTraffic`（ 过滤扩展：method/scheme/since 与既有 keyword/status/from/to AND 组合；`SchemeOf` URL 前缀解析）、`GetTraffic(WithOwner)`, `DeleteTraffic`, `ClearSessionTraffic`, `PurgeExpiredRetainedTraffic`, `retainedSession` |
+| `traffic_registry.go` | Session-scoped traffic + retained store: `UploadTraffic` (stamps the per-session seq under lock), `ListSessionTraffic` (extended filtering: method/scheme/since AND-combined with the existing keyword/status/from/to; `SchemeOf` parses the URL prefix), `GetTraffic(WithOwner)`, `DeleteTraffic`, `ClearSessionTraffic`, `PurgeExpiredRetainedTraffic`, `retainedSession` |
 | `rule_registry.go` | Mock rules: CRUD, `evaluateRules` (Effective/conflict), `RuleVersion`, `ListActiveMockRules`, `PurgeExpiredRules`, `disableDeviceRules`, `interfaceKey` |
-| `share_registry.go` | Request share snapshots : `ShareTTL`, `ShareSnapshot`, `CreateShare`, `GetShare` |
-| `interfaces.go` | `DeviceStore`, `CaptureSessionStore`, `MockRuleStore`, `UserStore`, `AuthSessionStore`, `PairingTokenStore` , `APIKeyStore`  (+ upstream interfaces) |
+| `share_registry.go` | Request share snapshots: `ShareTTL`, `ShareSnapshot`, `CreateShare`, `GetShare` |
+| `interfaces.go` | `DeviceStore`, `CaptureSessionStore`, `MockRuleStore`, `UserStore`, `AuthSessionStore`, `PairingTokenStore`, `APIKeyStore` (+ upstream interfaces) |
 | `store.go` | Upstream store plumbing (errors, helpers) — shared with upstream |
 | `engine_registry.go` | Upstream engine registry (baseline, rarely touched) |
 
@@ -51,8 +51,8 @@
 | `store.go` | File-backed `Store` core (data dir, file layout) |
 | `capture_store.go` | `CaptureFileStore`: devices + capture sessions persistence |
 | `mock_rule_store.go` | `MockRuleFileStore`: rules + rule version (per app/did) |
-| `pairing_token_store.go` | `PairingTokenFileStore`: pairing tokens  |
-| `api_key_store.go` | `apiKeyStore`: API Keys  持久化（FileData.APIKeys 落盘 data.json）；`GetByHash`/`ListByUsername`/`Delete`/`DeleteExpired`；只存 SHA-256 哈希，明文永不落盘 |
+| `pairing_token_store.go` | `PairingTokenFileStore`: pairing tokens |
+| `api_key_store.go` | `apiKeyStore`: API Keys persistence (`FileData.APIKeys` written to `data.json`); `GetByHash`/`ListByUsername`/`Delete`/`DeleteExpired`; stores only the SHA-256 hash, plaintext never hits disk |
 | `account_store.go` | `AccountFileStore`: users + auth sessions |
 | `mock_store.go`, `other.go`, `workspaces.go`, `stateful_resource_store.go`, `custom_operation_store.go` | Upstream stores |
 
@@ -61,8 +61,8 @@
 | File | Contents |
 |---|---|
 | `account.go` | `Role` (admin/dev), `User`, `AuthSession`, `HashPassword`/`VerifyPassword` (PBKD-SHA256), `NewToken` |
-| `apikey.go` | `APIKey` 模型 + `NewAPIKey`（明文仅构造时存在一次，`mnpk_` 前缀路由）/ `HashAPIKey`（SHA-256 hex）/ `VerifyAPIKey`（恒时比较）， |
-| `pairing.go` | `PairingToken{Token,User,App,CreatedAt,ExpiresAt}` + `Valid(now)`  |
+| `apikey.go` | `APIKey` model + `NewAPIKey` (plaintext exists only once at construction; `mnpk_` prefix routing) / `HashAPIKey` (SHA-256 hex) / `VerifyAPIKey` (constant-time comparison) |
+| `pairing.go` | `PairingToken{Token,User,App,CreatedAt,ExpiresAt}` + `Valid(now)` |
 | `account_test.go` | Tests |
 
 ### `pkg/admin/` — MockNetPack files
@@ -70,18 +70,18 @@
 | File | Contents |
 |---|---|
 | `capture_handlers.go` | Shared contract schemas + helpers: `captureAPIPrefix = "/api/v1"`, all request/response types, `allowedApps`, `queryInt`, `writeCaptureError` |
-| `device_handlers.go` | Device API: `handleCreateDevice`, `handleRegisterDevice` (+  pairingToken/deviceName branch → `RegisterDeviceWithPairing`), `handleDeviceHeartbeat` (+ `idleHeartbeatConfig`/`capturingHeartbeatConfig`/`heartbeatConfigForSession`), `handleListDevices`, `handleGetDevice`, `handleUpdateDeviceName`, `handleDeleteDevice` |
+| `device_handlers.go` | Device API: `handleCreateDevice`, `handleRegisterDevice` (+ pairingToken/deviceName branch → `RegisterDeviceWithPairing`), `handleDeviceHeartbeat` (+ `idleHeartbeatConfig`/`capturingHeartbeatConfig`/`heartbeatConfigForSession`), `handleListDevices`, `handleGetDevice`, `handleUpdateDeviceName`, `handleDeleteDevice` |
 | `traffic_handlers.go` | Session/traffic/share API: `handleActivateSession`, `handleListSessions`, `handleGetSession`, `handleEndSession`, `handleRegisterViewer`/`handleReleaseViewer`, `handleUploadTraffic`, `handleGetTraffic`, `handleListSessionTraffic`, `handleDeleteTraffic`, `handleClearSessionTraffic`, `handleCreateShare`/`handleGetShare` |
 | `mock_rule_handlers.go` | Rule CRUD handlers + `validateMockRuleInput` |
-| `auth_handlers.go` | `handleAuthRegister/Login/Logout/Me`, `CreateAdminUser`, `bearerToken`, `validateCredentials`；logout 对 API Key 幂等 204 |
-| `api_key_handlers.go` |  API Key API：`handleCreateAPIKey`（POST /auth/keys，明文仅本次返回 `CreateAPIKeyResponse`）/ `handleListAPIKeys`（GET，`ListAPIKeysResponse` 不含明文）/ `handleDeleteAPIKey`（DELETE /auth/keys/{id}；非 owner 非 admin 统一 404 不泄露存在性） |
-| `pairing_handlers.go` |  pairing-token API: `handleCreatePairingToken` (POST /pairing-tokens, requireAuth, `CreatePairingTokenRequest/Response`) |
-- `pkg/admin/local_address.go`（ v0.8.1）：`GET /api/v1/local-address`——局域网可达 origin（lanIPv4 RFC1918 优先 + requestOrigin 保留请求 Host 端口，503 lan_unavailable）；Web localhost 场景组装二维码用
-- `pkg/account/pairing.go`（v0.8.2）：`PairingToken` 增 `PairedDevices`（配对注册登记 did，D5 可复用累加）；`PairingUse` 类型
-- `pkg/admin/pairing_handlers.go`（v0.8.2）：`GET /api/v1/pairing-tokens/{token}`（requireAuth）——令牌状态 + 已配对设备（name 实时从设备表读）；Web 扫码完成轮询用
-- `pkg/store/file/pairing_token_store.go`（v0.8.2）：`RecordPairingUse`（追加 did、去重、锁 + markDirty）
-- `pkg/capture/types.go` / `pkg/admin/capture_handlers.go` / `pkg/admin/device_handlers.go` / `pkg/store/device_registry.go`（v0.9.0）：设备注册与模型增 `AppName`（SDK 上报 CFBundleDisplayName，如 IntegratingApp；≤64；两个 upsert 均按元数据刷新，D7 不改名不换 owner）
-| `auth_middleware.go` | `requireAuth`, `requireRole`, `currentUser`, `ownsDevice`, `authorizeDeviceAccess`, `authorizeSessionAccess`, `isAdmin`；`authenticate` 双识别：session token 与 `mnpk_` API Key 前缀分流、key 仅存 hash 恒时比较 |
+| `auth_handlers.go` | `handleAuthRegister/Login/Logout/Me`, `CreateAdminUser`, `bearerToken`, `validateCredentials`; logout is idempotent 204 for API Keys |
+| `api_key_handlers.go` | API Key API: `handleCreateAPIKey` (POST /auth/keys, plaintext returned only in this response's `CreateAPIKeyResponse`) / `handleListAPIKeys` (GET, `ListAPIKeysResponse` contains no plaintext) / `handleDeleteAPIKey` (DELETE /auth/keys/{id}; non-owner/non-admin gets a uniform 404 — no existence leak) |
+| `pairing_handlers.go` | pairing-token API: `handleCreatePairingToken` (POST /pairing-tokens, requireAuth, `CreatePairingTokenRequest/Response`) |
+- `pkg/admin/local_address.go` (v0.8.1): `GET /api/v1/local-address` — LAN-reachable origin (lanIPv4 RFC1918 preferred + requestOrigin preserves the request's Host port, 503 lan_unavailable); used by the Web localhost scenario to assemble the QR code
+- `pkg/account/pairing.go` (v0.8.2): `PairingToken` gains `PairedDevices` (registers paired dids; D5 reuse accumulates); `PairingUse` type
+- `pkg/admin/pairing_handlers.go` (v0.8.2): `GET /api/v1/pairing-tokens/{token}` (requireAuth) — token status + paired devices (name read live from the device table); used by the Web scan-complete polling
+- `pkg/store/file/pairing_token_store.go` (v0.8.2): `RecordPairingUse` (append did, dedupe, lock + markDirty)
+- `pkg/capture/types.go` / `pkg/admin/capture_handlers.go` / `pkg/admin/device_handlers.go` / `pkg/store/device_registry.go` (v0.9.0): device registration and models gain `AppName` (SDK reports CFBundleDisplayName, e.g. IntegratingApp; ≤64; both upserts refresh by metadata — D7 never renames or re-owns)
+| `auth_middleware.go` | `requireAuth`, `requireRole`, `currentUser`, `ownsDevice`, `authorizeDeviceAccess`, `authorizeSessionAccess`, `isAdmin`; `authenticate` dual recognition: session token and `mnpk_` API Key prefix routing, key stored only as a hash with constant-time comparison |
 | `mocknetpack_web.go` | Static serving of `web/mocknetpack` under `/mocknetpack/` |
 | `routes.go` | `registerRoutes` — full route table (capture section at the bottom) |
 | `api.go` | `API` struct; `NewAPI` wires `store.NewCaptureManager`, `apiKeyAuth`, CORS, health check start/stop |
@@ -95,13 +95,13 @@
 |---|---|
 | `start.go` | `mockd start` command: binds flags (incl. `--capture-heartbeat-interval`, `--capture-heartbeat-timeout`, `--capture-rule-retention-days`, `--web-dir`, `--no-auth`, `--create-admin`, `--admin-password`, `--data-dir`); constructs `NewAPI` with custom options; `--create-admin` path (CLI-only admin creation) |
 
-### 机器通道
+### Machine channels
 
-| 路径 | 内容 |
+| Path | Contents |
 |---|---|
-| `pkg/mnpapi/` | MCP 与 CLI 共享的 HTTP 客户端（`client.go` + `types.go`）：`Client{BaseURL,APIKey,HTTP}`；`GetDeviceTraffic`（两步编排：GET /sessions?app&did → 取最近会话（capturing 优先）→ GET /sessions/{id}/traffic，无会话返回空结果而非报错）、`CreateMockRuleFromTraffic`（GET /traffic/{id} → POST mock-rules，source 快照 + 扁平化 headers； 起 source 完整保留 RequestBodyDecoded/ResponseBodyDecoded——与 Web「Mock 此请求」一致，二进制 xcp 回包可在规则详情页展开已解码 JSON）、`CreateMockRule`/`CreateShare`/`GetShare`/`GetMockRule`/`UpdateMockRule`/`ListDevices`/`GetTraffic`；`APIError` 的 `Guide()` 生成「给 AI 的指引」（401→配置 MOCKNETPACK_API_KEY、403→owner/admin、404→先查询确认 id、409→互斥冲突先停旧） |
-| `cmd/mocknetpack-mcp/` | MCP 网关（mark3labs/mcp-go v1.1.1，仅 HTTP 远程形态：`--http-addr :PORT` 常驻进程，端点 /mcp，业务侧只填 URL；无 stdio 分发）：12 个 tools（list_devices / get_device_traffic / get_traffic / create_mock_rule_from_traffic / create_mock_rule / create_share / get_share / set_mock_rule_enabled / update_mock_rule / list_mock_rules / get_mock_rule / delete_mock_rule），每个 tool 描述写明「何时用/参数含义/错误处理」；**鉴权为直通模式**：网关不持有/白名单校验 Key，`WithHTTPContextFunc` 将请求 `Authorization: Bearer <key>` 注入 ctx（ctxBearerKey），各 handler 经 `clientFromContext` 用调用方自己的 key 构造 mnpapi.Client，key 有效性与 owner/admin 权限由 mockd 按账号判定（网关只做格式校验，缺头 401）；update 与 set_mock_rule_enabled 均走 read-modify-write（服务端 PUT 为整体覆盖，纯启停必须回写完整 response，二进制 bodyBase64 保留； 起 update 支持 clearBodyBase64=true 显式清二进制体并输出 responseMode=text\|binary）；delete_mock_rule 走 mnpapi.DeleteMockRule（DELETE 204） |
-| `cmd/mocknetpack/` + `pkg/mnpcli/` | CLI（10 个叶子命令：devices list / traffic list·export·get / share create·get / rule create-from-traffic·create·set-enabled·update）；stdout 纯 JSON、错误走 stderr、退出码 0/1/2；`--server`/`--api-key` 或 `MOCKNETPACK_API_KEY`；`traffic export -o` 落盘 JSON 数组供 jq/grep |
+| `pkg/mnpapi/` | HTTP client shared by MCP and CLI (`client.go` + `types.go`): `Client{BaseURL,APIKey,HTTP}`; `GetDeviceTraffic` (two-step orchestration: GET /sessions?app&did → pick the most recent session (capturing preferred) → GET /sessions/{id}/traffic; no session returns an empty result rather than an error), `CreateMockRuleFromTraffic` (GET /traffic/{id} → POST mock-rules, source snapshot + flattened headers; the source preserves the full RequestBodyDecoded/ResponseBodyDecoded — consistent with the Web's "Mock 此请求" (Mock this request), so a binary xcp reply's decoded JSON can be expanded on the rule detail page), `CreateMockRule`/`CreateShare`/`GetShare`/`GetMockRule`/`UpdateMockRule`/`ListDevices`/`GetTraffic`; `APIError`'s `Guide()` produces "guidance for the AI" (401→configure MOCKNETPACK_API_KEY, 403→owner/admin, 404→query first to confirm the id, 409→mutual-exclusion conflict, disable the old rule first) |
+| `cmd/mocknetpack-mcp/` | MCP gateway (mark3labs/mcp-go v1.1.1, HTTP remote only: `--http-addr :PORT` resident process, endpoint /mcp, the consumer only fills in the URL; no stdio dispatch): 12 tools (list_devices / get_device_traffic / get_traffic / create_mock_rule_from_traffic / create_mock_rule / create_share / get_share / set_mock_rule_enabled / update_mock_rule / list_mock_rules / get_mock_rule / delete_mock_rule), each tool description states "when to use / parameter meaning / error handling"; **auth is passthrough**: the gateway holds no keys and does no allow-list validation — `WithHTTPContextFunc` injects the request's `Authorization: Bearer <key>` into the ctx (ctxBearerKey), and each handler builds a `mnpapi.Client` from the caller's own key via `clientFromContext`; key validity and owner/admin permissions are judged by mockd per account (the gateway only does format checks; missing header ⇒ 401); update and set_mock_rule_enabled both do read-modify-write (the server PUT is a full overwrite, so a pure enable/disable must echo the complete response, keeping the binary bodyBase64; update also supports clearBodyBase64=true to explicitly clear the binary body and output responseMode=text\|binary); delete_mock_rule goes through `mnpapi.DeleteMockRule` (DELETE 204) |
+| `cmd/mocknetpack/` + `pkg/mnpcli/` | CLI (10 leaf commands: devices list / traffic list·export·get / share create·get / rule create-from-traffic·create·set-enabled·update); stdout pure JSON, errors to stderr, exit codes 0/1/2; `--server`/`--api-key` or `MOCKNETPACK_API_KEY`; `traffic export -o` writes a JSON array to disk for jq/grep |
 
 ## `/api/v1` route table (contract v0.12.0)
 
@@ -122,7 +122,7 @@
 | `/sessions/{id}/viewers/{viewerId}` | DELETE | `handleReleaseViewer` | Bearer + ownership |
 | `/traffic` | POST | `handleUploadTraffic` | open (SDK) |
 | `/traffic/{id}` | GET | `handleGetTraffic` | Bearer + ownership |
-| `/sessions/{id}/traffic` | GET | `handleListSessionTraffic` | Bearer + ownership（：projection=compact / since / method / scheme） |
+| `/sessions/{id}/traffic` | GET | `handleListSessionTraffic` | Bearer + ownership (supports projection=compact / since / method / scheme) |
 | `/traffic/{id}` | DELETE | `handleDeleteTraffic` | Bearer + ownership |
 | `/sessions/{id}/traffic` | DELETE | `handleClearSessionTraffic` | Bearer + ownership |
 | `/devices/{app}/{did}/mock-rules` | GET | `handleListMockRules` | open pull / Bearer full-list (handler-enforced) |
@@ -135,7 +135,7 @@
 | `/auth/me` | GET | `handleAuthMe` | Bearer |
 | `/auth/keys` | POST | `handleCreateAPIKey` | Bearer |
 | `/auth/keys` | GET | `handleListAPIKeys` | Bearer |
-| `/auth/keys/{id}` | DELETE | `handleDeleteAPIKey` | Bearer + owner/admin（非 owner 非 admin 404） |
+| `/auth/keys/{id}` | DELETE | `handleDeleteAPIKey` | Bearer + owner/admin (non-owner/non-admin 404) |
 | `/shares` | POST | `handleCreateShare` | Bearer + ownership |
 | `/shares/{id}` | GET | `handleGetShare` | public |
 
@@ -159,7 +159,7 @@
 | `--port` / `--admin-port` | 4280 / 4290 | Engine / Admin ports |
 | `--data-dir` | `~/.local/share/mockd` | Persistent store location |
 | `--no-auth` | false | Bypass API-key + account auth (smoke only) |
-| `--create-admin` / `--admin-password` | — | CLI-only admin creation  |
+| `--create-admin` / `--admin-password` | — | CLI-only admin creation |
 | `--capture-heartbeat-interval` | 0 (=20s) | SDK heartbeat interval (seconds) |
 | `--capture-heartbeat-timeout` | 0 (=60s) | Offline threshold (seconds) |
 | `--capture-rule-retention-days` | 0 (=7d) | Mock rule sliding retention |

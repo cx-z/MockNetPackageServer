@@ -12,9 +12,9 @@ The **Web management platform** of MockNetPack: the browser UI where developers 
 | Product role | What the web does |
 |---|---|
 | Device management | Device list (status/name/last-seen), manual registration (App+did+name), rename, delete, **scan-connect QR** (: issue 10-min pairing token → render `mocknetpack://connect` QR → scan with the app to auto-register + configure server address) |
-| Session control | "连接" activates a capture session; "断开" ends it; viewer leases keep the session alive across tabs |
+| Session control | "连接" (Connect) activates a capture session; "断开" (Disconnect) ends it; viewer leases keep the session alive across tabs |
 | Traffic viewing | Live request stream (2s polling), request detail (headers/bodies/status/duration), JSON tree display, page-level string filter, per-row delete / clear log |
-| Mock rule management | Rule list with effective/conflict states, one-click "Mock 此请求" from a captured response, inline edit with JSON validation, toggle (mutually exclusive per interface), delete |
+| Mock rule management | Rule list with effective/conflict states, one-click "Mock 此请求" (Mock this request) from a captured response, inline edit with JSON validation, toggle (mutually exclusive per interface), delete |
 | Accounts | Login/register gate , role display (admin/dev), logout with server-side revocation |
 | Sharing | Public read-only share links for a single request (7d, no login) |
 

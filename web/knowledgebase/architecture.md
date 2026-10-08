@@ -65,7 +65,7 @@ renderRules(data) → rules list; effective badge; conflict banner
 
 mockThisRequest(e) → POST /api/v1/devices/{app}/{did}/mock-rules
      {method, path, response: from captured entry, source: snapshot, enabled: true?}
-     → creates rule from real response b1 ("Mock 此请求")
+     → creates a rule from the real response in one click ("Mock 此请求" — Mock this request)
 
 openEditRuleForm(r) → inline right-column editor (CodeMirror JSON folding)
 saveRuleEdit(rule) → PUT /api/v1/devices/{app}/{did}/mock-rules/{ruleId}
@@ -85,7 +85,7 @@ stopViewer / releaseAllViewers → DELETE /sessions/{id}/viewers/{viewerId}
   (last viewer release ends the session server-side)
 ```
 
-### 4. Page-level log semantics (//)
+### 4. Page-level log semantics
 
 ```
 - disconnect: traffic poll stops, but pageLog RETAINED on the page
@@ -114,22 +114,17 @@ doLogout   → POST /auth/logout (server-side revoke) → clear token/state/poll
              back to list view + showAuth()
 ```
 
-### 7.  机器通道（v0.13.0）对 Web 的影响
+### 7. Impact of machine channels (v0.13.0) on the Web
 
-- **请求流不回归**：`pollTraffic` 仍走默认（无 projection）的完整条目响应，服务端保证
-  缺省响应形状与 v0.11.0 完全一致（Web 登录态仍用会话 token）； 在 mocked 条目上
-  新增 `matchedRuleId`（仅机器通道消费，Web 请求流展示不受影响）。
-- **新增 「API Key 管理」入口**：已登录用户头部可见「API Key」按钮 → 弹窗内
-  创建（明文仅创建时展示一次，可一键复制）、查看列表（仅 keyPrefix + 创建/过期时间）、
-  吊销（二次确认，立即失效）。前端 `apikey.js` 复用 `apiFetch`（Bearer session token），
-  调用服务端 `/auth/keys` 三端点；明文只存在内存变量、关闭弹窗即清除，不落 localStorage。
+- **Request stream does not regress**: `pollTraffic` still uses the default (no projection) full-entry response; the server guarantees the default response shape is identical to v0.11.0 (the Web still authenticates with a session token); mocked entries additionally carry `matchedRuleId` (consumed only by machine channels; Web request-stream display is unaffected).
+- **New "API Key 管理" (API Key management) entry**: logged-in users see an "API Key" button in the header → a modal that supports creating (plaintext shown once at creation, one-click copy), listing (only keyPrefix + created/expires time), and revoking (double confirmation, immediate invalidation). The frontend `apikey.js` reuses `apiFetch` (Bearer session token) and calls the server's three `/auth/keys` endpoints; plaintext lives only in an in-memory variable and is cleared when the modal closes — never written to localStorage.
 
 ## UX / error patterns
 
 | Pattern | Behavior |
 |---|---|
 | `apiFetch` | Adds `Authorization: Bearer` when token present; normalizes error responses |
-| Rule conflict | Server 409 / conflict list → banner + popup text "不允许同一个接口同时开启多个 Mock 规则" |
+| Rule conflict | Server 409 / conflict list → banner + popup text "不允许同一个接口同时开启多个 Mock 规则" (multiple mock rules cannot be enabled for the same interface at once) |
 | JSON display | `jsonTreeHtml` tree with fold/unfold (cap 5000 nodes → fallback `<pre>`); body tab fallback `[binary N bytes]` |
 | Rule editor | CodeMirror with fold gutter + bracket matching; save-time JSON validation; inline in right column |
 | Delete/clear | Best-effort idempotent (404 tolerated — entry may belong to a deleted session) |
