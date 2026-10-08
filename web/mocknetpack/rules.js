@@ -240,7 +240,17 @@ function headersToText(h) {
     .join("\n");
 }
 
-/** 编辑规则表单：回包体/备注可改；method/path 与回包状态码/响应头只读不可改。 */
+/** flatHeaders 把抓包快照的多值响应头（数组值）拍平为单值对象，与创建规则一致。 */
+function flatHeaders(h) {
+  const out = {};
+  for (const [k, arr] of Object.entries(h || {})) out[k] = Array.isArray(arr) ? arr.join(", ") : String(arr);
+  return out;
+}
+
+/** 编辑规则表单：method/path（匹配键）不可改；回包状态码/响应头/回包体/备注
+ * 均可改——含抓包创建（有 source）的规则，与 MCP update_mock_rule 能力对齐。
+ * 二进制规则（bodyBase64 存在）额外提供 clearBodyBase64 显式勾选：勾选则清除
+ * 二进制快照、以文本回放（默认勾选）；取消勾选则保留原始二进制字节。 */
 function openEditRuleForm(r) {
   const box = $("ruleDetail");
   const resp = r.response || {};
@@ -249,7 +259,8 @@ function openEditRuleForm(r) {
     bodyDefault = r.source.responseBodyDecoded;
   }
   const src = r.source;
-  const hasOriginal = !!(src && src.responseBodyDecoded);
+  const hasOriginal = !!src;   // 有抓包快照即可一键回退整个响应
+  const isBinary = !!resp.bodyBase64;
 
   // 请求页签：只读展示原始请求头 + 请求体
   const editReqHeadersRows = (src && src.requestHeaders) ? Object.entries(src.requestHeaders)
@@ -264,19 +275,12 @@ function openEditRuleForm(r) {
         : '<div class="d-v" style="color:var(--muted)">（无来源快照）</div>');
 
   // 响应页签：备注/回退按钮在上，回包体 JSON 折叠编辑器在下并撑满剩余高度。
-  //  Step3：手填规则（无 source）的回包状态码/响应头可编辑（输入框/多行文本）；
-  // 日志规则（有 source）维持  只读（与抓包快照绑定，只读 KV 展示）。
-  const handAuthored = !src;
-  const respHeadersRows = (resp.headers) ? Object.entries(resp.headers)
-    .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
-      '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("") : "";
-  const metaFields = handAuthored
-    ? '<div class="edit-row"><label>回包状态码（100–599）</label>' +
+  // 回包状态码/响应头对所有规则均可编辑（输入框/多行文本），不再区分手填/抓包来源。
+  const metaFields =
+      '<div class="edit-row"><label>回包状态码（100–599）</label>' +
         '<input id="editStatusCode" type="number" min="100" max="599" class="filter-input" value="' + esc(String(resp.statusCode ?? 200)) + '" /></div>' +
       '<div class="edit-row"><label>响应头（每行 Key: Value，可留空）</label>' +
-        '<textarea id="editHeaders" class="filter-input" rows="3">' + esc(headersToText(resp.headers)) + '</textarea></div>'
-    : '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + '</span></div>' +
-      '<div class="d-block"><div class="d-title">响应头（只读）</div>' + (respHeadersRows || '<div class="d-v">—</div>') + '</div>';
+        '<textarea id="editHeaders" class="filter-input" rows="3">' + esc(headersToText(resp.headers)) + '</textarea></div>';
   const respTab =
       '<div class="edit-pane">' +
       metaFields +
@@ -284,14 +288,19 @@ function openEditRuleForm(r) {
         '<input id="editNote" type="text" class="filter-input" placeholder="说明这条规则的用途/场景" value="' + esc(r.note || "") + '" /></div>' +
       (hasOriginal
         ? '<div class="edit-row" style="margin-top:12px">' +
-            '<button id="revertOriginalBtn" class="ghost small" type="button">一键回退为原始响应体</button>' +
-            '<span class="sub" style="margin-left:8px">（回退后所有修改丢弃，直接生效）</span>' +
+            '<button id="revertOriginalBtn" class="ghost small" type="button">一键回退为原始响应</button>' +
+            '<span class="sub" style="margin-left:8px">（恢复抓包快照的状态码/响应头/回包体，直接生效）</span>' +
           '</div>'
         : '') +
       '<div class="edit-row edit-body-row"><label>回包体（UTF-8 文本）' +
-        (resp.bodyBase64 ? ' <span class="sub">（原回包为二进制；已载入抓包解码文本作为缺省值，保存后将以文本回包为准）</span>' : '') +
+        (isBinary ? ' <span class="sub">（原回包为二进制；已载入抓包解码文本作为缺省值）</span>' : '') +
         ' <span class="sub">（点击行号左侧箭头按花括号折叠/展开）</span>' +
         '</label>' +
+        (isBinary
+          ? '<label class="edit-clear-binary"><input id="editClearBodyBase64" type="checkbox" checked /> ' +
+            '清除旧二进制回包（clearBodyBase64），以文本回放</label>' +
+            '<div class="sub" style="margin:-2px 0 6px">取消勾选则保留原始二进制字节，回包体文本仅作展示、回放仍为二进制</div>'
+          : '') +
         '<div class="edit-body-wrap"><textarea id="editBody" class="filter-input">' + esc(formatBody(bodyDefault)) + '</textarea></div>' +
       '</div>' +
       '</div>';
@@ -345,21 +354,34 @@ function openEditRuleForm(r) {
   });
   ruleBodyEditor.refresh();
 
-  // 一键回退：把回包体重置为原始响应体，直接保存生效
+  // 一键回退：恢复抓包快照的整个响应（状态码+响应头+回包体，含二进制字节），
+  // 直接 PUT 保存生效。恢复目标 = mockThisRequest 创建时的快照值。
   const revertBtn = box.querySelector("#revertOriginalBtn");
   if (revertBtn) {
     revertBtn.onclick = async () => {
-      if (!src || !src.responseBodyDecoded) return;
+      if (!src) return;
       try {
         const newResp = {
           statusCode: src.statusCode ?? 200,
-          headers: src.responseHeaders || {},
-          body: src.responseBodyDecoded,
+          headers: flatHeaders(src.responseHeaders),
+          body: src.responseBody || "",
+          ...(src.responseBodyBase64 ? { bodyBase64: src.responseBodyBase64 } : {}),
         };
-        await apiFetch("/mock-rules/" + encodeURIComponent(r.id), {
+        // 回退不改备注：服务端在响应变化时要求 note 非空，取表单当前备注兜底。
+        const note = ($("editNote") && $("editNote").value.trim()) || r.note || "";
+        // 必须走完整设备路由 /devices/{app}/{did}/mock-rules/{ruleId}；
+        // 旧写法 /mock-rules/{id} 无对应路由 → 404 且未检查 res.ok，回退静默失败。
+        const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
+          encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(r.id), {
           method: "PUT",
-          body: JSON.stringify({ response: newResp }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ response: newResp, note: note }),
         });
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          alert("回退失败（HTTP " + res.status + "）：" + ((err && err.message) || "未知错误"));
+          return;
+        }
         await loadRules();
         //  修正：按当前规则 id 从刷新后的列表取最新数据重渲染详情
         //（此前误用不存在的 detail._activeRuleId/rulesList，回退后表单不刷新）。
@@ -381,17 +403,14 @@ function openEditRuleForm(r) {
 async function saveRuleEdit(rule) {
   if (!detail) return;
   const storedResp = (rule && rule.response) || {};
-  //  Step3：手填规则（无 source 快照）的回包状态码/响应头在编辑表单
-  // 里可改，保存时从表单输入读取；日志规则（有 source）维持  只读语义——
-  // 与抓包快照绑定的状态码/响应头原样回传，不从表单读取。
-  const handAuthored = !rule.source;
+  // 回包状态码/响应头一律从表单读取（含抓包创建、有 source 的规则）——与 MCP
+  // update_mock_rule 的 read-modify-write 语义一致：method/path/source 仍不可改。
   let statusCode = Number(storedResp.statusCode) || 200;
   let headers = storedResp.headers || {};
-  if (handAuthored) {
-    const scEl = $("editStatusCode");
-    if (scEl) statusCode = Number(scEl.value);
-    headers = parseHeadersText($("editHeaders") && $("editHeaders").value);
-  }
+  const scEl = $("editStatusCode");
+  if (scEl) statusCode = Number(scEl.value);
+  const hdEl = $("editHeaders");
+  if (hdEl) headers = parseHeadersText(hdEl.value);
   if (!Number.isFinite(statusCode) || statusCode < 100 || statusCode > 599) {
     showError("回包状态码必须在 100–599 之间"); return;
   }
@@ -414,6 +433,16 @@ async function saveRuleEdit(rule) {
     }
   }
 
+  // clearBodyBase64（MCP 参数映射到 Web 勾选）：默认勾选=清除旧二进制快照、以
+  // 文本回放；取消勾选=保留 bodyBase64 原始字节。非二进制规则无此控件，不回传。
+  const response = { statusCode: statusCode, headers: headers, body: bodyText };
+  if (storedResp.bodyBase64) {
+    const clearEl = $("editClearBodyBase64");
+    if (!(clearEl && clearEl.checked)) {
+      response.bodyBase64 = storedResp.bodyBase64;
+    }
+  }
+
   try {
     const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
       encodeURIComponent(detail.did) + "/mock-rules/" + encodeURIComponent(rule.id), {
@@ -421,7 +450,7 @@ async function saveRuleEdit(rule) {
       headers: { "Content-Type": "application/json" },
       // : 不传 method/path/source；不传 enabled（保持当前开关）。
       body: JSON.stringify({
-        response: { statusCode: statusCode, headers: headers, body: bodyText },
+        response: response,
         note: note,
       }),
     });
@@ -492,11 +521,6 @@ async function toggleRule(rule, enabled) {
 /** 请求流详情里的「Mock 此请求」：把这条真实请求/回包固化为一条规则（默认停用）。 */
 async function mockThisRequest(e) {
   if (!detail) return;
-  const flatHeaders = (h) => {
-    const out = {};
-    for (const [k, arr] of Object.entries(h || {})) out[k] = Array.isArray(arr) ? arr.join(", ") : String(arr);
-    return out;
-  };
   const input = {
     method: e.method,
     path: e.path,
