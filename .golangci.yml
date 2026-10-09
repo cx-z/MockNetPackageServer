@@ -90,6 +90,10 @@ linters:
       - path: "_test\\.go"
         linters:
           - errcheck
+          # Test helpers (doAuthJSON/doJSON/registerUser/loginUser) always
+          # close the response body internally; bodyclose cannot see that
+          # through the returned *http.Response and reports every call site.
+          - bodyclose
           - gosec
           - ineffassign
           - unparam

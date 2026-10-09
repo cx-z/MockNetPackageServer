@@ -1,5 +1,6 @@
-// MockNetPack mock-rule API handlers : Web CRUD / toggle and the SDK
-// incremental rule snapshot pull. Routes live under /api/v1/devices/{app}/{did}.
+// Package admin implements the MockNetPack mock-rule API handlers: Web
+// CRUD / toggle and the SDK incremental rule snapshot pull. Routes live under
+// /api/v1/devices/{app}/{did}.
 package admin
 
 import (
@@ -210,7 +211,8 @@ func (a *API) handleDeleteMockRule(w http.ResponseWriter, r *http.Request) {
 // method, path, response.statusCode). Returns false and writes a 400 when
 // invalid.
 //
-//  Step1: path must start with '/' and must not contain '?' — matching is
+//	Step1: path must start with '/' and must not contain '?' — matching is
+//
 // an exact Method+path comparison (), so a query string pasted into
 // path could never hit and would silently drift. Applies uniformly to both
 // creation paths (评审结论 #2): capture-originated paths come from URL.path

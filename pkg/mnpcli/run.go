@@ -43,13 +43,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		switch args[0] {
 		case "--server":
 			if len(args) < 2 {
-				fmt.Fprintln(stderr, "usage error: --server needs a URL")
+				_, _ = fmt.Fprintln(stderr, "usage error: --server needs a URL")
 				return 2
 			}
 			server, args = args[1], args[2:]
 		case "--api-key":
 			if len(args) < 2 {
-				fmt.Fprintln(stderr, "usage error: --api-key needs a value")
+				_, _ = fmt.Fprintln(stderr, "usage error: --api-key needs a value")
 				return 2
 			}
 			key, args = args[1], args[2:]
@@ -60,7 +60,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			printUsage(stdout)
 			return 0
 		default:
-			fmt.Fprintf(stderr, "unknown global flag %q\n\n", args[0])
+			_, _ = fmt.Fprintf(stderr, "unknown global flag %q\n\n", args[0])
 			printUsage(stderr)
 			return 2
 		}
@@ -86,7 +86,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		printVersion(stdout)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
+		_, _ = fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
 		printUsage(stderr)
 		return 2
 	}
@@ -106,7 +106,7 @@ func printVersion(w io.Writer) {
 
 // printUsage writes the full command help to w.
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, `mocknetpack — MockNetPack 命令行通道
+	_, _ = fmt.Fprint(w, `mocknetpack — MockNetPack 命令行通道
 
 用法：
   mocknetpack [--server <url>] [--api-key <key>] <command> [args]

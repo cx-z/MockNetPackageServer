@@ -249,6 +249,7 @@ func mcpGetDeviceTraffic(base string) server.ToolHandlerFunc {
 		if v, ok := p["from"].(string); ok && v != "" {
 			ts, err := time.Parse(time.RFC3339, v)
 			if err != nil {
+				//nolint:nilerr // MCP convention: error result + nil error (tool call itself succeeded)
 				return mcp.NewToolResultError("from 必须是 RFC3339 时间戳"), nil
 			}
 			q.From = &ts
@@ -256,6 +257,7 @@ func mcpGetDeviceTraffic(base string) server.ToolHandlerFunc {
 		if v, ok := p["to"].(string); ok && v != "" {
 			ts, err := time.Parse(time.RFC3339, v)
 			if err != nil {
+				//nolint:nilerr // MCP convention: error result + nil error (tool call itself succeeded)
 				return mcp.NewToolResultError("to 必须是 RFC3339 时间戳"), nil
 			}
 			q.To = &ts

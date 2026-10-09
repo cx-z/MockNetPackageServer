@@ -164,7 +164,6 @@ type CaptureManager struct {
 	// read-expire-delete compound in GetShare.
 	sharesMu sync.RWMutex
 
-	ctx      context.Context
 	stopCh   chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
@@ -232,7 +231,7 @@ func (m *CaptureManager) ServerConfig() capture.ServerConfig {
 }
 
 // ============================================================================
-// QR pairing tokens 
+// QR pairing tokens
 // ============================================================================
 
 // pairingTokenTTL is how long a QR pairing token stays valid (10 minutes,

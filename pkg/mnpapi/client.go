@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,7 +80,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if err != nil {
 		return fmt.Errorf("request %s %s: %w", method, u, err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
@@ -187,7 +188,7 @@ func (c *Client) GetDeviceTraffic(ctx context.Context, app, did string, q Traffi
 		p.Set("keyword", q.Keyword)
 	}
 	if q.Status != nil {
-		p.Set("statusCode", fmt.Sprintf("%d", *q.Status))
+		p.Set("statusCode", strconv.Itoa(*q.Status))
 	}
 	if q.From != nil {
 		p.Set("from", q.From.Format(time.RFC3339))
@@ -196,13 +197,13 @@ func (c *Client) GetDeviceTraffic(ctx context.Context, app, did string, q Traffi
 		p.Set("to", q.To.Format(time.RFC3339))
 	}
 	if q.Since > 0 {
-		p.Set("since", fmt.Sprintf("%d", q.Since))
+		p.Set("since", strconv.FormatInt(q.Since, 10))
 	}
 	if q.Limit > 0 {
-		p.Set("limit", fmt.Sprintf("%d", q.Limit))
+		p.Set("limit", strconv.Itoa(q.Limit))
 	}
 	if q.Offset > 0 {
-		p.Set("offset", fmt.Sprintf("%d", q.Offset))
+		p.Set("offset", strconv.Itoa(q.Offset))
 	}
 	if q.Compact {
 		p.Set("projection", "compact")

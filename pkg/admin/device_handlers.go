@@ -1,6 +1,6 @@
-// MockNetPack device API handlers (pure move from capture_handlers.go):
-// manual registration, SDK register/heartbeat with dynamic heartbeat config,
-// device list/get/rename/delete.
+// Package admin implements the MockNetPack device API handlers
+// (pure move from capture_handlers.go): manual registration, SDK
+// register/heartbeat with dynamic heartbeat config, device list/get/rename/delete.
 package admin
 
 import (

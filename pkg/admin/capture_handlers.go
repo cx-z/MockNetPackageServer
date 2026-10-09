@@ -1,5 +1,6 @@
-// MockNetPack capture API: shared contract schemas, error mapping and helpers.
-// Handlers live in device_handlers.go / traffic_handlers.go (pure move from
+// Package admin implements the MockNetPack capture API.
+// Shared contract schemas, error mapping and helpers. Handlers live in
+// device_handlers.go / traffic_handlers.go (pure move from
 // this file); routes live under /api/v1 (the OpenAPI contract base path),
 // separate from mockd's native /sessions proxy-recording routes.
 package admin

@@ -1,5 +1,7 @@
-// Long-lived API key endpoints : create / list /
-// revoke. Keys are machine credentials for scripts and Agent tooling — they
+// Package admin implements the MockNetPack admin API.
+//
+// Long-lived API key endpoints: create / list / revoke. Keys are machine
+// credentials for scripts and Agent tooling — they
 // authenticate through the same `Authorization: Bearer <key>` header as
 // session tokens (see auth_middleware.go) and outlive the 7-day login token.
 //
@@ -18,7 +20,7 @@ import (
 	"github.com/getmockd/mockd/pkg/store"
 )
 
-// apiKeyView is the list/delete shape of an API key (no plaintext, no hash —
+// APIKeyView is the list/delete shape of an API key (no plaintext, no hash —
 // only the recognizable prefix and lifecycle fields).
 type APIKeyView struct {
 	ID        string     `json:"id"`

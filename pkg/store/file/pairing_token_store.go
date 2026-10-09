@@ -66,7 +66,7 @@ func (s *pairingTokenStore) RecordPairingUse(ctx context.Context, token, did str
 				return nil // already recorded
 			}
 		}
-		s.fs.data.PairingTokens[i].PairedDevices = append(p.PairedDevices, account.PairingUse{Did: did, RegisteredAt: at})
+		s.fs.data.PairingTokens[i].PairedDevices = append(s.fs.data.PairingTokens[i].PairedDevices, account.PairingUse{Did: did, RegisteredAt: at})
 		s.fs.markDirty()
 		return nil
 	}

@@ -1,4 +1,4 @@
-// PairingToken model for QR server discovery .
+// Package account models pairing tokens used for QR server discovery.
 //
 // A logged-in Web user issues a short-lived pairing token for an app; the QR
 // code rendered on the device page carries it. The SDK presents the token in

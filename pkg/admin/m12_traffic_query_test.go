@@ -2,7 +2,6 @@ package admin
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -202,5 +201,5 @@ func marshalRaw(t *testing.T, v any) string {
 	t.Helper()
 	b, err := json.Marshal(v)
 	require.NoError(t, err)
-	return fmt.Sprintf("%s", b)
+	return string(b)
 }

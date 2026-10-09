@@ -76,20 +76,21 @@ func main() {
 	}()
 
 	log.SetOutput(os.Stderr)
-	runHTTP(srv, base, *httpAddr, ctx)
+	runHTTP(srv, *httpAddr, ctx)
 }
 
 // runHTTP serves the same 12 tools over Streamable HTTP at /mcp. It only
 // enforces the presence of a well-formed "Bearer <key>" header (no whitelist);
 // the caller's key is injected into the request context and validated by the
 // mockd admin API per account inside each tool handler.
-func runHTTP(srv *server.MCPServer, base, addr string, ctx context.Context) {
+func runHTTP(srv *server.MCPServer, addr string, ctx context.Context) {
 	mcpHTTP := server.NewStreamableHTTPServer(srv,
 		server.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
 			return context.WithValue(ctx, ctxBearerKey, keyFromAuthorization(r))
 		}),
 	)
 	httpServer := &http.Server{Addr: addr, Handler: authGateway(mcpHTTP)}
+	//nolint:gosec // shutdown gets its own bounded 5s window, independent of the cancelled ctx
 	go func() {
 		<-ctx.Done()
 		// Bounded shutdown: don't block SIGTERM indefinitely on long-lived

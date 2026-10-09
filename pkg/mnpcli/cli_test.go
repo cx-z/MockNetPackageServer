@@ -18,9 +18,7 @@ import (
 
 // cliFake is a minimal mocknetpack API for CLI tests.
 type cliFake struct {
-	ts   *httptest.Server
-	body string
-	path string
+	ts *httptest.Server
 }
 
 func newCLIFake(t *testing.T, mux *http.ServeMux) *cliFake {

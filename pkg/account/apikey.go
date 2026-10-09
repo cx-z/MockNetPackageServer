@@ -1,4 +1,4 @@
-// MockNetPack long-lived API keys .
+// Package account provides MockNetPack account models and long-lived API keys.
 //
 // Purpose: give scripts / Agent tooling a machine-native auth channel that
 // outlives the 7-day login session token  — an API key is created once,

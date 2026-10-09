@@ -1,6 +1,6 @@
-// MockNetPack session / traffic / share API handlers (pure move from
-// capture_handlers.go): session lifecycle and viewer leases, traffic upload,
-// query, delete/clear, and  share links.
+// Package admin implements the MockNetPack session / traffic / share API
+// handlers (pure move from capture_handlers.go): session lifecycle and viewer
+// leases, traffic upload, query, delete/clear, and  share links.
 package admin
 
 import (

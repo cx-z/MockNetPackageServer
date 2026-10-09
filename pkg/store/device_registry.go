@@ -35,14 +35,9 @@ func (m *CaptureManager) CreateManualDevice(ctx context.Context, d *capture.Devi
 	return &out, nil
 }
 
-// RegisterDevice registers or re-registers a device (idempotent upsert on
-// (App, Did)). A re-registration refreshes metadata and marks the device
-// active (LastSeenAt = now). Registration is only accepted for a device
-// that already exists OR is new; nothing is rejected here — offline devices
-// come back online on their next register/heartbeat.
-// UpdateDeviceName changes a device's display name . Returns
-// ErrNotFound when the (app, did) does not exist; ownership is checked by the
-// admin handler layer before calling this.
+// UpdateDeviceName changes a device's display name. Returns ErrNotFound when
+// the (app, did) does not exist; ownership is checked by the admin handler
+// layer before calling this.
 func (m *CaptureManager) UpdateDeviceName(ctx context.Context, app, did, name string) (*capture.Device, error) {
 	d, err := m.devices.Get(ctx, app, did)
 	if err != nil {
@@ -56,6 +51,11 @@ func (m *CaptureManager) UpdateDeviceName(ctx context.Context, app, did, name st
 	return &out, nil
 }
 
+// RegisterDevice registers or re-registers a device (idempotent upsert on
+// (App, Did)). A re-registration refreshes metadata and marks the device
+// active (LastSeenAt = now). Registration is only accepted for a device
+// that already exists OR is new; nothing is rejected here — offline devices
+// come back online on their next register/heartbeat.
 func (m *CaptureManager) RegisterDevice(ctx context.Context, d *capture.Device) (*capture.Device, error) {
 	now := time.Now()
 	d.LastSeenAt = now

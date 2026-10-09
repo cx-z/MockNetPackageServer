@@ -3,6 +3,7 @@ package mnpapi
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/getmockd/mockd/pkg/capture"
@@ -67,6 +68,6 @@ func Guide(status int, code, serverMsg string) string {
 		if serverMsg != "" {
 			return serverMsg
 		}
-		return "请求失败（HTTP " + fmt.Sprintf("%d", status) + "）。"
+		return "请求失败（HTTP " + strconv.Itoa(status) + "）。"
 	}
 }

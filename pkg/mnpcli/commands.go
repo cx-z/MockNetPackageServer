@@ -14,13 +14,6 @@ import (
 	"github.com/getmockd/mockd/pkg/mnpapi"
 )
 
-// cliCtx carries the parsed global config into every subcommand.
-type cliCtx struct {
-	client *mnpapi.Client
-	stdout io.Writer
-	stderr io.Writer
-}
-
 // newFlagSet creates a FlagSet that reports usage errors to stderr and never
 // aborts the process (the caller decides the exit code).
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
@@ -32,7 +25,7 @@ func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
 // usageErr writes the flagset usage and returns exit code 2.
 func usageErr(fs *flag.FlagSet, msg string) int {
 	if msg != "" {
-		fmt.Fprintln(fs.Output(), "usage error:", msg)
+		_, _ = fmt.Fprintln(fs.Output(), "usage error:", msg)
 	}
 	fs.Usage()
 	return 2
@@ -83,11 +76,11 @@ func bizErr(w io.Writer, err error) int {
 
 func runDevices(ctx context.Context, args []string, stdout, stderr io.Writer, defServer, defKey string) int {
 	if len(args) == 0 || (len(args) == 1 && (args[0] == "-h" || args[0] == "--help")) {
-		fmt.Fprintln(stdout, "用法：mocknetpack devices list")
+		_, _ = fmt.Fprintln(stdout, "用法：mocknetpack devices list")
 		return 0
 	}
 	if args[0] != "list" {
-		fmt.Fprintln(stderr, "usage error: unknown devices subcommand", args[0])
+		_, _ = fmt.Fprintln(stderr, "usage error: unknown devices subcommand", args[0])
 		return 2
 	}
 	fs := newFlagSet("devices list", stderr)
@@ -113,12 +106,12 @@ func runDevices(ctx context.Context, args []string, stdout, stderr io.Writer, de
 
 func runTraffic(ctx context.Context, args []string, stdout, stderr io.Writer, defServer, defKey string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage error: traffic requires a subcommand (list/export/get)")
+		_, _ = fmt.Fprintln(stderr, "usage error: traffic requires a subcommand (list/export/get)")
 		return 2
 	}
 	switch args[0] {
 	case "-h", "--help":
-		fmt.Fprintln(stdout, "用法：mocknetpack traffic list|export|get ...")
+		_, _ = fmt.Fprintln(stdout, "用法：mocknetpack traffic list|export|get ...")
 		return 0
 	case "list":
 		return runTrafficList(ctx, args[1:], stdout, stderr, defServer, defKey)
@@ -127,7 +120,7 @@ func runTraffic(ctx context.Context, args []string, stdout, stderr io.Writer, de
 	case "get":
 		return runTrafficGet(ctx, args[1:], stdout, stderr, defServer, defKey)
 	default:
-		fmt.Fprintln(stderr, "usage error: unknown traffic subcommand", args[0])
+		_, _ = fmt.Fprintln(stderr, "usage error: unknown traffic subcommand", args[0])
 		return 2
 	}
 }
@@ -152,8 +145,8 @@ func makeClient(stderr io.Writer, server, key string) (*mnpapi.Client, int) {
 		key = apiKeyFromEnv()
 	}
 	if key == "" {
-		fmt.Fprintln(stderr, "缺少 API Key：请用 --api-key 或环境变量 MOCKNETPACK_API_KEY 配置（Web 登录 → 账号 → API Keys 创建）")
-		fmt.Fprintln(stderr, "安全配置（不回显明文）：export MOCKNETPACK_API_KEY=$(security find-generic-password -s mocknetpack -w) 或写入 chmod 600 的文件后 source")
+		_, _ = fmt.Fprintln(stderr, "缺少 API Key：请用 --api-key 或环境变量 MOCKNETPACK_API_KEY 配置（Web 登录 → 账号 → API Keys 创建）")
+		_, _ = fmt.Fprintln(stderr, "安全配置（不回显明文）：export MOCKNETPACK_API_KEY=$(security find-generic-password -s mocknetpack -w) 或写入 chmod 600 的文件后 source")
 		return nil, 2
 	}
 	return mnpapi.NewClient(server, key), 0
@@ -279,7 +272,7 @@ func writeTrafficFile(path string, entries []capture.TrafficEntry) error {
 
 func runShare(ctx context.Context, args []string, stdout, stderr io.Writer, defServer, defKey string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage error: share requires create/get")
+		_, _ = fmt.Fprintln(stderr, "usage error: share requires create/get")
 		return 2
 	}
 	switch args[0] {
@@ -324,7 +317,7 @@ func runShare(ctx context.Context, args []string, stdout, stderr io.Writer, defS
 		writeJSON(stdout, s)
 		return 0
 	default:
-		fmt.Fprintln(stderr, "usage error: unknown share subcommand", args[0])
+		_, _ = fmt.Fprintln(stderr, "usage error: unknown share subcommand", args[0])
 		return 2
 	}
 }
@@ -335,7 +328,7 @@ func runShare(ctx context.Context, args []string, stdout, stderr io.Writer, defS
 
 func runRule(ctx context.Context, args []string, stdout, stderr io.Writer, defServer, defKey string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage error: rule requires a subcommand (create-from-traffic/create/set-enabled/update)")
+		_, _ = fmt.Fprintln(stderr, "usage error: rule requires a subcommand (create-from-traffic/create/set-enabled/update)")
 		return 2
 	}
 	switch args[0] {
@@ -348,7 +341,7 @@ func runRule(ctx context.Context, args []string, stdout, stderr io.Writer, defSe
 	case "update":
 		return runRuleUpdate(ctx, args[1:], stdout, stderr, defServer, defKey)
 	default:
-		fmt.Fprintln(stderr, "usage error: unknown rule subcommand", args[0])
+		_, _ = fmt.Fprintln(stderr, "usage error: unknown rule subcommand", args[0])
 		return 2
 	}
 }

@@ -213,7 +213,7 @@ func NewAPI(port int, opts ...Option) *API {
 	api.captureManager.SetDataFilePath(filepath.Join(dataStore.DataDir(), "data.json"))
 
 	// Initialize the MockNetPack account stores : users and session
-	// tokens share the same persistent FileStore. Long-lived API keys 
+	// tokens share the same persistent FileStore. Long-lived API keys
 	// persist the same way.
 	api.users = dataStore.Users()
 	api.authSessions = dataStore.AuthSessions()
@@ -399,6 +399,7 @@ func (a *API) withMiddleware(handler http.Handler) http.Handler {
 			statusCode:     http.StatusOK,
 		}
 		securityHandler.ServeHTTP(wrapped, r)
+		//nolint:gosec // structured key/value logging: values are data, not format (G706 false positive)
 		slog.Info("http",
 			"method", r.Method,
 			"path", r.URL.Path,

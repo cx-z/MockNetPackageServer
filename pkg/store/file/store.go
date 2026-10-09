@@ -65,8 +65,8 @@ type storeData struct {
 	// Devices persist fully; capture sessions persist their summary
 	// (times/status/counts). Temporary per-session traffic is stored
 	// elsewhere  and cleared when a session ends.
-	Devices          []*capture.Device          `json:"devices,omitempty"`
-	CaptureSessions  []*capture.CaptureSession  `json:"captureSessions,omitempty"`
+	Devices         []*capture.Device         `json:"devices,omitempty"`
+	CaptureSessions []*capture.CaptureSession `json:"captureSessions,omitempty"`
 
 	// MockNetPack mock rules  and the per-device rule-set version counter
 	// (keyed by app + "\x00" + did). Rules persist; the runtime Effective flag
@@ -266,7 +266,7 @@ func syncFile(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return f.Sync()
 }
 
@@ -277,7 +277,7 @@ func syncDir(dir string) {
 	if err != nil {
 		return
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	_ = d.Sync()
 }
 

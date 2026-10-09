@@ -20,18 +20,11 @@ import (
 
 // mcpFake is a minimal mocknetpack API server for tool handler tests.
 type mcpFake struct {
-	ts   *httptest.Server
-	body string
-	path string
+	ts *httptest.Server
 }
 
 func (f *mcpFake) api(mux *http.ServeMux) {
 	f.ts = httptest.NewServer(mux)
-}
-
-func j(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
 }
 
 func setupFake(t *testing.T, mux *http.ServeMux) (*mcpFake, string) {
