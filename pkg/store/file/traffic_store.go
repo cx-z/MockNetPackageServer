@@ -31,10 +31,10 @@ type trafficStore struct {
 
 // Traffic returns a per-session traffic archive store rooted at
 // <dataDir>/traffic/ (the data directory is created lazily on first write).
-func (fs *FileStore) Traffic() store.TrafficStore {
+func (s *FileStore) Traffic() store.TrafficStore {
 	return &trafficStore{
-		dir: filepath.Join(fs.cfg.DataDir, "traffic"),
-		log: fs.log,
+		dir: filepath.Join(s.cfg.DataDir, "traffic"),
+		log: s.log,
 	}
 }
 
