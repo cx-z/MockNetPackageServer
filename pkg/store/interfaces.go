@@ -334,6 +334,21 @@ type CaptureSessionStore interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// TrafficStore persists per-session traffic archives as one independent file
+// per capture session (跨重启保留请求存档：重启后 RestoreTraffic 恢复；清理
+// 随会话生命周期——清空/删除/48h 过期由 CaptureManager 同步删除文件).
+// A nil TrafficStore keeps the memory-only behavior (existing tests).
+type TrafficStore interface {
+	// SaveSessionTraffic atomically persists a session's full traffic slice.
+	// An empty slice removes the archive file (idempotent).
+	SaveSessionTraffic(ctx context.Context, sessionID string, entries []*capture.TrafficEntry) error
+	// DeleteSessionTraffic removes a session's archive file (idempotent).
+	DeleteSessionTraffic(ctx context.Context, sessionID string) error
+	// LoadAllSessionTraffic returns every persisted per-session archive
+	// (startup restore). Corrupt/unreadable files are skipped with a warning.
+	LoadAllSessionTraffic(ctx context.Context) (map[string][]*capture.TrafficEntry, error)
+}
+
 // MockRuleFilter filters mock rules by owning device.
 type MockRuleFilter struct {
 	// App filters by app dimension ("" = no filter).

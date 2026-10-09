@@ -154,7 +154,7 @@ func init() {
 	startCmd.Flags().IntVar(&startCaptureHeartbeatInterval, "capture-heartbeat-interval", 0, "MockNetPack SDK heartbeat interval in seconds (default 20)")
 	startCmd.Flags().IntVar(&startCaptureRuleRetentionDays, "capture-rule-retention-days", 0, "MockNetPack mock rule retention in days (default 7; sliding window since last use)")
 	startCmd.Flags().IntVar(&startCaptureHeartbeatTimeout, "capture-heartbeat-timeout", 0, "MockNetPack heartbeat timeout in seconds (default 60)")
-	startCmd.Flags().IntVar(&startCaptureSessionMaxEntries, "capture-session-max-entries", 0, "MockNetPack max traffic entries kept per session (default 20000; overflow drops oldest)")
+	startCmd.Flags().IntVar(&startCaptureSessionMaxEntries, "capture-session-max-entries", 0, "MockNetPack max traffic entries kept per session (default 2000; overflow drops oldest)")
 	startCmd.Flags().IntVar(&startCaptureTrafficRetentionHours, "capture-traffic-retention-hours", 0, "MockNetPack ended-session traffic retention in hours (default 48; janitor purges after)")
 	startCmd.Flags().StringVar(&startWebDir, "web-dir", "", "MockNetPack web UI directory (default web/mocknetpack)")
 }

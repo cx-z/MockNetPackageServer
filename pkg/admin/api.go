@@ -211,6 +211,12 @@ func NewAPI(port int, opts ...Option) *API {
 	//  存储水位监控：把水位检查指向持久化 data.json，启动时及每小时
 	// 输出体积日志（超 500MB WARN，不阻断）。
 	api.captureManager.SetDataFilePath(filepath.Join(dataStore.DataDir(), "data.json"))
+	//  存储水位监控：traffic 存档目录（按会话分文件）同样每小时输出
+	// 总量日志（超 100MB WARN，不阻断）。
+	api.captureManager.SetTrafficDirPath(filepath.Join(dataStore.DataDir(), "traffic"))
+	//  跨重启保留请求存档：注入按会话分文件的流量存档存储。重启后
+	// RestoreTraffic 恢复明细；nil 则保持纯内存行为（不落盘）。
+	api.captureManager.SetTrafficStore(dataStore.Traffic())
 
 	// Initialize the MockNetPack account stores : users and session
 	// tokens share the same persistent FileStore. Long-lived API keys
@@ -533,6 +539,14 @@ func (a *API) Start() error {
 	//  存储水位：启动时输出一行 data.json 体积（之后由 hourly janitor
 	// 每小时输出，超 500MB WARN 一次）。
 	a.captureManager.LogDataFileSize()
+
+	//  存储水位：启动时输出一行 traffic 存档目录总量（超 100MB WARN）。
+	a.captureManager.LogTrafficDirSize()
+
+	//  跨重启保留请求存档：先恢复持久化的历史请求明细，再启动健康
+	// 检查——心跳超时清扫把"重启前仍在抓包"的会话标记结束时，其恢复
+	// 出来的明细保持完整可查（48h 窗口从新结束时间起算）。
+	a.captureManager.RestoreTraffic(a.ctx)
 
 	// Start the MockNetPack capture health check (device heartbeat timeout +
 	// viewer lease garbage collection)

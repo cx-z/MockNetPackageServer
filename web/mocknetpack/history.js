@@ -26,6 +26,7 @@ async function openHistory() {
   history = null;
   $("historySessions").innerHTML = '<div class="history-empty">加载中…</div>';
   $("historyList").innerHTML = '<div class="history-empty">请选择左侧会话查看历史请求。</div>';
+  $("historyDetail").innerHTML = '<div class="empty">点击左侧请求查看详情。</div>';
   $("historyInfo").textContent = "";
   $("historyMoreBtn").classList.add("hidden");
   resetHistoryFilters();
@@ -108,6 +109,7 @@ async function loadHistorySessions() {
 async function selectHistorySession(sid) {
   history = { sid, offset: 0, total: 0, entries: [] };
   resetHistoryFilters();
+  $("historyDetail").innerHTML = '<div class="empty">点击左侧请求查看详情。</div>';
   await applyHistoryFilter();
 }
 
@@ -172,7 +174,8 @@ async function loadHistoryPage(replace) {
   }
 }
 
-/** 渲染历史请求行（只读：无 ✕ 删除按钮，符合  保留语义）。 */
+/** 渲染历史请求行（只读：无 ✕ 删除按钮，符合  保留语义）。点击行展开
+ *  详情到浮层右侧 historyDetail（复用主详情渲染，只依赖 entry 快照）。 */
 function renderHistoryList(replace) {
   const box = $("historyList");
   if (replace) box.innerHTML = "";
@@ -192,6 +195,17 @@ function renderHistoryList(replace) {
       '<span class="t-status ' + statusCls + '">' + (e.statusCode ?? "ERR") + "</span>" +
       '<span class="t-dur">' + e.durationMs + "ms</span>" +
       '<span class="t-time">' + clockTime(e.timestamp) + "</span>";
+    el.onclick = () => {
+      detail._activeTraffic = e.id;
+      renderHistoryDetail(e);
+      box.querySelectorAll(".traffic-row").forEach((r) =>
+        r.classList.toggle("active", r === el));
+    };
     box.appendChild(el);
   }
+}
+
+/** 渲染历史请求详情到浮层右侧（复用主详情渲染：页签/JSON 树/Mock/分享）。 */
+function renderHistoryDetail(e) {
+  renderTrafficDetail(e, $("historyDetail"));
 }

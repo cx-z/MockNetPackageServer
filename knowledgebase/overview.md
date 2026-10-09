@@ -37,8 +37,8 @@ The server **never proxies business traffic**: it only records and manages. Requ
 | **App** | Application identifier (e.g. `com.example.integrating`). First product dimension; a fixed catalog (`allowedApps`) — one app today |
 | **Device** | A running app instance on one physical device/simulator, uniquely `(App, did)`. Created **manually** in the Web UI (name + owner); SDK never auto-registers |
 | **Device status** | Derived, not persisted: `idle` / `capturing` / `offline` (offline > capturing > idle priority) |
-| **Capture session** | A capture period activated from the Web. One per device. Ends on last-viewer release, heartbeat timeout, or forced disconnect — and is **deleted on end**: no history, only the current session |
-| **Traffic** | A captured HTTP request/response (`TrafficEntry`). Session-scoped, in-memory; moved to a retained store on session end (shareable by ID for 7d) |
+| **Capture session** | A capture period activated from the Web. One per device. Ends on last-viewer release, heartbeat timeout, or forced disconnect; the record (summary) is persisted for a **48h history window**, then janitor-purged |
+| **Traffic** | A captured HTTP request/response (`TrafficEntry`). Session-scoped; **persisted per session as an archive file (`mockd-data/traffic/<sid>.json`, 原子写 tmp+rename), restored at startup so request history survives restarts**; per-session window cap 2000 (rolling, oldest dropped); retained 48h after session end, then the hourly janitor deletes the record + archive file |
 | **Mock rule** | A canned response for one interface, bound to `(App, did)`. Matches `Method + URL path`. One active rule per interface; persisted with a 7-day sliding retention |
 | **Display rule** | Web-page-level string filter — ephemeral, not a server-persisted concept (handled in the web KB) |
 | **Share link** | Public, read-only, 7-day snapshot of a single traffic entry, decoupled from the session |

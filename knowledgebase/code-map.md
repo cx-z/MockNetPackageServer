@@ -36,11 +36,11 @@
 |---|---|
 | `capture_registry.go` | Core shell: `CaptureConfig` + `DefaultCaptureConfig`, `CaptureManager` struct + `NewCaptureManager` (+ `pairingTokens` store), `SetLogger`/`Config`/`ServerConfig`, store error vars (`ErrPairingTokenInvalid`), `MockRuleConflictMessage`, `CreatePairingToken`/`ValidatePairingToken`/`PurgeExpiredPairingTokens` |
 | `device_registry.go` | Device lifecycle: `CreateManualDevice`, `RegisterDevice`, `RegisterDeviceWithPairing` (D7: token auto-create, idempotent reuse, owner fill-if-empty, name never overwritten, `defaultDeviceName`), `Heartbeat`, `ListDevices`, `GetDevice`, `UpdateDeviceName`, `DeleteDevice` |
-| `session_registry.go` | Session lifecycle + viewer leases + health check: `ActivateSession`, `EndSession`, `ListSessions`, `GetSession`, `RegisterViewer`/`ReleaseViewer`, `StartHealthCheck`/`Stop` (hourly janitor includes pairing-token purge), `activeSessionFor`, `activeStatus` |
-| `traffic_registry.go` | Session-scoped traffic + retained store: `UploadTraffic` (stamps the per-session seq under lock), `ListSessionTraffic` (extended filtering: method/scheme/since AND-combined with the existing keyword/status/from/to; `SchemeOf` parses the URL prefix), `GetTraffic(WithOwner)`, `DeleteTraffic`, `ClearSessionTraffic`, `PurgeExpiredRetainedTraffic`, `retainedSession` |
+| `session_registry.go` | Session lifecycle + viewer leases + health check: `ActivateSession`, `EndSession`, `ListSessions`, `GetSession`, `RegisterViewer`/`ReleaseViewer`, `StartHealthCheck`/`Stop` (hourly janitor includes pairing-token purge + traffic-dir size watermark), `RestoreTraffic` (startup: loads per-session archives back into memory, drops orphan/expired files), `activeSessionFor`, `activeStatus` |
+| `traffic_registry.go` | Session-scoped traffic + retained store: `UploadTraffic` (stamps the per-session seq under lock; **persists the session archive after each mutation**), `ListSessionTraffic` (extended filtering: method/scheme/since AND-combined with the existing keyword/status/from/to; `SchemeOf` parses the URL prefix), `GetTraffic(WithOwner)`, `DeleteTraffic`, `ClearSessionTraffic` (drops the archive file), `PurgeExpiredRetainedTraffic`, `retainedSession` |
 | `rule_registry.go` | Mock rules: CRUD, `evaluateRules` (Effective/conflict), `RuleVersion`, `ListActiveMockRules`, `PurgeExpiredRules`, `disableDeviceRules`, `interfaceKey` |
 | `share_registry.go` | Request share snapshots: `ShareTTL`, `ShareSnapshot`, `CreateShare`, `GetShare` |
-| `interfaces.go` | `DeviceStore`, `CaptureSessionStore`, `MockRuleStore`, `UserStore`, `AuthSessionStore`, `PairingTokenStore`, `APIKeyStore` (+ upstream interfaces) |
+| `interfaces.go` | `DeviceStore`, `CaptureSessionStore`, `MockRuleStore`, `UserStore`, `AuthSessionStore`, `PairingTokenStore`, `APIKeyStore`, `TrafficStore` (+ upstream interfaces) |
 | `store.go` | Upstream store plumbing (errors, helpers) — shared with upstream |
 | `engine_registry.go` | Upstream engine registry (baseline, rarely touched) |
 
@@ -50,6 +50,7 @@
 |---|---|
 | `store.go` | File-backed `Store` core (data dir, file layout) |
 | `capture_store.go` | `CaptureFileStore`: devices + capture sessions persistence |
+| `traffic_store.go` | `trafficStore` (`store.TrafficStore`): per-session request archives, **one file per session `traffic/<sid>.json`**, atomic tmp+fsync+rename; `SaveSessionTraffic` (empty slice removes), `DeleteSessionTraffic` (idempotent), `LoadAllSessionTraffic` (startup restore, skips corrupt/tmp) |
 | `mock_rule_store.go` | `MockRuleFileStore`: rules + rule version (per app/did) |
 | `pairing_token_store.go` | `PairingTokenFileStore`: pairing tokens |
 | `api_key_store.go` | `apiKeyStore`: API Keys persistence (`FileData.APIKeys` written to `data.json`); `GetByHash`/`ListByUsername`/`Delete`/`DeleteExpired`; stores only the SHA-256 hash, plaintext never hits disk |

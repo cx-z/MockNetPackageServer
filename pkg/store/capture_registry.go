@@ -78,7 +78,7 @@ type CaptureConfig struct {
 	RetainedTrafficTTL time.Duration
 	// MaxSessionTrafficEntries caps the number of traffic entries kept per
 	// session . 0 means the server
-	// default (DefaultMaxSessionTrafficEntries = 20000).
+	// default (DefaultMaxSessionTrafficEntries = 2000).
 	MaxSessionTrafficEntries int
 	// TrafficRetention is how long an ended session and its traffic stay
 	// queryable before the janitor purges them (48h retention from session end).
@@ -89,7 +89,7 @@ type CaptureConfig struct {
 // DefaultCaptureConfig returns the default capture configuration
 // (heartbeat 20s advised / 60s timeout, viewer lease 120s, rule retention 7d,
 // retained-traffic window 7d aligned with share-link TTL, session traffic cap
-// 20000 entries, ended-session traffic retention 48h).
+// 2000 entries, ended-session traffic retention 48h).
 func DefaultCaptureConfig() CaptureConfig {
 	return CaptureConfig{
 		HeartbeatInterval:        20 * time.Second,
@@ -120,9 +120,14 @@ type CaptureManager struct {
 	// memory-only map) keeps a share link valid for its full 7-day TTL across
 	// server restarts.
 	sharesStore ShareStore
-	cfg         CaptureConfig
-	log         *slog.Logger
-	dataFile    string //  存储水位：data.json 绝对路径（空=不输出水位日志）
+	// trafficStore persists per-session traffic archives (one file per
+	// session, 跨重启保留请求存档). nil = memory-only behavior (existing
+	// tests / --no-persist): traffic is never written to disk.
+	trafficStore TrafficStore
+	cfg          CaptureConfig
+	log          *slog.Logger
+	dataFile     string //  存储水位：data.json 绝对路径（空=不输出水位日志）
+	trafficDir   string //  存储水位：traffic 存档目录绝对路径（空=不输出水位日志）
 
 	// viewerMu guards the runtime viewer leases, keyed by session ID.
 	viewerMu sync.RWMutex
@@ -214,6 +219,13 @@ func (m *CaptureManager) SetLogger(log *slog.Logger) {
 	if log != nil {
 		m.log = log
 	}
+}
+
+// SetTrafficStore wires an optional persistent archive store for per-session
+// traffic. Nil (default) keeps the current memory-only behavior: traffic is
+// never written to disk and is lost on restart.
+func (m *CaptureManager) SetTrafficStore(ts TrafficStore) {
+	m.trafficStore = ts
 }
 
 // Config returns the runtime capture configuration.

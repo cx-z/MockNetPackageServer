@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/getmockd/mockd/internal/id"
@@ -71,7 +72,8 @@ func (m *CaptureManager) ActivateSession(ctx context.Context, app, did string) (
 // Web history view reads them; after the window the janitor purges both. This
 // replaces the  "结束即删" model: the record is no longer deleted on end.
 //
-//  (断开后可分享): share creation still works after disconnect — traffic
+//	(断开后可分享): share creation still works after disconnect — traffic
+//
 // stays in the session (index retained=false) and the owner resolves via the
 // session record, which now survives the end. The separate retained store is
 // no longer written by EndSession; legacy retained data (pre-) is purged by
@@ -275,7 +277,8 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 				m.checkDeviceHealth(ctx)
 				m.checkViewerLeases(ctx)
 			case <-hourly.C:
-				m.LogDataFileSize() //  存储水位：每小时一行 data.json 体积
+				m.LogDataFileSize()   //  存储水位：每小时一行 data.json 体积
+				m.LogTrafficDirSize() //  存储水位：每小时一行 traffic 存档目录体积
 				m.PurgeExpiredRules(ctx)
 				m.PurgeExpiredEndedSessions(ctx)
 				m.PurgeExpiredRetainedTraffic(ctx)
@@ -318,12 +321,77 @@ func (m *CaptureManager) PurgeExpiredEndedSessions(ctx context.Context) {
 		if cur.Status == capture.SessionStatusEnded && cur.RetainUntil != nil && now.After(*cur.RetainUntil) {
 			m.unindexTraffic(m.traffic[s.ID])
 			delete(m.traffic, s.ID)
+			// : drop the archive file together with the in-memory traffic —
+			// the 48h window is the only cleanup path for request archives.
+			m.deleteSessionTraffic(ctx, s.ID)
 			if err := m.sessions.Delete(ctx, s.ID); err != nil {
 				m.log.Warn("capture health check: purge expired ended session failed", "session", s.ID, "error", err)
 			}
 		}
 		m.trafficMu.Unlock()
 	}
+}
+
+// ============================================================================
+// Startup restore (跨重启保留请求存档)
+// ============================================================================
+
+// RestoreTraffic loads persisted per-session traffic archives back into the
+// runtime maps at startup, so request history survives a server restart. Must
+// run BEFORE StartHealthCheck: the heartbeat-timeout sweep then ends stale
+// capturing sessions with their restored archives intact (48h window from the
+// new end time).
+//
+// Sessions whose record no longer exists (cleared/deleted) or whose 48h
+// retention window has already passed are skipped and their archive files
+// removed — the same semantics the hourly janitor would apply. A nil
+// trafficStore is a no-op (memory-only behavior). Best-effort: load errors are
+// logged, never propagated.
+func (m *CaptureManager) RestoreTraffic(ctx context.Context) {
+	if m.trafficStore == nil {
+		return
+	}
+	all, err := m.trafficStore.LoadAllSessionTraffic(ctx)
+	if err != nil {
+		m.log.Warn("capture restore: load persisted traffic archives failed", "error", err)
+		return
+	}
+	now := time.Now()
+	restoredSessions, restoredEntries := 0, 0
+	for sid, entries := range all {
+		s, err := m.sessions.Get(ctx, sid)
+		if err != nil {
+			// Session record gone (cleared/deleted): drop the orphan archive.
+			m.deleteSessionTraffic(ctx, sid)
+			continue
+		}
+		if s.Status == capture.SessionStatusEnded && (s.RetainUntil == nil || now.After(*s.RetainUntil)) {
+			// Retention window already passed: the janitor would purge it.
+			m.deleteSessionTraffic(ctx, sid)
+			continue
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		m.trafficMu.Lock()
+		m.traffic[sid] = entries
+		var maxSeq int64
+		for _, e := range entries {
+			if e == nil || e.ID == "" {
+				continue
+			}
+			if e.Seq > maxSeq {
+				maxSeq = e.Seq
+			}
+		}
+		m.trafficSeq[sid] = maxSeq
+		m.indexTraffic(sid, false, "", "", entries)
+		m.trafficMu.Unlock()
+		restoredSessions++
+		restoredEntries += len(entries)
+	}
+	m.log.Info("capture restore: loaded persisted request archives",
+		"sessions", restoredSessions, "entries", restoredEntries)
 }
 
 // Stop stops the background health-check goroutine. Safe to call multiple times.
@@ -433,6 +501,12 @@ var activeStatus = capture.SessionStatusCapturing
 // storage-size check logs at WARN level (500MB, non-blocking).
 const DefaultDataFileWarnBytes = 500 * 1024 * 1024
 
+// DefaultTrafficDirWarnBytes is the traffic archive directory size watermark
+// at which the storage-size check logs at WARN level (100MB, non-blocking).
+// The per-session archive files are bounded by the 2000-entry window and the
+// 48h janitor, so the directory only grows with concurrent retention.
+const DefaultTrafficDirWarnBytes = 100 * 1024 * 1024
+
 // SetDataFilePath points the storage-watermark check at the persisted
 // data.json file . An empty path disables the check (tests / pure
 // in-memory runs).
@@ -475,4 +549,44 @@ func humanBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// SetTrafficDirPath points the archive-directory watermark check at the
+// per-session traffic directory ( empty path disables the check).
+func (m *CaptureManager) SetTrafficDirPath(p string) {
+	m.trafficDir = p
+}
+
+// LogTrafficDirSize emits one line with the traffic archive directory size
+// and file count : INFO when under the watermark, WARN at or above it.
+// Best-effort and non-blocking; a missing directory is reported as 0 bytes
+// without error spam.
+func (m *CaptureManager) LogTrafficDirSize() {
+	if m.trafficDir == "" {
+		return
+	}
+	var total int64
+	var files int
+	des, err := os.ReadDir(m.trafficDir)
+	if err == nil {
+		for _, de := range des {
+			if de.IsDir() || strings.HasSuffix(de.Name(), ".tmp") {
+				continue
+			}
+			fi, ferr := de.Info()
+			if ferr != nil {
+				continue
+			}
+			total += fi.Size()
+			files++
+		}
+	}
+	if total >= DefaultTrafficDirWarnBytes {
+		m.log.Warn("traffic archive dir size exceeds warning threshold ",
+			"path", m.trafficDir, "bytes", total, "files", files,
+			"warnThreshold", DefaultTrafficDirWarnBytes)
+		return
+	}
+	m.log.Info("traffic archive dir size ",
+		"path", m.trafficDir, "bytes", total, "files", files)
 }

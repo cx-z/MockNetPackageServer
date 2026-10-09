@@ -26,7 +26,8 @@ import (
 // is a server-side contract bound: the SDK is never told — it just keeps
 // uploading, and the newest data always wins. Overridable via
 // --capture-session-max-entries (CaptureConfig.MaxSessionTrafficEntries).
-const DefaultMaxSessionTrafficEntries = 20000
+// The same cap bounds the per-session archive file (内存与落盘文件同源).
+const DefaultMaxSessionTrafficEntries = 2000
 
 // DefaultTrafficRetention is how long an ended capture session and its traffic
 // stay queryable before the janitor purges them .
@@ -175,6 +176,10 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 		m.trafficMu.Unlock()
 		return 0, err
 	}
+	// : persist the session's current traffic slice as its archive
+	// (跨重启保留). Done inside trafficMu so the file always matches the
+	// in-memory slice; best-effort (errors logged, upload unaffected).
+	m.persistSessionTraffic(ctx, sessionID)
 	m.trafficMu.Unlock()
 
 	// : a mocked upload is proof the rule was hit; refresh its LastUsedAt so
@@ -211,6 +216,37 @@ func (m *CaptureManager) unindexTraffic(entries []*capture.TrafficEntry) {
 			continue
 		}
 		delete(m.trafficIndex, e.ID)
+	}
+}
+
+// persistSessionTraffic best-effort persists a session's current traffic slice
+// as its archive file (跨重启保留请求存档). The slice is copied under
+// trafficMu so the store's marshal never races with later mutations. Caller
+// must hold trafficMu (write). A nil trafficStore keeps the memory-only
+// behavior. Save errors are logged, never propagated — the upload path must
+// not fail because an archive write failed.
+func (m *CaptureManager) persistSessionTraffic(ctx context.Context, sessionID string) {
+	if m.trafficStore == nil {
+		return
+	}
+	cur := m.traffic[sessionID]
+	// Entries are immutable after upload, but the slice itself is mutated
+	// (append/trim/delete) under trafficMu; hand the store a stable snapshot.
+	snapshot := append([]*capture.TrafficEntry(nil), cur...)
+	if err := m.trafficStore.SaveSessionTraffic(ctx, sessionID, snapshot); err != nil {
+		m.log.Warn("traffic archive: persist session traffic failed", "session", sessionID, "error", err)
+	}
+}
+
+// deleteSessionTraffic best-effort removes a session's archive file (session
+// cleared / expired / orphaned). Caller should hold trafficMu for mutations
+// that delete the in-memory slice. Errors are logged, never propagated.
+func (m *CaptureManager) deleteSessionTraffic(ctx context.Context, sessionID string) {
+	if m.trafficStore == nil {
+		return
+	}
+	if err := m.trafficStore.DeleteSessionTraffic(ctx, sessionID); err != nil {
+		m.log.Warn("traffic archive: delete session traffic failed", "session", sessionID, "error", err)
 	}
 }
 
@@ -317,7 +353,8 @@ func SchemeOf(raw string) string {
 // The filter  is applied BEFORE paging: total is the size of the
 // filtered set, and limit/offset page within it.
 //
-//  ( 48h 保留): an ENDED session stays queryable during its retention
+//	( 48h 保留): an ENDED session stays queryable during its retention
+//
 // window (RetainUntil, default 48h from end) — the Web history view reads
 // real data from it. Once the window passes (even before the hourly janitor
 // runs) the session is reported not found, matching the contract
@@ -462,6 +499,8 @@ func (m *CaptureManager) DeleteTraffic(ctx context.Context, id string) error {
 				s.RequestCount--
 				_ = m.sessions.Update(ctx, s)
 			}
+			// : keep the archive file in sync (empty slice removes it).
+			m.persistSessionTraffic(ctx, sid)
 			found = true
 			break
 		}
@@ -515,6 +554,10 @@ func (m *CaptureManager) ClearSessionTraffic(ctx context.Context, sessionID stri
 	}
 	m.unindexTraffic(m.traffic[sessionID]) // 4.22
 	delete(m.traffic, sessionID)
+	// : drop the archive file with the in-memory slice so a restart
+	// cannot resurrect cleared logs. Done before the count update so even a
+	// failed Update leaves no stale archive behind.
+	m.deleteSessionTraffic(ctx, sessionID)
 	sc := *s
 	sc.RequestCount = 0
 	if err := m.sessions.Update(ctx, &sc); err != nil {
@@ -558,6 +601,8 @@ func (m *CaptureManager) purgeRetainedBefore(ctx context.Context, cutoff time.Ti
 			m.unindexTraffic(m.traffic[sid]) // 4.22
 			delete(m.traffic, sid)
 			delete(m.trafficSeq, sid) // release the seq counter with its session
+			// : orphaned in-memory key => drop its archive file too.
+			m.deleteSessionTraffic(ctx, sid)
 		}
 	}
 }

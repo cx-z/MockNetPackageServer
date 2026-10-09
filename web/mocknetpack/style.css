@@ -360,6 +360,8 @@ button.mini.active { background: var(--primary); color: #fff; }
 .history-filters input.hf-s { width: 76px; }
 .history-filters input.hf-t { width: 172px; }
 .history-list { flex: 1; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 6px; min-height: 120px; }
+.history-main { display: flex; gap: 10px; flex: 1; min-height: 0; }
+.history-detail { flex: 1; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 10px; min-height: 120px; background: #fff; }
 .history-more { align-self: center; }
 .history-empty { color: #999; font-size: 13px; padding: 24px 0; text-align: center; }
 

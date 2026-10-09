@@ -232,11 +232,14 @@ async function clearTrafficLog() {
 }
 
 /** 请求详情面板（列表数据已含完整字段，无需再查详情接口）。 */
-function renderTrafficDetail(e) {
-  showDetailPane("traffic");
+/** 渲染请求详情（headers/body/页签/Mock/分享）。默认输出到主详情区
+ *  #trafficDetail；history.js 可传入 historyDetail 目标，把同一渲染复用进
+ *  历史浮层（此时不触碰主布局的 showDetailPane）。 */
+function renderTrafficDetail(e, target) {
+  if (!target) showDetailPane("traffic");
   detail._activeRule = null;
   document.querySelectorAll(".rule-row").forEach((el) => el.classList.remove("active"));
-  const box = $("trafficDetail");
+  const box = target || $("trafficDetail");
   const headRows = (h) => Object.entries(h || {})
     .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
       '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("");

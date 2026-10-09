@@ -21,7 +21,7 @@ info:
       之前创建）仅 admin 可管理，dev 只读 403。分享持久化：ShareSnapshot 随 data.json 落盘，
       重启不失效，7 天 TTL（expiresAt = 创建时刻 + 7 天）不变——过期链接返回 404，janitor 每小时
       清理过期快照（与  48h 会话流量保留并存）。
-    - 容量与留存：会话流量上限契约化（--capture-session-max-entries，默认 20000，
+    - 容量与留存：会话流量上限契约化（--capture-session-max-entries，默认 2000，
       超限丢最旧 rolling window）；服务端过滤下推（GET /sessions/{id}/traffic 新增
       keyword/statusCode/from/to，过滤先于分页）；会话结束后流量保留 48h（--capture-traffic-retention-hours，
       默认 48，自结束时刻起算）供历史日志查询，之后由 janitor 每小时清理；历史日志查询期间保留期内
@@ -50,7 +50,7 @@ info:
     - 流量语义：全量抓包、会话内临时可见；会话结束后流量保留 48h
       （--capture-traffic-retention-hours，默认 48，自结束时刻起算）——保留期内可列表访问
       （历史日志）、按 ID 解析（分享），期满由 janitor 每小时清理释放内存；进行中流量实时可查不变。
-      会话流量上限 MaxSessionTrafficEntries（--capture-session-max-entries，默认 20000），
+      会话流量上限 MaxSessionTrafficEntries（--capture-session-max-entries，默认 2000），
       超限丢最旧（rolling window）。被 Mock 的请求持久化为规则及其 source 快照（ 起，7 天滑动），
       与 48h 临时流量保留是两套独立规则。
     - 推送通道：Web 请求流按 2s 轮询 GET /sessions/{id}/traffic 实现秒级可见（已定，不新增推送端点）。
@@ -336,7 +336,7 @@ paths:
         部分接受：entries 中字段不合法的条目被丢弃、合法条目正常入库，响应 count = 实际接受数；
         全部条目不合法返回 400。
         临时语义：会话流量按 MaxSessionTrafficEntries
-        （--capture-session-max-entries，默认 20000）上限保留，超限丢最旧（rolling window）；
+        （--capture-session-max-entries，默认 2000）上限保留，超限丢最旧（rolling window）；
         会话结束（页面关闭 / 心跳超时 / 强制断开）后流量保留 48h（--capture-traffic-retention-hours，
         默认 48，自结束时刻起算）供历史日志查询，期满由 janitor 清理；
         命中 Mock 的请求仍按临时流量上传（mocked=true，其响应即 Mock 回包），随会话保留；
