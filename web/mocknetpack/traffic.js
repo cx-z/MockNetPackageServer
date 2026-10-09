@@ -263,6 +263,7 @@ function renderTrafficDetail(e, target) {
     '<div class="detail-panel">' +
       '<div class="d-actions">' +
         '<button id="mockThisBtn" class="small">Mock 此请求</button>' +
+        '<button id="copyReqBtn" class="small ghost">复制</button>' +
         '<button id="shareBtn" class="small ghost">分享</button>' +
       "</div>" +
       '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
@@ -293,6 +294,21 @@ function renderTrafficDetail(e, target) {
   const shareBtn = box.querySelector("#shareBtn");
   if (shareBtn) {
     shareBtn.onclick = () => shareRequest(e);
+  }
+  const copyBtn = box.querySelector("#copyReqBtn");
+  if (copyBtn) {
+    // 复制整条请求 + 回包为完整 HTTP 报文交换（重建逻辑见 utils.buildRawTrafficText）。
+    // 成功后按钮短暂显示「已复制」，避免高频操作被 alert 打断。
+    copyBtn.onclick = async () => {
+      const ok = await copyTextToClipboard(buildRawTrafficText(e));
+      if (ok) {
+        copyBtn.textContent = "已复制";
+        copyBtn.disabled = true;
+        setTimeout(() => { copyBtn.textContent = "复制"; copyBtn.disabled = false; }, 1500);
+      } else {
+        alert("复制失败：请手动选择复制");
+      }
+    };
   }
   bindJsonTree(box);
 }
