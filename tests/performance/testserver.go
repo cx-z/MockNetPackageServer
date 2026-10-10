@@ -97,8 +97,9 @@ func StartTestServer(httpPort, adminPort int) (*TestServer, error) {
 		return nil, fmt.Errorf("failed to start server: %w", err)
 	}
 
-	// Wait for server to be ready
-	if err := ts.waitForReady(5 * time.Second); err != nil {
+	// Wait for server to be ready (10s to accommodate -race instrumented builds
+	// and the larger binary after the govulncheck dependency bump).
+	if err := ts.waitForReady(10 * time.Second); err != nil {
 		ts.Stop()
 		return nil, err
 	}

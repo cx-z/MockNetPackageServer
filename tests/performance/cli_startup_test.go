@@ -124,8 +124,10 @@ func TestCLIBinarySize(t *testing.T) {
 	// - JSONPath parser
 	// - Cobra + Charmbracelet TUI (huh, bubbletea, lipgloss) for interactive CLI
 	// This is expected for a feature-rich mock server.
+	// Binary size grew after the govulncheck dependency bump
+	// (x/net v0.60, grpc v1.83.2, kin-openapi v0.144).
 	// A stripped binary (-ldflags="-s -w") is ~29MB.
-	if sizeMB > 45 {
-		t.Errorf("Binary size %.2f MB seems excessive (expected < 45MB)", sizeMB)
+	if sizeMB > 46 {
+		t.Errorf("Binary size %.2f MB seems excessive (expected < 46MB)", sizeMB)
 	}
 }
