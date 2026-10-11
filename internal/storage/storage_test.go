@@ -82,7 +82,7 @@ func TestInMemory_SetOverwrite(t *testing.T) {
 	m1.Name = "original"
 	_ = store.Set(m1)
 
-	m2 := newMock("test-1", mock.TypeGraphQL)
+	m2 := newMock("test-1", mock.TypeGRPC)
 	m2.Name = "updated"
 	_ = store.Set(m2)
 
@@ -90,8 +90,8 @@ func TestInMemory_SetOverwrite(t *testing.T) {
 	if got.Name != "updated" {
 		t.Errorf("Get().Name = %q, want %q after overwrite", got.Name, "updated")
 	}
-	if got.Type != mock.TypeGraphQL {
-		t.Errorf("Get().Type = %v, want %v after overwrite", got.Type, mock.TypeGraphQL)
+	if got.Type != mock.TypeGRPC {
+		t.Errorf("Get().Type = %v, want %v after overwrite", got.Type, mock.TypeGRPC)
 	}
 	if store.Count() != 1 {
 		t.Errorf("Count() = %d, want 1 after overwrite", store.Count())
@@ -225,9 +225,9 @@ func TestInMemory_ListByType(t *testing.T) {
 		t.Errorf("ListByType(GRPC) = %d mocks, want 1", len(grpcMocks))
 	}
 
-	soapMocks := store.ListByType(mock.TypeSOAP)
-	if len(soapMocks) != 0 {
-		t.Errorf("ListByType(SOAP) = %d mocks, want 0", len(soapMocks))
+	wsMocks := store.ListByType(mock.TypeWebSocket)
+	if len(wsMocks) != 1 {
+		t.Errorf("ListByType(WebSocket) = %d mocks, want 1", len(wsMocks))
 	}
 }
 

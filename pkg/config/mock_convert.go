@@ -114,16 +114,8 @@ func generateIDForType(t mock.Type) string {
 		prefix = "http"
 	case mock.TypeWebSocket:
 		prefix = "ws"
-	case mock.TypeGraphQL:
-		prefix = "gql"
 	case mock.TypeGRPC:
 		prefix = "grpc"
-	case mock.TypeSOAP:
-		prefix = "soap"
-	case mock.TypeMQTT:
-		prefix = "mqtt"
-	case mock.TypeOAuth:
-		prefix = "oauth"
 	}
 	return prefix + "_" + id.Short()
 }

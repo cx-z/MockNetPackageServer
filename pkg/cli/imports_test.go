@@ -761,7 +761,7 @@ func TestProcessTablesAndExtend(t *testing.T) {
 			Mocks: []*mock.Mock{
 				{
 					OperationID: "SubTopic",
-					Type:        mock.TypeMQTT,
+					Type:        mock.TypeGRPC,
 					HTTP:        nil, // no HTTP spec
 				},
 			},

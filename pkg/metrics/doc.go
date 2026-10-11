@@ -24,7 +24,7 @@
 //
 // All labels use consistent lowercase values:
 //
-//   - method: GET, POST, graphql, grpc, soap, mqtt, sse, websocket
+//   - method: GET, POST, grpc, sse, websocket
 //   - status: numeric (200, 400) for HTTP-like, lowercase codes for gRPC (ok, cancelled)
 //   - protocol: websocket, sse, grpc
 //

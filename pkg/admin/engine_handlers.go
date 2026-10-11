@@ -63,7 +63,6 @@ type AddEngineWorkspaceRequest struct {
 	WorkspaceName string `json:"workspaceName,omitempty"`
 	HTTPPort      int    `json:"httpPort,omitempty"`
 	GRPCPort      int    `json:"grpcPort,omitempty"`
-	MQTTPort      int    `json:"mqttPort,omitempty"`
 	AutoStart     bool   `json:"autoStart,omitempty"` // If true, start the workspace server immediately
 	RootAlias     bool   `json:"rootAlias,omitempty"` // If true, this workspace becomes the root on this engine
 }
@@ -72,7 +71,6 @@ type AddEngineWorkspaceRequest struct {
 type UpdateEngineWorkspaceRequest struct {
 	HTTPPort int `json:"httpPort,omitempty"`
 	GRPCPort int `json:"grpcPort,omitempty"`
-	MQTTPort int `json:"mqttPort,omitempty"`
 }
 
 // EngineConfigResponse represents the configuration for an engine.
@@ -87,7 +85,6 @@ type EngineWorkspaceConfigEntry struct {
 	WorkspaceName string `json:"workspaceName"`
 	HTTPPort      int    `json:"httpPort"`
 	GRPCPort      int    `json:"grpcPort,omitempty"`
-	MQTTPort      int    `json:"mqttPort,omitempty"`
 }
 
 // handleGenerateRegistrationToken handles POST /admin/tokens/registration.
@@ -233,16 +230,8 @@ func (a *API) buildLocalWorkspaces(ctx context.Context) []store.EngineWorkspace 
 						// HTTP mocks are the default — counted via MockCount above
 					case mock.TypeWebSocket:
 						ew.WSCount++
-					case mock.TypeGraphQL:
-						ew.GraphQLCount++
 					case mock.TypeGRPC:
 						ew.GRPCCount++
-					case mock.TypeSOAP:
-						ew.SOAPCount++
-					case mock.TypeMQTT:
-						ew.MQTTCount++
-					case mock.TypeOAuth:
-						// OAuth mocks don't have a separate counter yet
 					}
 				}
 			}
@@ -265,9 +254,6 @@ func (a *API) enrichWorkspacePorts(workspaces []store.EngineWorkspace, status *e
 		}
 		if grpcProto, ok := status.Protocols["grpc"]; ok {
 			workspaces[i].GRPCPort = grpcProto.Port
-		}
-		if mqttProto, ok := status.Protocols["mqtt"]; ok {
-			workspaces[i].MQTTPort = mqttProto.Port
 		}
 	}
 }
@@ -600,7 +586,7 @@ func (a *API) handleAddEngineWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ws, err := a.engineRegistry.AddWorkspaceToEngine(id, req.WorkspaceID, workspaceName, req.HTTPPort, req.GRPCPort, req.MQTTPort)
+	ws, err := a.engineRegistry.AddWorkspaceToEngine(id, req.WorkspaceID, workspaceName, req.HTTPPort, req.GRPCPort)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Engine not found")
 		return
@@ -673,7 +659,7 @@ func (a *API) handleUpdateEngineWorkspace(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ws, err := a.engineRegistry.UpdateWorkspaceInEngine(id, workspaceID, req.HTTPPort, req.GRPCPort, req.MQTTPort)
+	ws, err := a.engineRegistry.UpdateWorkspaceInEngine(id, workspaceID, req.HTTPPort, req.GRPCPort)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Engine or workspace not found")
 		return
@@ -727,7 +713,6 @@ func (a *API) handleGetEngineConfig(w http.ResponseWriter, r *http.Request) {
 			WorkspaceName: ws.WorkspaceName,
 			HTTPPort:      ws.HTTPPort,
 			GRPCPort:      ws.GRPCPort,
-			MQTTPort:      ws.MQTTPort,
 		})
 	}
 

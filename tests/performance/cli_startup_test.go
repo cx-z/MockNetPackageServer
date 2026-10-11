@@ -120,7 +120,6 @@ func TestCLIBinarySize(t *testing.T) {
 	// - gRPC/protobuf support (~6000 symbols)
 	// - OpenAPI validator
 	// - Protocol compiler for gRPC reflection
-	// - MQTT broker
 	// - JSONPath parser
 	// - Cobra + Charmbracelet TUI (huh, bubbletea, lipgloss) for interactive CLI
 	// This is expected for a feature-rich mock server.

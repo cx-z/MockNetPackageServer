@@ -156,26 +156,6 @@ func TestExtractMockDetails_WebSocket(t *testing.T) {
 	}
 }
 
-func TestExtractMockDetails_GraphQL(t *testing.T) {
-	t.Parallel()
-
-	m := &mock.Mock{
-		Type:    mock.TypeGraphQL,
-		GraphQL: &mock.GraphQLSpec{Path: "/graphql"},
-	}
-
-	path, method, status := extractMockDetails(m)
-	if path != "/graphql" {
-		t.Errorf("path = %q, want /graphql", path)
-	}
-	if method != "GQL" {
-		t.Errorf("method = %q, want GQL", method)
-	}
-	if status != 0 {
-		t.Errorf("status = %d, want 0", status)
-	}
-}
-
 func TestExtractMockDetails_GRPC(t *testing.T) {
 	t.Parallel()
 
@@ -196,46 +176,6 @@ func TestExtractMockDetails_GRPC(t *testing.T) {
 	}
 }
 
-func TestExtractMockDetails_MQTT(t *testing.T) {
-	t.Parallel()
-
-	m := &mock.Mock{
-		Type: mock.TypeMQTT,
-		MQTT: &mock.MQTTSpec{Port: 1883},
-	}
-
-	path, method, status := extractMockDetails(m)
-	if path != ":1883" {
-		t.Errorf("path = %q, want :1883", path)
-	}
-	if method != "MQTT" {
-		t.Errorf("method = %q, want MQTT", method)
-	}
-	if status != 0 {
-		t.Errorf("status = %d, want 0", status)
-	}
-}
-
-func TestExtractMockDetails_SOAP(t *testing.T) {
-	t.Parallel()
-
-	m := &mock.Mock{
-		Type: mock.TypeSOAP,
-		SOAP: &mock.SOAPSpec{Path: "/soap/service"},
-	}
-
-	path, method, status := extractMockDetails(m)
-	if path != "/soap/service" {
-		t.Errorf("path = %q, want /soap/service", path)
-	}
-	if method != "SOAP" {
-		t.Errorf("method = %q, want SOAP", method)
-	}
-	if status != 0 {
-		t.Errorf("status = %d, want 0", status)
-	}
-}
-
 func TestExtractMockDetails_NilSpec(t *testing.T) {
 	t.Parallel()
 
@@ -244,10 +184,7 @@ func TestExtractMockDetails_NilSpec(t *testing.T) {
 		mock *mock.Mock
 	}{
 		{name: "nil websocket spec", mock: &mock.Mock{Type: mock.TypeWebSocket}},
-		{name: "nil graphql spec", mock: &mock.Mock{Type: mock.TypeGraphQL}},
 		{name: "nil grpc spec", mock: &mock.Mock{Type: mock.TypeGRPC}},
-		{name: "nil soap spec", mock: &mock.Mock{Type: mock.TypeSOAP}},
-		{name: "nil mqtt spec", mock: &mock.Mock{Type: mock.TypeMQTT}},
 	}
 
 	for _, tt := range tests {

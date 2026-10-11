@@ -38,7 +38,6 @@ type WorkspaceServer struct {
 	WorkspaceName string
 	HTTPPort      int
 	GRPCPort      int
-	MQTTPort      int
 
 	status     WorkspaceServerStatus
 	statusMsg  string
@@ -139,9 +138,6 @@ func (m *WorkspaceManager) StartWorkspace(ctx context.Context, ws *store.EngineW
 	if ws.GRPCPort != 0 && (ws.GRPCPort < 1 || ws.GRPCPort > 65535) {
 		return fmt.Errorf("invalid gRPC port %d for workspace %s", ws.GRPCPort, ws.WorkspaceID)
 	}
-	if ws.MQTTPort != 0 && (ws.MQTTPort < 1 || ws.MQTTPort > 65535) {
-		return fmt.Errorf("invalid MQTT port %d for workspace %s", ws.MQTTPort, ws.WorkspaceID)
-	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -161,7 +157,6 @@ func (m *WorkspaceManager) StartWorkspace(ctx context.Context, ws *store.EngineW
 		WorkspaceName: ws.WorkspaceName,
 		HTTPPort:      ws.HTTPPort,
 		GRPCPort:      ws.GRPCPort,
-		MQTTPort:      ws.MQTTPort,
 		status:        WorkspaceServerStatusStopped,
 		log:           m.log,
 		manager:       m,
@@ -474,7 +469,6 @@ func (s *WorkspaceServer) StatusInfo() *WorkspaceStatusInfo {
 		WorkspaceName: s.WorkspaceName,
 		HTTPPort:      s.HTTPPort,
 		GRPCPort:      s.GRPCPort,
-		MQTTPort:      s.MQTTPort,
 		Status:        s.status,
 		StatusMessage: s.statusMsg,
 		MockCount:     mockCount,

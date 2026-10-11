@@ -244,18 +244,6 @@ func (s *Server) handleListRequests(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("grpcService"); v != "" {
 		filter.GRPCService = v
 	}
-	if v := r.URL.Query().Get("mqttTopic"); v != "" {
-		filter.MQTTTopic = v
-	}
-	if v := r.URL.Query().Get("mqttClientId"); v != "" {
-		filter.MQTTClientID = v
-	}
-	if v := r.URL.Query().Get("soapOperation"); v != "" {
-		filter.SOAPOperation = v
-	}
-	if v := r.URL.Query().Get("graphqlOpType"); v != "" {
-		filter.GraphQLOpType = v
-	}
 	if v := r.URL.Query().Get("wsConnectionId"); v != "" {
 		filter.WSConnectionID = v
 	}
@@ -339,9 +327,6 @@ func entryToAPI(e *requestlog.Entry) *RequestLogEntry {
 		GRPC:          e.GRPC,
 		WebSocket:     e.WebSocket,
 		SSE:           e.SSE,
-		MQTT:          e.MQTT,
-		SOAP:          e.SOAP,
-		GraphQL:       e.GraphQL,
 	}
 }
 
@@ -1119,52 +1104,6 @@ func mapStatefulLookupError(err error) (int, string) {
 // This ensures Content-Type is always set correctly.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	httputil.WriteJSON(w, status, v)
-}
-
-// MQTT handlers
-
-func (s *Server) handleListMQTTConnections(w http.ResponseWriter, r *http.Request) {
-	connections := s.engine.ListMQTTConnections()
-	stats := s.engine.GetMQTTStats()
-	respStats := MQTTStats{SubscriptionsByClient: make(map[string]int)}
-	if stats != nil {
-		respStats = *stats
-	}
-	writeJSON(w, http.StatusOK, MQTTConnectionListResponse{
-		Connections: connections,
-		Stats:       respStats,
-	})
-}
-
-func (s *Server) handleGetMQTTConnection(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	conn := s.engine.GetMQTTConnection(id)
-	if conn == nil {
-		writeError(w, http.StatusNotFound, "not_found", "MQTT connection not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, conn)
-}
-
-func (s *Server) handleCloseMQTTConnection(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := s.engine.CloseMQTTConnection(id); err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "MQTT connection not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "MQTT connection closed",
-		"id":      id,
-	})
-}
-
-func (s *Server) handleGetMQTTStats(w http.ResponseWriter, r *http.Request) {
-	stats := s.engine.GetMQTTStats()
-	if stats == nil {
-		writeJSON(w, http.StatusOK, MQTTStats{SubscriptionsByClient: make(map[string]int)})
-		return
-	}
-	writeJSON(w, http.StatusOK, stats)
 }
 
 // gRPC stream handlers

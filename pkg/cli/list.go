@@ -44,7 +44,7 @@ var listCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().StringVarP(&listConfigFile, "config", "c", "", "List mocks from config file (no server needed)")
-	listCmd.Flags().StringVarP(&listMockType, "type", "t", "", "Filter by type: http, websocket, graphql, grpc, mqtt, soap")
+	listCmd.Flags().StringVarP(&listMockType, "type", "t", "", "Filter by type: http, websocket, grpc")
 	listCmd.Flags().BoolVarP(&listNoTruncate, "no-truncate", "w", false, "Show full IDs and paths without truncation")
 }
 
@@ -165,7 +165,7 @@ func outputMocksTable(mocks []*mock.Mock, noTruncate bool) {
 
 // extractMockDetails extracts path, method, and status from a mock based on its type.
 func extractMockDetails(m *mock.Mock) (path, method string, status int) {
-	switch m.Type { //nolint:exhaustive // OAuth mocks don't have path/method/status details
+	switch m.Type { //nolint:exhaustive // Some mock types don't have path/method/status details
 	case mock.TypeHTTP, "":
 		if m.HTTP != nil {
 			if m.HTTP.Matcher != nil {
@@ -184,27 +184,12 @@ func extractMockDetails(m *mock.Mock) (path, method string, status int) {
 			path = m.WebSocket.Path
 			method = "WS"
 		}
-	case mock.TypeGraphQL:
-		if m.GraphQL != nil {
-			path = m.GraphQL.Path
-			method = "GQL"
-		}
 	case mock.TypeGRPC:
 		if m.GRPC != nil {
 			if m.GRPC.Port > 0 {
 				path = fmt.Sprintf(":%d", m.GRPC.Port)
 			}
 			method = "gRPC"
-		}
-	case mock.TypeMQTT:
-		if m.MQTT != nil {
-			path = fmt.Sprintf(":%d", m.MQTT.Port)
-			method = "MQTT"
-		}
-	case mock.TypeSOAP:
-		if m.SOAP != nil {
-			path = m.SOAP.Path
-			method = "SOAP"
 		}
 	}
 	return

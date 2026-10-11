@@ -76,7 +76,7 @@ func (a *API) handleGetOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetInsomniaExport handles GET /insomnia.json and GET /insomnia.yaml
-// Returns an Insomnia collection with all mock types (HTTP, gRPC, WebSocket, GraphQL).
+// Returns an Insomnia collection with all mock types (HTTP, gRPC, WebSocket).
 // - /insomnia.yaml returns Insomnia v5 format (recommended for modern Insomnia)
 // - /insomnia.json returns Insomnia v4 format (legacy)
 func (a *API) handleGetInsomniaExport(w http.ResponseWriter, r *http.Request) {
@@ -269,20 +269,14 @@ func buildInsomniaExport(mocks []*config.MockConfiguration, adminPort int) *inso
 	// Create folder groups by type
 	folders := map[mock.Type]string{
 		mock.TypeHTTP:      "fld_http",
-		mock.TypeGraphQL:   "fld_graphql",
 		mock.TypeGRPC:      "fld_grpc",
 		mock.TypeWebSocket: "fld_websocket",
-		mock.TypeMQTT:      "fld_mqtt",
-		mock.TypeSOAP:      "fld_soap",
 	}
 
 	folderNames := map[mock.Type]string{
 		mock.TypeHTTP:      "HTTP Mocks",
-		mock.TypeGraphQL:   "GraphQL Mocks",
 		mock.TypeGRPC:      "gRPC Mocks",
 		mock.TypeWebSocket: "WebSocket Mocks",
-		mock.TypeMQTT:      "MQTT Mocks",
-		mock.TypeSOAP:      "SOAP Mocks",
 	}
 
 	// Track which folders we need
@@ -383,38 +377,6 @@ func mockToInsomniaResource(m *config.MockConfiguration, parentID string, now in
 			res.Headers = append(res.Headers, insomniaHeader{Name: "Accept", Value: "text/event-stream"})
 		}
 
-	case mock.TypeGraphQL:
-		if m.GraphQL == nil {
-			return nil
-		}
-		res.ID = "req_" + m.ID
-		res.Type = "request"
-		res.Method = "POST"
-		res.URL = "{{ _.base_url }}" + m.GraphQL.Path
-
-		// GraphQL body - create a sample query based on schema/resolvers
-		query := "{ __typename }" // Default introspection query
-		if m.GraphQL.Schema != "" {
-			query = "{ __schema { types { name } } }"
-		}
-		body := map[string]string{"query": query}
-		if bodyBytes, err := json.Marshal(body); err == nil {
-			res.Body = &insomniaBody{
-				MimeType: "application/json",
-				Text:     string(bodyBytes),
-			}
-		}
-		res.Headers = []insomniaHeader{{Name: "Content-Type", Value: "application/json"}}
-		res.Parameters = []insomniaParam{}
-		res.Authentication = map[string]any{}
-		res.PathParameters = []any{}
-		res.SettingStoreCookies = boolPtr(true)
-		res.SettingSendCookies = boolPtr(true)
-		res.SettingDisableRenderRequestBody = boolPtr(false)
-		res.SettingEncodeUrl = boolPtr(true)
-		res.SettingRebuildPath = boolPtr(true)
-		res.SettingFollowRedirects = "global"
-
 	case mock.TypeGRPC:
 		if m.GRPC == nil {
 			return nil
@@ -466,38 +428,6 @@ func mockToInsomniaResource(m *config.MockConfiguration, parentID string, now in
 		res.SettingEncodeUrl = boolPtr(true)
 		res.SettingFollowRedirects = "global"
 
-	case mock.TypeSOAP:
-		if m.SOAP == nil {
-			return nil
-		}
-		res.ID = "req_" + m.ID
-		res.Type = "request"
-		res.Method = "POST"
-		res.URL = "{{ _.base_url }}" + m.SOAP.Path
-		res.Body = &insomniaBody{}
-		res.Headers = []insomniaHeader{{Name: "Content-Type", Value: "text/xml; charset=utf-8"}}
-		res.Parameters = []insomniaParam{}
-		res.Authentication = map[string]any{}
-		res.PathParameters = []any{}
-		res.SettingStoreCookies = boolPtr(true)
-		res.SettingSendCookies = boolPtr(true)
-		res.SettingDisableRenderRequestBody = boolPtr(false)
-		res.SettingEncodeUrl = boolPtr(true)
-		res.SettingRebuildPath = boolPtr(true)
-		res.SettingFollowRedirects = "global"
-
-		// Add SOAPAction if we have operations
-		for _, op := range m.SOAP.Operations {
-			if op.SOAPAction != "" {
-				res.Headers = append(res.Headers, insomniaHeader{Name: "SOAPAction", Value: op.SOAPAction})
-				break
-			}
-		}
-
-	case mock.TypeMQTT:
-		// MQTT not directly supported by Insomnia, skip
-		return nil
-
 	default:
 		return nil
 	}
@@ -532,8 +462,6 @@ func buildInsomniaV5Export(mocks []*config.MockConfiguration, statefulResources 
 	httpMocks := make([]*config.MockConfiguration, 0)
 	grpcMocks := make([]*config.MockConfiguration, 0)
 	wsMocks := make([]*config.MockConfiguration, 0)
-	graphqlMocks := make([]*config.MockConfiguration, 0)
-	soapMocks := make([]*config.MockConfiguration, 0)
 
 	for _, m := range mocks {
 		switch m.Type { //nolint:exhaustive // only exportable mock types need handling
@@ -543,10 +471,6 @@ func buildInsomniaV5Export(mocks []*config.MockConfiguration, statefulResources 
 			grpcMocks = append(grpcMocks, m)
 		case mock.TypeWebSocket:
 			wsMocks = append(wsMocks, m)
-		case mock.TypeGraphQL:
-			graphqlMocks = append(graphqlMocks, m)
-		case mock.TypeSOAP:
-			soapMocks = append(soapMocks, m)
 		}
 	}
 
@@ -606,36 +530,6 @@ func buildInsomniaV5Export(mocks []*config.MockConfiguration, statefulResources 
 		sb.WriteString("    children:\n")
 		for _, m := range wsMocks {
 			writeWebSocketRequestV5(sb, m, now)
-		}
-	}
-
-	// GraphQL folder
-	if len(graphqlMocks) > 0 {
-		sb.WriteString("  - name: GraphQL Mocks\n")
-		sb.WriteString("    meta:\n")
-		sb.WriteString("      id: fld_graphql\n")
-		fmt.Fprintf(sb, "      created: %d\n", now)
-		fmt.Fprintf(sb, "      modified: %d\n", now)
-		fmt.Fprintf(sb, "      sortKey: %d\n", -now-3)
-		sb.WriteString("      description: \"\"\n")
-		sb.WriteString("    children:\n")
-		for _, m := range graphqlMocks {
-			writeGraphQLRequestV5(sb, m, now)
-		}
-	}
-
-	// SOAP folder
-	if len(soapMocks) > 0 {
-		sb.WriteString("  - name: SOAP Mocks\n")
-		sb.WriteString("    meta:\n")
-		sb.WriteString("      id: fld_soap\n")
-		fmt.Fprintf(sb, "      created: %d\n", now)
-		fmt.Fprintf(sb, "      modified: %d\n", now)
-		fmt.Fprintf(sb, "      sortKey: %d\n", -now-4)
-		sb.WriteString("      description: \"\"\n")
-		sb.WriteString("    children:\n")
-		for _, m := range soapMocks {
-			writeSOAPRequestV5(sb, m, now)
 		}
 	}
 
@@ -865,105 +759,6 @@ func buildWSDescription(m *config.MockConfiguration) string {
 	}
 
 	return strings.Join(parts, " | ")
-}
-
-func writeGraphQLRequestV5(sb *strings.Builder, m *config.MockConfiguration, now int64) {
-	if m.GraphQL == nil {
-		return
-	}
-	name := m.Name
-	if name == "" {
-		name = m.ID
-	}
-	path := m.GraphQL.Path
-	if path == "" {
-		path = "/graphql"
-	}
-
-	// Build a useful sample query based on the schema/resolvers
-	sampleQuery := "{ __typename }"
-	description := "GraphQL endpoint"
-
-	// Try to extract a meaningful query from resolvers (keys are like "Query.user", "Mutation.createUser")
-	if m.GraphQL.Resolvers != nil {
-		for fieldPath := range m.GraphQL.Resolvers {
-			if strings.HasPrefix(fieldPath, "Query.") {
-				fieldName := strings.TrimPrefix(fieldPath, "Query.")
-				sampleQuery = fmt.Sprintf("{ %s }", fieldName)
-				description = "Try: " + fieldName
-				break
-			}
-		}
-	}
-
-	fmt.Fprintf(sb, "      - url: \"{{ _.base_url }}%s\"\n", path)
-	fmt.Fprintf(sb, "        name: %s\n", name)
-	sb.WriteString("        meta:\n")
-	fmt.Fprintf(sb, "          id: req_%s\n", m.ID)
-	fmt.Fprintf(sb, "          created: %d\n", now)
-	fmt.Fprintf(sb, "          modified: %d\n", now)
-	sb.WriteString("          isPrivate: false\n")
-	fmt.Fprintf(sb, "          description: \"%s\"\n", description)
-	fmt.Fprintf(sb, "          sortKey: %d\n", -now)
-	sb.WriteString("        method: POST\n")
-	sb.WriteString("        body:\n")
-	sb.WriteString("          mimeType: application/json\n")
-	fmt.Fprintf(sb, "          text: '%s'\n", yamlEscapeString(fmt.Sprintf(`{"query": "%s"}`, sampleQuery)))
-	sb.WriteString("        headers:\n")
-	sb.WriteString("          - name: Content-Type\n")
-	sb.WriteString("            value: application/json\n")
-	writeInsomniaSettings(sb, "        ")
-}
-
-func writeSOAPRequestV5(sb *strings.Builder, m *config.MockConfiguration, now int64) {
-	if m.SOAP == nil {
-		return
-	}
-	name := m.Name
-	if name == "" {
-		name = m.ID
-	}
-	path := m.SOAP.Path
-	if path == "" {
-		path = "/soap"
-	}
-
-	// Get first operation name for sample body
-	var firstOp string
-	var soapAction string
-	for opName, op := range m.SOAP.Operations {
-		firstOp = opName
-		soapAction = op.SOAPAction
-		break
-	}
-	if firstOp == "" {
-		firstOp = "Operation"
-	}
-
-	// Build sample SOAP request body using single quotes (simpler YAML escaping)
-	soapBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><%s xmlns="http://example.com/"></%s></soap:Body></soap:Envelope>`, firstOp, firstOp)
-
-	fmt.Fprintf(sb, "      - url: \"{{ _.base_url }}%s\"\n", path)
-	fmt.Fprintf(sb, "        name: %s\n", name)
-	sb.WriteString("        meta:\n")
-	fmt.Fprintf(sb, "          id: req_%s\n", m.ID)
-	fmt.Fprintf(sb, "          created: %d\n", now)
-	fmt.Fprintf(sb, "          modified: %d\n", now)
-	sb.WriteString("          isPrivate: false\n")
-	fmt.Fprintf(sb, "          description: \"SOAP operation: %s\"\n", firstOp)
-	fmt.Fprintf(sb, "          sortKey: %d\n", -now)
-	sb.WriteString("        method: POST\n")
-	sb.WriteString("        body:\n")
-	sb.WriteString("          mimeType: application/xml\n")
-	fmt.Fprintf(sb, "          text: '%s'\n", yamlEscapeString(soapBody))
-	sb.WriteString("        headers:\n")
-	sb.WriteString("          - name: Content-Type\n")
-	sb.WriteString("            value: text/xml; charset=utf-8\n")
-	if soapAction != "" {
-		sb.WriteString("          - name: SOAPAction\n")
-		fmt.Fprintf(sb, "            value: \"%s\"\n", soapAction)
-	}
-	writeInsomniaSettings(sb, "        ")
 }
 
 // crudOperation defines a CRUD operation for Insomnia export

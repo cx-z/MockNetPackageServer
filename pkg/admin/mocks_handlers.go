@@ -24,7 +24,7 @@ import (
 // ============================================================================
 // Unified Mocks API Handlers
 // These handlers provide a single API for all mock types (HTTP, WebSocket,
-// GraphQL, gRPC, SOAP, MQTT) using the unified Mock type.
+// gRPC) using the unified Mock type.
 // ============================================================================
 
 // MocksListResponse is the response for GET /mocks (unified API uses Total, legacy uses Count)
@@ -147,14 +147,10 @@ func applyMockFilter(mocks []*mock.Mock, filter *MockFilter) []*mock.Mock {
 	return mocks
 }
 
-// getMockPort extracts the port from a mock if it uses a dedicated port (MQTT, gRPC).
+// getMockPort extracts the port from a mock if it uses a dedicated port (gRPC).
 // Returns 0 if the mock type doesn't use a dedicated port.
 func getMockPort(m *mock.Mock) int {
-	switch m.Type { //nolint:exhaustive // only MQTT and gRPC use dedicated ports
-	case mock.TypeMQTT:
-		if m.MQTT != nil {
-			return m.MQTT.Port
-		}
+	switch m.Type { //nolint:exhaustive // only gRPC uses a dedicated port
 	case mock.TypeGRPC:
 		if m.GRPC != nil {
 			return m.GRPC.Port
@@ -274,7 +270,6 @@ func (a *API) checkPortAvailability(ctx context.Context, m *mock.Mock, excludeID
 		if existingPort == port {
 			// Same port found - determine if it's a conflict or merge opportunity
 
-			// Cross-protocol conflict: gRPC and MQTT can't share ports
 			if existing.Type != m.Type {
 				return &PortCheckResult{
 					Conflict: &PortConflict{
@@ -300,7 +295,6 @@ func (a *API) checkPortAvailability(ctx context.Context, m *mock.Mock, excludeID
 
 			// Same port + same protocol + same workspace = merge opportunity
 			// gRPC: multiple services on one server
-			// MQTT: multiple topics on one broker
 			return &PortCheckResult{
 				MergeTarget: existing,
 			}
@@ -315,9 +309,7 @@ type MergeResult struct {
 	TargetMockID    string   `json:"targetMockId"`
 	Action          string   `json:"action"`                    // "merged" or "created"
 	AddedServices   []string `json:"addedServices,omitempty"`   // For gRPC
-	AddedTopics     []string `json:"addedTopics,omitempty"`     // For MQTT
 	TotalServices   []string `json:"totalServices,omitempty"`   // For gRPC
-	TotalTopics     []string `json:"totalTopics,omitempty"`     // For MQTT
 	ServiceConflict string   `json:"serviceConflict,omitempty"` // If service/method already exists
 }
 
@@ -506,40 +498,6 @@ func grpcMatchEmpty(m *mock.MethodMatch) bool {
 	return m == nil || (len(m.Metadata) == 0 && len(m.Request) == 0)
 }
 
-// mergeMQTTMock merges a new MQTT mock's topics into an existing mock.
-// Returns the merge result or an error if there's a topic conflict.
-func mergeMQTTMock(target *mock.Mock, source *mock.Mock) (*MergeResult, error) {
-	if target.MQTT == nil || source.MQTT == nil {
-		return nil, errors.New("both mocks must have MQTT configuration")
-	}
-
-	result := &MergeResult{
-		TargetMockID: target.ID,
-		Action:       "merged",
-	}
-
-	// Check for topic conflicts and merge
-	existingTopics := make(map[string]bool)
-	for _, topic := range target.MQTT.Topics {
-		existingTopics[topic.Topic] = true
-	}
-
-	for _, topic := range source.MQTT.Topics {
-		if existingTopics[topic.Topic] {
-			return nil, fmt.Errorf("topic '%s' already exists on port %d", topic.Topic, target.MQTT.Port)
-		}
-		target.MQTT.Topics = append(target.MQTT.Topics, topic)
-		result.AddedTopics = append(result.AddedTopics, topic.Topic)
-	}
-
-	// Collect total topics
-	for _, topic := range target.MQTT.Topics {
-		result.TotalTopics = append(result.TotalTopics, topic.Topic)
-	}
-
-	return result, nil
-}
-
 // WorkspacePortConflict represents a port conflict when assigning a workspace to an engine.
 type WorkspacePortConflict struct {
 	Port              int    `json:"port"`
@@ -618,7 +576,7 @@ func (a *API) checkWorkspaceEnginePortConflicts(ctx context.Context, engineID, w
 }
 
 // applyMockPatch applies common (metadata) patch fields to a mock.
-// Protocol-specific fields (http, websocket, graphql, grpc, soap, mqtt, oauth)
+// Protocol-specific fields (http, websocket, grpc, oauth)
 // are intentionally NOT patched here — use PUT for full mock replacement.
 // This is by design: protocol changes may involve port conflicts, schema
 // validation, and listener restarts that require the full update pipeline.
@@ -654,37 +612,12 @@ func applyMockPatch(m *mock.Mock, patch map[string]interface{}) {
 			m.WebSocket = &s
 		}
 	})
-	mergeProtocolPatch(patch, "graphql", m.GraphQL, func(data []byte) {
-		var s mock.GraphQLSpec
-		if json.Unmarshal(data, &s) == nil {
-			m.GraphQL = &s
-		}
-	})
 	mergeProtocolPatch(patch, "grpc", m.GRPC, func(data []byte) {
 		var s mock.GRPCSpec
 		if json.Unmarshal(data, &s) == nil {
 			m.GRPC = &s
 		}
 	})
-	mergeProtocolPatch(patch, "soap", m.SOAP, func(data []byte) {
-		var s mock.SOAPSpec
-		if json.Unmarshal(data, &s) == nil {
-			m.SOAP = &s
-		}
-	})
-	mergeProtocolPatch(patch, "mqtt", m.MQTT, func(data []byte) {
-		var s mock.MQTTSpec
-		if json.Unmarshal(data, &s) == nil {
-			m.MQTT = &s
-		}
-	})
-	mergeProtocolPatch(patch, "oauth", m.OAuth, func(data []byte) {
-		var s mock.OAuthSpec
-		if json.Unmarshal(data, &s) == nil {
-			m.OAuth = &s
-		}
-	})
-
 	m.UpdatedAt = time.Now()
 }
 
@@ -1010,8 +943,8 @@ func (a *API) handleCreateUnifiedMock(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, response)
 }
 
-// handleMergeMock handles merging a new mock's services/topics into an existing mock.
-// This is called when creating a gRPC/MQTT mock on a port that already has a mock.
+// handleMergeMock handles merging a new mock's services into an existing mock.
+// This is called when creating a gRPC mock on a port that already has a mock.
 func (a *API) handleMergeMock(w http.ResponseWriter, r *http.Request, newMock *mock.Mock, target *mock.Mock, mockStore store.MockStore) {
 	var mergeResult *MergeResult
 	var err error
@@ -1021,12 +954,6 @@ func (a *API) handleMergeMock(w http.ResponseWriter, r *http.Request, newMock *m
 		mergeResult, err = mergeGRPCMock(target, newMock)
 		if err != nil {
 			writeError(w, http.StatusConflict, "service_conflict", err.Error())
-			return
-		}
-	case mock.TypeMQTT:
-		mergeResult, err = mergeMQTTMock(target, newMock)
-		if err != nil {
-			writeError(w, http.StatusConflict, "topic_conflict", err.Error())
 			return
 		}
 	default:
@@ -1057,7 +984,7 @@ func (a *API) handleMergeMock(w http.ResponseWriter, r *http.Request, newMock *m
 	if newMock.Type == mock.TypeGRPC {
 		message = fmt.Sprintf("Merged into existing gRPC server on port %d", port)
 	} else {
-		message = fmt.Sprintf("Merged into existing MQTT broker on port %d", port)
+		message = fmt.Sprintf("Merged into existing gRPC server on port %d", port)
 	}
 
 	response := map[string]interface{}{
@@ -1071,10 +998,6 @@ func (a *API) handleMergeMock(w http.ResponseWriter, r *http.Request, newMock *m
 	if len(mergeResult.AddedServices) > 0 {
 		response["addedServices"] = mergeResult.AddedServices
 		response["totalServices"] = mergeResult.TotalServices
-	}
-	if len(mergeResult.AddedTopics) > 0 {
-		response["addedTopics"] = mergeResult.AddedTopics
-		response["totalTopics"] = mergeResult.TotalTopics
 	}
 
 	writeJSON(w, http.StatusOK, response)
@@ -1528,7 +1451,6 @@ type BulkPortConflict struct {
 // Returns a list of conflicts if any are found.
 //
 // Simple rule: one port = one mock. No port sharing allowed, even for same protocol.
-// If you want multiple topics on one MQTT broker, define them all in one mock config.
 func (a *API) checkBulkPortConflicts(ctx context.Context, mocks []*mock.Mock) []BulkPortConflict {
 	var conflicts []BulkPortConflict
 

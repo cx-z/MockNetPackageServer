@@ -1867,11 +1867,6 @@ func TestDetectFormatFromYAML(t *testing.T) {
 			expected: FormatMockd,
 		},
 		{
-			name:     "GraphQL single mock",
-			yaml:     "type: graphql\ngraphql:\n  path: /graphql",
-			expected: FormatMockd,
-		},
-		{
 			name:     "Unknown YAML content",
 			yaml:     "name: something\ndata:\n  - item1\n  - item2",
 			expected: FormatUnknown,

@@ -13,37 +13,12 @@ import (
 type Context struct {
 	Request RequestContext
 	MTLS    MTLSContext
-	MQTT    MQTTContext
 
 	// Rand is an optional seeded RNG for deterministic template output.
 	// When nil, template functions use the global math/rand/v2 source.
 	// When set, all random/faker/uuid template functions use this RNG,
 	// producing repeatable output for the same seed.
 	Rand *mathrand.Rand
-}
-
-// MQTTContext holds MQTT-specific template data.
-type MQTTContext struct {
-	Topic        string
-	ClientID     string
-	Payload      map[string]any
-	WildcardVals []string
-	DeviceID     string
-	MessageNum   int64
-}
-
-// NewMQTTContext creates a template context pre-populated with MQTT data.
-// This allows MQTT payloads to use shared template variables like {{now}},
-// {{uuid}}, {{timestamp}}, etc.
-func NewMQTTContext(topic, clientID string, payload map[string]any, wildcardVals []string) *Context {
-	return &Context{
-		MQTT: MQTTContext{
-			Topic:        topic,
-			ClientID:     clientID,
-			Payload:      payload,
-			WildcardVals: wildcardVals,
-		},
-	}
 }
 
 // MTLSContext contains mTLS client certificate data available to templates.
@@ -143,7 +118,7 @@ func (c *Context) SetPathPatternCaptures(captures map[string]string) {
 }
 
 // NewContextFromMap creates a template context from parsed request data.
-// This is used by non-HTTP protocols (gRPC, GraphQL, SOAP) that don't have
+// This is used by non-HTTP protocols (gRPC) that don't have
 // a direct http.Request but have equivalent data.
 func NewContextFromMap(body interface{}, headers map[string][]string) *Context {
 	ctx := &Context{

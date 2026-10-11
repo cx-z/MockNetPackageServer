@@ -16,15 +16,12 @@ import (
 //   - HTTP: GET, POST, PUT, DELETE, PATCH, etc. (uppercase HTTP methods)
 //   - graphql: GraphQL operations
 //   - grpc: gRPC calls
-//   - soap: SOAP operations
-//   - mqtt: MQTT messages
 //   - sse: Server-Sent Events
 //   - websocket: WebSocket messages
 //
 // ## status label values
-//   - HTTP/GraphQL/SOAP: numeric codes (200, 400, 500, etc.)
+//   - HTTP: numeric codes (200, 400, 500, etc.)
 //   - gRPC: lowercase gRPC codes (ok, cancelled, unknown, invalid_argument, etc.)
-//   - MQTT: ok
 //   - SSE: event
 //   - WebSocket: inbound, outbound
 //
@@ -42,7 +39,7 @@ var (
 	RequestDuration *Histogram
 
 	// MocksTotal is a gauge of the total number of mocks configured.
-	// Labels: type (http, websocket, graphql, grpc, soap, mqtt)
+	// Labels: type (http, websocket, grpc)
 	MocksTotal *Gauge
 
 	// MocksEnabled is a gauge of the number of enabled mocks.
@@ -63,7 +60,7 @@ var (
 	AdminRequestDuration *Histogram
 
 	// RecordingsTotal is a gauge of the total number of recordings.
-	// Labels: type (http, websocket, sse, grpc, mqtt)
+	// Labels: type (http, websocket, sse, grpc)
 	RecordingsTotal *Gauge
 
 	// ProxyRequestsTotal counts the total number of proxied requests.

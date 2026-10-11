@@ -11,7 +11,6 @@ const (
 	ProtocolSSE       Protocol = "sse"
 	ProtocolWebSocket Protocol = "websocket"
 	ProtocolGraphQL   Protocol = "graphql"
-	ProtocolSOAP      Protocol = "soap"
 
 	// Future protocols
 	ProtocolSocketIO Protocol = "socketio"

@@ -53,7 +53,7 @@ var statefulCmd = &cobra.Command{
 
 Stateful resources provide in-memory CRUD data stores that can be shared
 across protocols. A resource created here is accessible via HTTP REST
-endpoints, SOAP operations, GraphQL resolvers, and any protocol that
+endpoints, gRPC operations, and any protocol that
 supports the stateful bridge.
 
 Examples:
@@ -69,7 +69,7 @@ var statefulAddCmd = &cobra.Command{
 	Long: `Create a new stateful CRUD resource.
 
 By default, a resource is created as "bridge-only" — accessible only via
-protocol integrations (SOAP, GraphQL, gRPC, etc.) but without HTTP REST
+protocol integrations (gRPC, etc.) but without HTTP REST
 endpoints.
 
 Use --path to also expose HTTP REST endpoints:
@@ -150,7 +150,7 @@ var customCmd = &cobra.Command{
 	Long: `Manage custom multi-step operations that run against stateful resources.
 
 Custom operations define a pipeline of steps (read, create, update, delete, set)
-with expression-based logic. They can be invoked via CLI, REST API, SOAP, GraphQL,
+with expression-based logic. They can be invoked via CLI, REST API, gRPC,
 or any protocol that supports the stateful bridge.
 
 Examples:
@@ -378,7 +378,7 @@ func runStatefulAdd(_ *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Created stateful resource: %s\n", name)
-	fmt.Printf("  Access via: extend bindings or protocol integrations (SOAP, GraphQL, gRPC)\n")
+	fmt.Printf("  Access via: extend bindings or protocol integrations (gRPC)\n")
 
 	if statefulAddIDField != "" {
 		fmt.Printf("  ID field: %s\n", statefulAddIDField)

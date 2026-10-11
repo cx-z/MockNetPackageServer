@@ -11,7 +11,7 @@ import (
 var Topics embed.FS
 
 // AvailableTopics lists all available help topics.
-var AvailableTopics = []string{"templating", "matching", "config", "formats", "websocket", "graphql", "grpc", "mqtt", "soap", "sse", "workspace"}
+var AvailableTopics = []string{"templating", "matching", "config", "formats", "websocket", "grpc", "sse", "workspace"}
 
 // TopicDescriptions provides short descriptions for each topic.
 var TopicDescriptions = map[string]string{
@@ -20,10 +20,7 @@ var TopicDescriptions = map[string]string{
 	"config":     "Configuration file format",
 	"formats":    "Import/export formats",
 	"websocket":  "WebSocket mock configuration",
-	"graphql":    "GraphQL mock configuration",
 	"grpc":       "gRPC mock configuration",
-	"mqtt":       "MQTT broker configuration",
-	"soap":       "SOAP mock configuration",
 	"sse":        "Server-Sent Events configuration",
 	"workspace":  "Workspace isolation and scoping",
 }

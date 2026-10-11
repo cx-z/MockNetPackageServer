@@ -389,7 +389,7 @@ func TestEngine_AddWorkspace(t *testing.T) {
 	}
 
 	// Add new workspace with explicit ports
-	ws := engine.AddWorkspace("ws-1", "Workspace 1", 9001, 9002, 9003)
+	ws := engine.AddWorkspace("ws-1", "Workspace 1", 9001, 9002)
 	if ws.WorkspaceID != "ws-1" {
 		t.Errorf("WorkspaceID = %q, want %q", ws.WorkspaceID, "ws-1")
 	}
@@ -401,7 +401,7 @@ func TestEngine_AddWorkspace(t *testing.T) {
 	}
 
 	// Add workspace with auto-assigned port
-	ws2 := engine.AddWorkspace("ws-2", "Workspace 2", 0, 0, 0)
+	ws2 := engine.AddWorkspace("ws-2", "Workspace 2", 0, 0)
 	if ws2.HTTPPort == 0 {
 		t.Error("HTTPPort should be auto-assigned")
 	}
@@ -411,7 +411,7 @@ func TestEngine_AddWorkspace(t *testing.T) {
 	}
 
 	// Update existing workspace
-	ws3 := engine.AddWorkspace("ws-1", "Workspace 1 Updated", 9010, 0, 0)
+	ws3 := engine.AddWorkspace("ws-1", "Workspace 1 Updated", 9010, 0)
 	if ws3.HTTPPort != 9010 {
 		t.Errorf("HTTPPort = %d, want 9010 (updated)", ws3.HTTPPort)
 	}
@@ -501,7 +501,7 @@ func TestEngine_GetUsedPorts(t *testing.T) {
 	engine := &Engine{
 		ID: "engine-1",
 		Workspaces: []EngineWorkspace{
-			{HTTPPort: 9000, GRPCPort: 9100, MQTTPort: 9200},
+			{HTTPPort: 9000, GRPCPort: 9100},
 			{HTTPPort: 9001},
 		},
 	}
@@ -512,9 +512,6 @@ func TestEngine_GetUsedPorts(t *testing.T) {
 	}
 	if !used[9100] {
 		t.Error("9100 should be marked as used")
-	}
-	if !used[9200] {
-		t.Error("9200 should be marked as used")
 	}
 	if !used[9001] {
 		t.Error("9001 should be marked as used")
@@ -532,7 +529,7 @@ func TestEngine_UpdateWorkspace(t *testing.T) {
 		},
 	}
 
-	ws := engine.UpdateWorkspace("ws-1", 9001, 9002, 9003)
+	ws := engine.UpdateWorkspace("ws-1", 9001, 9002)
 	if ws == nil {
 		t.Fatal("UpdateWorkspace returned nil")
 		return
@@ -545,7 +542,7 @@ func TestEngine_UpdateWorkspace(t *testing.T) {
 	}
 
 	// Non-existent
-	ws = engine.UpdateWorkspace("nonexistent", 0, 0, 0)
+	ws = engine.UpdateWorkspace("nonexistent", 0, 0)
 	if ws != nil {
 		t.Error("UpdateWorkspace should return nil for non-existent")
 	}
@@ -607,7 +604,7 @@ func TestEngineRegistry_WorkspaceMethods(t *testing.T) {
 	reg.Register(&Engine{ID: "engine-1", Name: "Test"})
 
 	// AddWorkspaceToEngine
-	ws, err := reg.AddWorkspaceToEngine("engine-1", "ws-1", "Workspace 1", 9001, 9002, 0)
+	ws, err := reg.AddWorkspaceToEngine("engine-1", "ws-1", "Workspace 1", 9001, 9002)
 	if err != nil {
 		t.Fatalf("AddWorkspaceToEngine failed: %v", err)
 	}
@@ -625,7 +622,7 @@ func TestEngineRegistry_WorkspaceMethods(t *testing.T) {
 	}
 
 	// UpdateWorkspaceInEngine
-	ws, err = reg.UpdateWorkspaceInEngine("engine-1", "ws-1", 9010, 0, 0)
+	ws, err = reg.UpdateWorkspaceInEngine("engine-1", "ws-1", 9010, 0)
 	if err != nil {
 		t.Fatalf("UpdateWorkspaceInEngine failed: %v", err)
 	}
@@ -668,7 +665,7 @@ func TestEngineRegistry_WorkspaceMethods_Errors(t *testing.T) {
 	reg.Register(&Engine{ID: "engine-1", Name: "Test"})
 
 	// Non-existent engine
-	_, err := reg.AddWorkspaceToEngine("nonexistent", "ws-1", "", 0, 0, 0)
+	_, err := reg.AddWorkspaceToEngine("nonexistent", "ws-1", "", 0, 0)
 	if err != ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -678,7 +675,7 @@ func TestEngineRegistry_WorkspaceMethods_Errors(t *testing.T) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 
-	_, err = reg.UpdateWorkspaceInEngine("nonexistent", "ws-1", 0, 0, 0)
+	_, err = reg.UpdateWorkspaceInEngine("nonexistent", "ws-1", 0, 0)
 	if err != ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -704,7 +701,7 @@ func TestEngineRegistry_WorkspaceMethods_Errors(t *testing.T) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 
-	_, err = reg.UpdateWorkspaceInEngine("engine-1", "nonexistent", 0, 0, 0)
+	_, err = reg.UpdateWorkspaceInEngine("engine-1", "nonexistent", 0, 0)
 	if err != ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}

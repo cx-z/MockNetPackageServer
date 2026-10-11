@@ -20,8 +20,6 @@ import (
 	"github.com/getmockd/mockd/pkg/engine"
 	"github.com/getmockd/mockd/pkg/logging"
 	"github.com/getmockd/mockd/pkg/mock"
-	"github.com/getmockd/mockd/pkg/store"
-	"github.com/getmockd/mockd/pkg/tunnel"
 	"github.com/spf13/cobra"
 )
 
@@ -37,7 +35,6 @@ type upContext struct {
 	// Running services (process-level)
 	admins  map[string]*admin.API
 	engines map[string]*engine.Server
-	tunnels map[string]*tunnel.TunnelManager // engine name -> tunnel manager
 
 	// HTTP clients for admin APIs (used for all control-plane operations)
 	adminClients map[string]AdminClient // admin name -> HTTP client
@@ -115,7 +112,6 @@ This command:
 			cancel:       cancel,
 			admins:       make(map[string]*admin.API),
 			engines:      make(map[string]*engine.Server),
-			tunnels:      make(map[string]*tunnel.TunnelManager),
 			adminClients: make(map[string]AdminClient),
 			engineIDs:    make(map[string]string),
 			engineTokens: make(map[string]string),
@@ -243,16 +239,6 @@ func printUpSummary(cfg *config.ProjectConfig) {
 			fmt.Printf(", %d file refs", fileRefs)
 		}
 		fmt.Println()
-	}
-
-	tunnelCount := 0
-	for _, e := range cfg.Engines {
-		if e.Tunnel != nil && e.Tunnel.Enabled {
-			tunnelCount++
-		}
-	}
-	if tunnelCount > 0 {
-		fmt.Printf("  Tunnels: %d\n", tunnelCount)
 	}
 
 	fmt.Println()
@@ -398,16 +384,6 @@ func (uctx *upContext) startAll() error {
 	// Create workspaces via HTTP and assign to engines
 	if err := uctx.createWorkspaces(); err != nil {
 		return fmt.Errorf("creating workspaces: %w", err)
-	}
-
-	// Start tunnels for engines that have tunnel config
-	for _, engineCfg := range uctx.cfg.Engines {
-		if engineCfg.Tunnel != nil && engineCfg.Tunnel.Enabled {
-			if err := uctx.startTunnel(engineCfg); err != nil {
-				// Tunnel failure is non-fatal -- log and continue
-				output.Warn("tunnel for engine '%s' failed: %v", engineCfg.Name, err)
-			}
-		}
 	}
 
 	return nil
@@ -728,16 +704,6 @@ func (uctx *upContext) runEngineHeartbeatLoop(client engineHeartbeatClient, engi
 func (uctx *upContext) stopAll() {
 	uctx.heartbeatWG.Wait()
 
-	// Stop tunnels first
-	for name, tm := range uctx.tunnels {
-		fmt.Printf("Stopping tunnel '%s'... ", name)
-		if err := tm.Close(); err != nil {
-			fmt.Printf("✗ (%v)\n", err)
-		} else {
-			fmt.Println("✓")
-		}
-	}
-
 	// Stop engines
 	for name, srv := range uctx.engines {
 		fmt.Printf("Stopping engine '%s'... ", name)
@@ -759,98 +725,6 @@ func (uctx *upContext) stopAll() {
 	}
 }
 
-// startTunnel starts a tunnel for an engine based on its YAML config.
-func (uctx *upContext) startTunnel(engineCfg config.EngineConfig) error {
-	srv, ok := uctx.engines[engineCfg.Name]
-	if !ok {
-		return fmt.Errorf("engine '%s' not started", engineCfg.Name)
-	}
-
-	tc := engineCfg.Tunnel
-
-	// Resolve relay address
-	relayAddr := "relay.mockd.io:443"
-	if tc.Relay != "" {
-		relayAddr = tc.Relay
-		if !strings.Contains(relayAddr, ":") {
-			relayAddr += ":443"
-		}
-	}
-
-	// Build store tunnel config for the admin
-	tunnelCfg := &store.TunnelConfig{
-		Enabled:      true,
-		Subdomain:    tc.Subdomain,
-		CustomDomain: tc.Domain,
-		Expose: store.TunnelExposure{
-			Mode: "all",
-		},
-	}
-
-	// Apply exposure config from YAML
-	if tc.Expose != nil {
-		if tc.Expose.Mode != "" {
-			tunnelCfg.Expose.Mode = tc.Expose.Mode
-		}
-		tunnelCfg.Expose.Workspaces = tc.Expose.Workspaces
-		tunnelCfg.Expose.Folders = tc.Expose.Folders
-		tunnelCfg.Expose.Mocks = tc.Expose.Mocks
-		tunnelCfg.Expose.Types = tc.Expose.Types
-		if tc.Expose.Exclude != nil {
-			tunnelCfg.Expose.Exclude = &store.TunnelExclude{
-				Workspaces: tc.Expose.Exclude.Workspaces,
-				Folders:    tc.Expose.Exclude.Folders,
-				Mocks:      tc.Expose.Exclude.Mocks,
-			}
-		}
-	}
-
-	// Apply auth config from YAML
-	if tc.Auth != nil {
-		tunnelCfg.Auth = &store.TunnelAuth{
-			Type:       tc.Auth.Type,
-			Token:      tc.Auth.Token,
-			Username:   tc.Auth.Username,
-			Password:   tc.Auth.Password,
-			AllowedIPs: tc.Auth.AllowedIPs,
-		}
-	}
-
-	// Store tunnel config on the admin (for local engine)
-	if adminAPI, ok := uctx.admins[engineCfg.Admin]; ok {
-		// The admin stores tunnel config so status queries work
-		_ = adminAPI // Config stored via handleEnableTunnel; for up flow we set it directly below
-	}
-
-	fmt.Printf("Starting tunnel for engine '%s' (relay: %s)... ", engineCfg.Name, relayAddr)
-
-	// Create tunnel manager
-	tm := tunnel.NewTunnelManager(&tunnel.TunnelManagerConfig{
-		Handler:   srv.Handler(),
-		RelayAddr: relayAddr,
-		Insecure:  tc.Insecure,
-		Logger:    uctx.log.With("component", "tunnel", "engine", engineCfg.Name),
-		OnStatusChange: func(status, publicURL, sessionID, transport string) {
-			if status == "connected" {
-				uctx.log.Info("tunnel connected",
-					"engine", engineCfg.Name,
-					"publicURL", publicURL,
-				)
-			}
-		},
-	})
-
-	// Enable the tunnel
-	if err := tm.Enable(tunnelCfg); err != nil {
-		fmt.Println("✗")
-		return err
-	}
-
-	uctx.tunnels[engineCfg.Name] = tm
-	fmt.Println("✓")
-	return nil
-}
-
 func (uctx *upContext) printRunningStatus() {
 	fmt.Println("Services running:")
 
@@ -870,16 +744,6 @@ func (uctx *upContext) printRunningStatus() {
 			port = engineCfg.GRPCPort
 		}
 		fmt.Printf("  engine/%s   :%d  ready\n", engineCfg.Name, port)
-	}
-
-	// Show tunnel status
-	for name, tm := range uctx.tunnels {
-		connected, publicURL, _, _ := tm.Status()
-		if connected {
-			fmt.Printf("  tunnel/%s   %s  connected\n", name, publicURL)
-		} else {
-			fmt.Printf("  tunnel/%s   connecting...\n", name)
-		}
 	}
 
 	fmt.Println()

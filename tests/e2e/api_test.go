@@ -197,7 +197,7 @@ func TestAPIIntegration(t *testing.T) {
 	})
 
 	t.Run("Metadata & Output Structures", func(t *testing.T) {
-		endpoints := []string{"/formats", "/templates", "/openapi.json", "/openapi.yaml", "/insomnia.json", "/insomnia.yaml", "/grpc", "/mqtt", "/soap"}
+		endpoints := []string{"/formats", "/templates", "/openapi.json", "/openapi.yaml", "/insomnia.json", "/insomnia.yaml", "/grpc"}
 		for _, ep := range endpoints {
 			resp := apiReq("GET", ep, nil)
 			resp.Body.Close()

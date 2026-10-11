@@ -4,7 +4,7 @@ import "time"
 
 // ConnectionManager handlers maintain persistent connections.
 // Implement this interface for protocols with long-lived connections
-// like WebSocket, MQTT, gRPC streams, etc.
+// like WebSocket, gRPC streams, etc.
 //
 // Example implementation:
 //
@@ -66,7 +66,7 @@ type ConnectionInfo struct {
 	BytesReceived int64 `json:"bytesReceived"`
 
 	// Metadata holds protocol-specific connection information.
-	// Examples: MQTT client ID, WebSocket subprotocol, etc.
+	// Examples: WebSocket subprotocol, etc.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 

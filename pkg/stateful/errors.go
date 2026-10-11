@@ -152,7 +152,6 @@ func (e *CapacityError) Hint() string {
 // Protocol adapters map these to protocol-specific error representations:
 //
 //	HTTP: ErrorCode → HTTP status code
-//	SOAP: ErrorCode → SOAP fault code (Client/Sender or Server/Receiver)
 //	gRPC: ErrorCode → gRPC status code (NOT_FOUND, ALREADY_EXISTS, etc.)
 //	GraphQL: ErrorCode → GraphQL error extensions code
 type ErrorCode int
@@ -193,7 +192,7 @@ func (c ErrorCode) String() string {
 }
 
 // ErrorCodeError is an interface for errors that provide a protocol-agnostic error code.
-// This is the preferred interface for protocol adapters (SOAP, gRPC, GraphQL).
+// This is the preferred interface for protocol adapters (gRPC).
 // The existing StatusCodeError interface is preserved for backward compatibility with HTTP handlers.
 type ErrorCodeError interface {
 	error

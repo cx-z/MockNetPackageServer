@@ -349,8 +349,8 @@ func preValidateImportMocks(mocks []*mock.Mock) error {
 		}
 		// Only validate mocks that carry protocol-specific config; bare
 		// stubs (type set but no spec) are allowed to pass through.
-		hasSpec := m.HTTP != nil || m.GRPC != nil || m.MQTT != nil ||
-			m.GraphQL != nil || m.WebSocket != nil || m.SOAP != nil || m.OAuth != nil
+		hasSpec := m.HTTP != nil || m.GRPC != nil ||
+			m.WebSocket != nil
 		if !hasSpec {
 			continue
 		}
@@ -474,7 +474,7 @@ func (a *API) handleImportConfig(w http.ResponseWriter, r *http.Request, engine 
 		return
 	}
 
-	// Forward to engine for runtime registration (starts gRPC/MQTT servers, registers handlers).
+	// Forward to engine for runtime registration (starts gRPC servers, registers handlers).
 	// Pass workspaceID so the engine registers stateful resources and custom operations
 	// under the active workspace bucket — otherwise lookups by mock.WorkspaceID fail at
 	// request time (issue #12).
@@ -655,9 +655,9 @@ func (a *API) mockCreator() MockCreatorFunc {
 // Supports filtering by protocol, method, path, and protocol-specific fields.
 //
 // Query Parameters:
-//   - protocol: Filter by protocol (http, grpc, websocket, sse, mqtt, soap, graphql)
-//   - method: Filter by method (HTTP method, gRPC method, MQTT PUBLISH/SUBSCRIBE, etc.)
-//   - path: Filter by path prefix (or topic pattern for MQTT)
+//   - protocol: Filter by protocol (http, grpc, websocket, sse)
+//   - method: Filter by method (HTTP method, gRPC method, etc.)
+//   - path: Filter by path prefix
 //   - matched: Filter by matched mock ID
 //   - status: Filter by response status code
 //   - hasError: Filter by error presence (true/false)
@@ -666,9 +666,6 @@ func (a *API) mockCreator() MockCreatorFunc {
 //
 // Protocol-specific filters:
 //   - grpcService: Filter gRPC by service name
-//   - mqttTopic: Filter MQTT by topic (supports wildcards + and #)
-//   - mqttClientId: Filter MQTT by client ID
-//   - soapOperation: Filter SOAP by operation name
 //   - graphqlOpType: Filter GraphQL by operation type (query, mutation, subscription)
 //   - wsConnectionId: Filter WebSocket by connection ID
 //   - sseConnectionId: Filter SSE by connection ID
@@ -723,18 +720,6 @@ func buildRequestFilter(query interface{ Get(string) string }) *requestlog.Filte
 	// Protocol-specific filters
 	if v := query.Get("grpcService"); v != "" {
 		clientFilter.GRPCService = v
-	}
-	if v := query.Get("mqttTopic"); v != "" {
-		clientFilter.MQTTTopic = v
-	}
-	if v := query.Get("mqttClientId"); v != "" {
-		clientFilter.MQTTClientID = v
-	}
-	if v := query.Get("soapOperation"); v != "" {
-		clientFilter.SOAPOperation = v
-	}
-	if v := query.Get("graphqlOpType"); v != "" {
-		clientFilter.GraphQLOpType = v
 	}
 	if v := query.Get("wsConnectionId"); v != "" {
 		clientFilter.WSConnectionID = v

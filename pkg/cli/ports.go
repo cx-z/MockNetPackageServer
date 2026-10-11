@@ -45,7 +45,7 @@ var portsCmd = &cobra.Command{
 	Long: `Show all ports in use by the running mockd server.
 
 Lists all listening ports for mock engines, admin APIs, and protocol-specific
-listeners (gRPC, MQTT, etc.).`,
+listeners (gRPC, etc.).`,
 	Example: `  # Show all ports
   mockd ports
 

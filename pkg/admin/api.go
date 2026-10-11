@@ -41,10 +41,7 @@ type API struct {
 	// handleRegisterEngine (writers) and handler goroutines (readers).
 	localEngine atomic.Pointer[engineclient.Client]
 
-	proxyManager           *ProxyManager
 	streamRecordingManager *StreamRecordingManager
-	mqttRecordingManager   *MQTTRecordingManager
-	soapRecordingManager   *SOAPRecordingManager
 	workspaceStore         *store.WorkspaceFileStore
 	engineRegistry         *store.EngineRegistry
 	captureManager         *store.CaptureManager
@@ -114,10 +111,6 @@ type API struct {
 	// Default is false - authentication is always required
 	allowLocalhostBypass bool
 
-	// Tunnel state for local engine
-	localTunnel *store.TunnelConfig
-	tunnelMu    sync.RWMutex
-
 	// ready indicates that the server has completed initialization
 	// (config loaded, engine healthy, ready to serve traffic).
 	ready atomic.Bool
@@ -139,10 +132,7 @@ func NewAPI(port int, opts ...Option) *API {
 	metricsRegistry := metrics.Init()
 
 	api := &API{
-		proxyManager:                NewProxyManager(),
 		streamRecordingManager:      NewStreamRecordingManager(),
-		mqttRecordingManager:        NewMQTTRecordingManager(),
-		soapRecordingManager:        NewSOAPRecordingManager(),
 		engineRegistry:              store.NewEngineRegistry(),
 		perEngineSync:               newPerEngineSyncMu(),
 		port:                        port,
@@ -282,16 +272,6 @@ func (a *API) InitializeStreamRecordings(dataDir string) error {
 // StreamRecordingManager returns the stream recording manager.
 func (a *API) StreamRecordingManager() *StreamRecordingManager {
 	return a.streamRecordingManager
-}
-
-// MQTTRecordingManager returns the MQTT recording manager.
-func (a *API) MQTTRecordingManager() *MQTTRecordingManager {
-	return a.mqttRecordingManager
-}
-
-// SOAPRecordingManager returns the SOAP recording manager.
-func (a *API) SOAPRecordingManager() *SOAPRecordingManager {
-	return a.soapRecordingManager
 }
 
 // EngineRegistry returns the engine registry.
@@ -589,10 +569,7 @@ func (a *API) SetLogger(log *slog.Logger) {
 
 	// Fan out to managers via their lock-protected SetLogger methods so
 	// that concurrent handler goroutines never observe a torn pointer write.
-	a.proxyManager.SetLogger(log.With("component", "proxy"))
 	a.streamRecordingManager.SetLogger(log.With("component", "stream-recording"))
-	a.mqttRecordingManager.SetLogger(log.With("component", "mqtt-recording"))
-	a.soapRecordingManager.SetLogger(log.With("component", "soap-recording"))
 	a.captureManager.SetLogger(log.With("component", "capture"))
 }
 

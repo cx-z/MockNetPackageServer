@@ -26,7 +26,7 @@ type AdminClient interface {
 	// ListMocks returns configured mocks, optionally filtered by workspace.
 	// Pass "" for workspaceID to list all mocks (no filter).
 	ListMocks(workspaceID string) ([]*config.MockConfiguration, error)
-	// ListMocksByType returns mocks filtered by type (http, websocket, graphql, etc.)
+	// ListMocksByType returns mocks filtered by type (http, websocket, etc.)
 	ListMocksByType(mockType string, workspaceID string) ([]*config.MockConfiguration, error)
 	// GetMock returns a specific mock by ID.
 	GetMock(id string) (*config.MockConfiguration, error)
@@ -64,8 +64,6 @@ type AdminClient interface {
 	GetChaosProfile(name string) (*ChaosProfileInfo, error)
 	// ApplyChaosProfile applies a named chaos profile.
 	ApplyChaosProfile(name string) error
-	// GetMQTTStatus returns the current MQTT broker status.
-	GetMQTTStatus() (map[string]interface{}, error)
 	// GetStats returns server statistics.
 	GetStats() (*StatsResult, error)
 	// GetPorts returns all ports in use by mockd.
@@ -165,15 +163,6 @@ type AdminClient interface {
 	// GetSSEStats returns SSE statistics.
 	GetSSEStats() (*apitypes.SSEStats, error)
 
-	// ListMQTTConnections returns active MQTT client connections.
-	ListMQTTConnections() (*apitypes.MQTTConnectionListResponse, error)
-	// GetMQTTConnection returns a specific MQTT client connection.
-	GetMQTTConnection(id string) (*apitypes.MQTTConnection, error)
-	// CloseMQTTConnection disconnects an MQTT client.
-	CloseMQTTConnection(id string) error
-	// GetMQTTStats returns MQTT broker statistics.
-	GetMQTTStats() (*apitypes.MQTTStats, error)
-
 	// ListGRPCStreams returns active gRPC streaming connections.
 	ListGRPCStreams() (*apitypes.GRPCStreamListResponse, error)
 	// GetGRPCStream returns a specific gRPC stream.
@@ -186,7 +175,7 @@ type AdminClient interface {
 
 // LogFilter specifies filtering criteria for request logs.
 type LogFilter struct {
-	Protocol      string // Filter by protocol (http, grpc, mqtt, soap, graphql, websocket, sse)
+	Protocol      string // Filter by protocol (http, grpc, websocket, sse)
 	Method        string
 	Path          string
 	MatchedID     string
@@ -219,12 +208,8 @@ type CreateMockResult struct {
 	Message       string   // Human-readable message
 	TargetMockID  string   // For merge: ID of the mock merged into
 	AddedServices []string // For gRPC merge: services/methods added
-	AddedTopics   []string // For MQTT merge: topics added
 	TotalServices []string // For gRPC merge: all services after merge
-	TotalTopics   []string // For MQTT merge: all topics after merge
 
-	AddedOperations []string // For SOAP merge: operations added
-	TotalOperations []string // For SOAP merge: all operations after merge
 }
 
 // IsMerge returns true if this result was a merge operation.
@@ -505,9 +490,7 @@ func (c *adminClient) CreateMock(workspaceID string, mock *config.MockConfigurat
 		Message       string                    `json:"message"`
 		TargetMockID  string                    `json:"targetMockId"`
 		AddedServices []string                  `json:"addedServices"`
-		AddedTopics   []string                  `json:"addedTopics"`
 		TotalServices []string                  `json:"totalServices"`
-		TotalTopics   []string                  `json:"totalTopics"`
 		Mock          *config.MockConfiguration `json:"mock"`
 	}
 
@@ -523,9 +506,7 @@ func (c *adminClient) CreateMock(workspaceID string, mock *config.MockConfigurat
 			Message:       mergeResponse.Message,
 			TargetMockID:  mergeResponse.TargetMockID,
 			AddedServices: mergeResponse.AddedServices,
-			AddedTopics:   mergeResponse.AddedTopics,
 			TotalServices: mergeResponse.TotalServices,
-			TotalTopics:   mergeResponse.TotalTopics,
 		}, nil
 	}
 
@@ -1139,25 +1120,6 @@ func (c *adminClient) ResetAllVerification() error {
 	return nil
 }
 
-// GetMQTTStatus returns the current MQTT broker status.
-func (c *adminClient) GetMQTTStatus() (map[string]interface{}, error) {
-	resp, err := c.get("/mqtt/status")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.parseError(resp)
-	}
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result, nil
-}
-
 // GetStats returns server statistics from GET /status.
 func (c *adminClient) GetStats() (*StatsResult, error) {
 	resp, err := c.get("/status")
@@ -1760,7 +1722,7 @@ func (c *adminClient) SendWebSocketMessage(id string, message string, binary boo
 	}
 	body, err := json.Marshal(map[string]interface{}{
 		"data": message,
-		"type":    msgType,
+		"type": msgType,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to encode request: %w", err)
@@ -1866,77 +1828,6 @@ func (c *adminClient) GetSSEStats() (*apitypes.SSEStats, error) {
 	return &result, nil
 }
 
-// ListMQTTConnections returns active MQTT client connections.
-func (c *adminClient) ListMQTTConnections() (*apitypes.MQTTConnectionListResponse, error) {
-	resp, err := c.get("/mqtt-connections")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.parseError(resp)
-	}
-	var result apitypes.MQTTConnectionListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
-}
-
-// GetMQTTConnection returns a specific MQTT client connection.
-func (c *adminClient) GetMQTTConnection(id string) (*apitypes.MQTTConnection, error) {
-	resp, err := c.get("/mqtt-connections/" + url.PathEscape(id))
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "MQTT connection not found: " + id}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.parseError(resp)
-	}
-	var result apitypes.MQTTConnection
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
-}
-
-// CloseMQTTConnection disconnects an MQTT client.
-func (c *adminClient) CloseMQTTConnection(id string) error {
-	resp, err := c.delete("/mqtt-connections/" + url.PathEscape(id))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusNotFound {
-		return &APIError{StatusCode: resp.StatusCode, ErrorCode: "not_found", Message: "MQTT connection not found: " + id}
-	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return c.parseError(resp)
-	}
-	return nil
-}
-
-// GetMQTTStats returns MQTT broker statistics.
-func (c *adminClient) GetMQTTStats() (*apitypes.MQTTStats, error) {
-	resp, err := c.get("/mqtt-connections/stats")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.parseError(resp)
-	}
-	var result apitypes.MQTTStats
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
-}
-
-// ListGRPCStreams returns active gRPC streaming connections.
 func (c *adminClient) ListGRPCStreams() (*apitypes.GRPCStreamListResponse, error) {
 	resp, err := c.get("/grpc/connections")
 	if err != nil {

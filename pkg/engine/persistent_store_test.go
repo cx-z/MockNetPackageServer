@@ -204,12 +204,12 @@ func TestPersistentMockStore_Get(t *testing.T) {
 		fs := newFakeMockStore()
 		ps := NewPersistentMockStore(fs)
 
-		_ = ps.Set(&mock.Mock{ID: "get_1", Type: mock.TypeGraphQL, Name: "gql"})
+		_ = ps.Set(&mock.Mock{ID: "get_1", Type: mock.TypeGRPC, Name: "grpc"})
 
 		got := ps.Get("get_1")
 		require.NotNil(t, got)
-		assert.Equal(t, mock.TypeGraphQL, got.Type)
-		assert.Equal(t, "gql", got.Name)
+		assert.Equal(t, mock.TypeGRPC, got.Type)
+		assert.Equal(t, "grpc", got.Name)
 	})
 
 	t.Run("returns nil when not found", func(t *testing.T) {
@@ -300,7 +300,7 @@ func TestPersistentMockStore_ListByType(t *testing.T) {
 
 		_ = ps.Set(&mock.Mock{ID: "t4", Type: mock.TypeHTTP})
 
-		result := ps.ListByType(mock.TypeMQTT)
+		result := ps.ListByType(mock.TypeGRPC)
 		assert.Empty(t, result)
 	})
 }

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/getmockd/mockd/pkg/graphql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,96 +76,6 @@ func TestProtocolManager_Registry(t *testing.T) {
 }
 
 // ============================================================================
-// GraphQL accessors
-// ============================================================================
-
-func TestProtocolManager_GraphQLHandlers_EmptyByDefault(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-	handlers := pm.GraphQLHandlers()
-	assert.NotNil(t, handlers, "GraphQLHandlers should return non-nil slice")
-	assert.Empty(t, handlers, "GraphQLHandlers should be empty on new manager")
-}
-
-func TestProtocolManager_AddGraphQLHandler(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-
-	// Create a minimal GraphQL handler via the Endpoint helper.
-	cfg := &graphql.GraphQLConfig{
-		ID:      "test-gql",
-		Path:    "/graphql",
-		Enabled: true,
-		Schema:  `type Query { hello: String }`,
-	}
-	handler, err := graphql.Endpoint(cfg)
-	require.NoError(t, err)
-
-	pm.AddGraphQLHandler(handler)
-
-	handlers := pm.GraphQLHandlers()
-	require.Len(t, handlers, 1, "should have 1 handler after add")
-	assert.Equal(t, handler, handlers[0])
-}
-
-func TestProtocolManager_AddGraphQLSubscriptionHandler(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-
-	cfg := &graphql.GraphQLConfig{
-		ID:      "test-sub",
-		Path:    "/graphql",
-		Enabled: true,
-	}
-	subHandler := graphql.NewSubscriptionHandler(nil, cfg)
-	require.NotNil(t, subHandler)
-
-	pm.AddGraphQLSubscriptionHandler(subHandler)
-
-	// Verify via internal field (white-box).
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	require.Len(t, pm.graphqlSubHandlers, 1)
-	assert.Equal(t, subHandler, pm.graphqlSubHandlers[0])
-}
-
-// ============================================================================
-// OAuth accessors
-// ============================================================================
-
-func TestProtocolManager_OAuthProviders_EmptyByDefault(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-	providers := pm.OAuthProviders()
-	assert.NotNil(t, providers)
-	assert.Empty(t, providers)
-}
-
-func TestProtocolManager_OAuthHandlers_EmptyByDefault(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-	handlers := pm.OAuthHandlers()
-	assert.NotNil(t, handlers)
-	assert.Empty(t, handlers)
-}
-
-// ============================================================================
-// SOAP accessors
-// ============================================================================
-
-func TestProtocolManager_SOAPHandlers_EmptyByDefault(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-	handlers := pm.SOAPHandlers()
-	assert.NotNil(t, handlers)
-	assert.Empty(t, handlers)
-}
 
 // ============================================================================
 // gRPC accessors
@@ -196,44 +105,6 @@ func TestProtocolManager_StopGRPCServer_NonExistent(t *testing.T) {
 	err := pm.StopGRPCServer("no-such-server")
 	// Implementation returns nil when server is not found.
 	assert.NoError(t, err, "StopGRPCServer should not error for non-existent ID")
-}
-
-// ============================================================================
-// MQTT accessors
-// ============================================================================
-
-func TestProtocolManager_GetMQTTBrokers_EmptyByDefault(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-	brokers := pm.GetMQTTBrokers()
-	assert.NotNil(t, brokers)
-	assert.Empty(t, brokers)
-}
-
-func TestProtocolManager_GetMQTTBroker_NonExistent(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-	broker := pm.GetMQTTBroker("no-such-broker")
-	assert.Nil(t, broker, "GetMQTTBroker should return nil for unknown ID")
-}
-
-func TestProtocolManager_MQTTPorts_EmptyByDefault(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-	ports := pm.MQTTPorts()
-	assert.Empty(t, ports, "MQTTPorts should be empty on new manager")
-}
-
-func TestProtocolManager_StopMQTTBroker_NonExistent(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-	err := pm.StopMQTTBroker("no-such-broker")
-	// Implementation returns nil when broker is not found.
-	assert.NoError(t, err, "StopMQTTBroker should not error for non-existent ID")
 }
 
 // ============================================================================
@@ -343,80 +214,8 @@ func TestProtocolManager_StopAll_ClearsHandlers(t *testing.T) {
 
 	pm := NewProtocolManager()
 
-	// Add a GraphQL handler so we can verify it gets cleared.
-	cfg := &graphql.GraphQLConfig{
-		ID:      "clear-test",
-		Path:    "/graphql",
-		Enabled: true,
-		Schema:  `type Query { hello: String }`,
-	}
-	handler, err := graphql.Endpoint(cfg)
-	require.NoError(t, err)
-	pm.AddGraphQLHandler(handler)
-
-	// Add a subscription handler.
-	subHandler := graphql.NewSubscriptionHandler(nil, cfg)
-	pm.AddGraphQLSubscriptionHandler(subHandler)
-
-	require.Len(t, pm.GraphQLHandlers(), 1, "precondition: 1 handler before StopAll")
-
 	errs := pm.StopAll(context.Background(), 5*time.Second)
 	assert.Empty(t, errs)
-	assert.Empty(t, pm.GraphQLHandlers(), "GraphQL handlers should be cleared after StopAll")
 	assert.Empty(t, pm.GRPCServers(), "gRPC servers should be cleared after StopAll")
-	assert.Empty(t, pm.GetMQTTBrokers(), "MQTT brokers should be cleared after StopAll")
-	assert.Empty(t, pm.OAuthProviders(), "OAuth providers should be cleared after StopAll")
-	assert.Empty(t, pm.OAuthHandlers(), "OAuth handlers should be cleared after StopAll")
-	assert.Empty(t, pm.SOAPHandlers(), "SOAP handlers should be cleared after StopAll")
-}
 
-// ============================================================================
-// Multiple AddGraphQLHandler calls accumulate
-// ============================================================================
-
-func TestProtocolManager_AddMultipleGraphQLHandlers(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-
-	for i := 0; i < 3; i++ {
-		cfg := &graphql.GraphQLConfig{
-			ID:      "gql-" + string(rune('a'+i)),
-			Path:    "/graphql",
-			Enabled: true,
-			Schema:  `type Query { hello: String }`,
-		}
-		h, err := graphql.Endpoint(cfg)
-		require.NoError(t, err)
-		pm.AddGraphQLHandler(h)
-	}
-
-	assert.Len(t, pm.GraphQLHandlers(), 3, "should accumulate 3 handlers")
-}
-
-// ============================================================================
-// GraphQLHandlers returns a copy (mutation safety)
-// ============================================================================
-
-func TestProtocolManager_GraphQLHandlers_ReturnsCopy(t *testing.T) {
-	t.Parallel()
-
-	pm := NewProtocolManager()
-	cfg := &graphql.GraphQLConfig{
-		ID:      "copy-test",
-		Path:    "/graphql",
-		Enabled: true,
-		Schema:  `type Query { hello: String }`,
-	}
-	h, err := graphql.Endpoint(cfg)
-	require.NoError(t, err)
-	pm.AddGraphQLHandler(h)
-
-	slice1 := pm.GraphQLHandlers()
-	slice2 := pm.GraphQLHandlers()
-
-	// Mutating the returned slice should not affect the manager.
-	slice1[0] = nil
-	assert.NotNil(t, slice2[0], "returned slices should be independent copies")
-	assert.NotNil(t, pm.GraphQLHandlers()[0], "internal slice should be unaffected")
 }

@@ -1,5 +1,5 @@
 // Package stateful provides the response transform gateway for stateful CRUD resources.
-// TransformItem is the single funnel point — called by HTTP handlers, SOAP adapters,
+// TransformItem is the single funnel point — called by HTTP handlers,
 // and future GraphQL/gRPC adapters. Protocol-agnostic: operates on map[string]interface{}.
 package stateful
 
@@ -259,7 +259,7 @@ func buildMetaMap(meta PaginationMeta, renames map[string]string) map[string]int
 
 // TransformError shapes an error response according to the resource's error transform config.
 // If cfg is nil or has no error transform, returns nil (caller uses default error format).
-// This is protocol-agnostic — HTTP, SOAP, and GraphQL adapters can all use it.
+// This is protocol-agnostic — HTTP and gRPC adapters can all use it.
 func TransformError(code ErrorCode, message, resource, id, field string, cfg *config.ResponseTransform) map[string]interface{} {
 	if cfg == nil || cfg.Errors == nil {
 		return nil

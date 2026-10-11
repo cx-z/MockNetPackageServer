@@ -13,7 +13,7 @@ func TestProtocolConstants(t *testing.T) {
 	// Verify constants are non-empty and distinct.
 	protos := []string{
 		ProtocolHTTP, ProtocolGRPC, ProtocolWebSocket,
-		ProtocolSSE, ProtocolMQTT, ProtocolSOAP, ProtocolGraphQL,
+		ProtocolSSE,
 	}
 	seen := make(map[string]bool)
 	for _, p := range protos {
@@ -104,7 +104,7 @@ func TestEntry_JSONOmitsEmptyProtocolMeta(t *testing.T) {
 		t.Fatalf("unmarshal raw: %v", err)
 	}
 
-	for _, key := range []string{"grpc", "websocket", "sse", "mqtt", "soap", "graphql"} {
+	for _, key := range []string{"grpc", "websocket", "sse"} {
 		if _, ok := raw[key]; ok {
 			t.Errorf("field %q should be omitted when nil", key)
 		}
@@ -206,106 +206,6 @@ func TestEntry_WithSSEMeta(t *testing.T) {
 	}
 }
 
-func TestEntry_WithMQTTMeta(t *testing.T) {
-	entry := &Entry{
-		ID:       "mqtt-001",
-		Protocol: ProtocolMQTT,
-		MQTT: &MQTTMeta{
-			ClientID:  "device-abc",
-			Topic:     "sensors/temp",
-			QoS:       1,
-			Retain:    true,
-			Direction: "publish",
-			MessageID: 1234,
-		},
-	}
-
-	data, _ := json.Marshal(entry)
-	var decoded Entry
-	_ = json.Unmarshal(data, &decoded)
-
-	if decoded.MQTT == nil {
-		t.Fatal("expected MQTT meta")
-	}
-	if decoded.MQTT.ClientID != "device-abc" {
-		t.Errorf("ClientID mismatch: got %q", decoded.MQTT.ClientID)
-	}
-	if decoded.MQTT.QoS != 1 {
-		t.Errorf("QoS mismatch: got %d", decoded.MQTT.QoS)
-	}
-	if !decoded.MQTT.Retain {
-		t.Error("Retain should be true")
-	}
-	if decoded.MQTT.MessageID != 1234 {
-		t.Errorf("MessageID mismatch: got %d", decoded.MQTT.MessageID)
-	}
-}
-
-func TestEntry_WithSOAPMeta(t *testing.T) {
-	entry := &Entry{
-		ID:       "soap-001",
-		Protocol: ProtocolSOAP,
-		SOAP: &SOAPMeta{
-			Operation:   "GetStockPrice",
-			SOAPAction:  "urn:GetStockPrice",
-			SOAPVersion: "1.2",
-			IsFault:     true,
-			FaultCode:   "soap:Server",
-		},
-	}
-
-	data, _ := json.Marshal(entry)
-	var decoded Entry
-	_ = json.Unmarshal(data, &decoded)
-
-	if decoded.SOAP == nil {
-		t.Fatal("expected SOAP meta")
-	}
-	if decoded.SOAP.Operation != "GetStockPrice" {
-		t.Errorf("Operation mismatch: got %q", decoded.SOAP.Operation)
-	}
-	if !decoded.SOAP.IsFault {
-		t.Error("IsFault should be true")
-	}
-	if decoded.SOAP.FaultCode != "soap:Server" {
-		t.Errorf("FaultCode mismatch: got %q", decoded.SOAP.FaultCode)
-	}
-}
-
-func TestEntry_WithGraphQLMeta(t *testing.T) {
-	entry := &Entry{
-		ID:       "gql-001",
-		Protocol: ProtocolGraphQL,
-		GraphQL: &GraphQLMeta{
-			OperationType: "query",
-			OperationName: "GetUser",
-			Variables:     `{"id":"1"}`,
-			HasErrors:     true,
-			ErrorCount:    2,
-		},
-	}
-
-	data, _ := json.Marshal(entry)
-	var decoded Entry
-	_ = json.Unmarshal(data, &decoded)
-
-	if decoded.GraphQL == nil {
-		t.Fatal("expected GraphQL meta")
-	}
-	if decoded.GraphQL.OperationType != "query" {
-		t.Errorf("OperationType mismatch: got %q", decoded.GraphQL.OperationType)
-	}
-	if decoded.GraphQL.OperationName != "GetUser" {
-		t.Errorf("OperationName mismatch: got %q", decoded.GraphQL.OperationName)
-	}
-	if !decoded.GraphQL.HasErrors {
-		t.Error("HasErrors should be true")
-	}
-	if decoded.GraphQL.ErrorCount != 2 {
-		t.Errorf("ErrorCount mismatch: got %d", decoded.GraphQL.ErrorCount)
-	}
-}
-
 func TestEntry_ErrorField(t *testing.T) {
 	entry := &Entry{
 		ID:       "err-001",
@@ -382,10 +282,6 @@ func TestFilter_AllFields(t *testing.T) {
 		Limit:           50,
 		Offset:          10,
 		GRPCService:     "svc.Users",
-		MQTTTopic:       "sensors/+",
-		MQTTClientID:    "client-a",
-		SOAPOperation:   "CreateOrder",
-		GraphQLOpType:   "mutation",
 		WSConnectionID:  "ws-conn-9",
 		SSEConnectionID: "sse-conn-3",
 	}

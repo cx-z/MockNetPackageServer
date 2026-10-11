@@ -8,13 +8,10 @@ const (
 	ProtocolGRPC      = "grpc"
 	ProtocolWebSocket = "websocket"
 	ProtocolSSE       = "sse"
-	ProtocolMQTT      = "mqtt"
-	ProtocolSOAP      = "soap"
-	ProtocolGraphQL   = "graphql"
 )
 
 // Entry captures complete details of a request/response for debugging and inspection.
-// Supports multiple protocols: HTTP, gRPC, WebSocket, SSE, MQTT, SOAP, GraphQL.
+// Supports multiple protocols: HTTP, gRPC, WebSocket, SSE.
 type Entry struct {
 	// ID is a unique identifier for the log entry.
 	ID string `json:"id"`
@@ -25,13 +22,13 @@ type Entry struct {
 	// Timestamp is when the request was received.
 	Timestamp time.Time `json:"timestamp"`
 
-	// Protocol identifies the protocol type (http, grpc, websocket, sse, mqtt, soap, graphql).
+	// Protocol identifies the protocol type (http, grpc, websocket, sse).
 	Protocol string `json:"protocol"`
 
-	// Method is the HTTP method (or gRPC method name, MQTT topic, etc.).
+	// Method is the HTTP method (or gRPC method name, etc.).
 	Method string `json:"method"`
 
-	// Path is the request URL path (or gRPC service/method, MQTT topic, etc.).
+	// Path is the request URL path (or gRPC service/method, etc.).
 	Path string `json:"path"`
 
 	// QueryString is the raw query string (HTTP only).
@@ -72,7 +69,4 @@ type Entry struct {
 	GRPC      *GRPCMeta      `json:"grpc,omitempty"`
 	WebSocket *WebSocketMeta `json:"websocket,omitempty"`
 	SSE       *SSEMeta       `json:"sse,omitempty"`
-	MQTT      *MQTTMeta      `json:"mqtt,omitempty"`
-	SOAP      *SOAPMeta      `json:"soap,omitempty"`
-	GraphQL   *GraphQLMeta   `json:"graphql,omitempty"`
 }

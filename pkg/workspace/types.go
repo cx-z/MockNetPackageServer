@@ -34,7 +34,6 @@ type StatusInfo struct {
 	WorkspaceName string       `json:"workspaceName"`
 	HTTPPort      int          `json:"httpPort"`
 	GRPCPort      int          `json:"grpcPort,omitempty"`
-	MQTTPort      int          `json:"mqttPort,omitempty"`
 	Status        ServerStatus `json:"status"`
 	StatusMessage string       `json:"statusMessage,omitempty"`
 	MockCount     int          `json:"mockCount"`

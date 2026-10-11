@@ -1,7 +1,7 @@
 package requestlog
 
 // Logger is the minimal interface for logging request entries.
-// Protocol handlers (gRPC, MQTT, SOAP, etc.) accept this interface to log requests.
+// Protocol handlers (gRPC, etc.) accept this interface to log requests.
 // This allows them to work with any implementation that can record entries,
 // whether it's an in-memory store, persistent database, or forwarding to a remote admin.
 type Logger interface {
@@ -32,13 +32,13 @@ type Filter struct {
 	// WorkspaceID filters by workspace.
 	WorkspaceID string
 
-	// Protocol filters by protocol (http, grpc, websocket, sse, mqtt, soap, graphql).
+	// Protocol filters by protocol (http, grpc, websocket, sse).
 	Protocol string
 
 	// Method filters by HTTP method (or gRPC method, etc.).
 	Method string
 
-	// Path filters by path prefix (or topic pattern for MQTT).
+	// Path filters by path prefix.
 	Path string
 
 	// MatchedID filters by matched mock ID.
@@ -64,18 +64,6 @@ type Filter struct {
 
 	// GRPCService filters gRPC by service name.
 	GRPCService string
-
-	// MQTTTopic filters MQTT by topic (supports wildcards).
-	MQTTTopic string
-
-	// MQTTClientID filters MQTT by client ID.
-	MQTTClientID string
-
-	// SOAPOperation filters SOAP by operation name.
-	SOAPOperation string
-
-	// GraphQLOpType filters GraphQL by operation type (query, mutation, subscription).
-	GraphQLOpType string
 
 	// WSConnectionID filters WebSocket by connection ID.
 	WSConnectionID string

@@ -113,15 +113,6 @@ func init() {
 	startCmd.Flags().StringVar(&startServerFlags.AuditFile, "audit-file", "", "Path to audit log file")
 	startCmd.Flags().StringVar(&startServerFlags.AuditLevel, "audit-level", "info", "Audit log level")
 
-	// GraphQL flags
-	startCmd.Flags().StringVar(&startServerFlags.GraphQLSchema, "graphql-schema", "", "Path to GraphQL schema file")
-	startCmd.Flags().StringVar(&startServerFlags.GraphQLPath, "graphql-path", "/graphql", "GraphQL endpoint path")
-
-	// OAuth flags
-	startCmd.Flags().BoolVar(&startServerFlags.OAuthEnabled, "oauth-enabled", false, "Enable OAuth provider")
-	startCmd.Flags().StringVar(&startServerFlags.OAuthIssuer, "oauth-issuer", "", "OAuth issuer URL")
-	startCmd.Flags().IntVar(&startServerFlags.OAuthPort, "oauth-port", 0, "OAuth server port")
-
 	// Chaos flags
 	startCmd.Flags().BoolVar(&startServerFlags.ChaosEnabled, "chaos-enabled", false, "Enable chaos injection")
 	startCmd.Flags().StringVar(&startServerFlags.ChaosLatency, "chaos-latency", "", "Add random latency (e.g., '10ms-100ms')")
@@ -214,7 +205,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Create and start the mock server
 	server := engine.NewServer(serverCfg)
 
-	// Initialize persistent store for endpoint persistence (GraphQL, gRPC, SOAP, MQTT, etc.)
+	// Initialize persistent store for endpoint persistence (gRPC, etc.)
 	// Skip persistent store when --config is provided to avoid loading stale mocks
 	var persistentStore *file.FileStore
 	if sf.ConfigFile == "" {

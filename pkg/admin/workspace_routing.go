@@ -65,8 +65,8 @@ func effectiveMockPath(mockPath, workspaceID string, ws *store.Workspace, rootWo
 
 // prefixMockForEngine clones a mock and rewrites its path for the given engine.
 // Returns the original mock unmodified if no prefixing is needed.
-// Only path-based protocols are prefixed: HTTP, WebSocket, GraphQL, SOAP.
-// Port-based protocols (gRPC, MQTT) and OAuth are left unchanged.
+// Only path-based protocols are prefixed: HTTP, WebSocket.
+// Port-based protocols (gRPC) are left unchanged.
 func prefixMockForEngine(m *mock.Mock, ws *store.Workspace, rootWorkspaceID string) *mock.Mock {
 	if ws == nil || m.WorkspaceID == rootWorkspaceID || WorkspaceBasePath(ws) == "" {
 		return m
@@ -74,10 +74,10 @@ func prefixMockForEngine(m *mock.Mock, ws *store.Workspace, rootWorkspaceID stri
 
 	// Only path-based protocols need prefixing
 	switch m.Type {
-	case mock.TypeHTTP, mock.TypeWebSocket, mock.TypeGraphQL, mock.TypeSOAP:
+	case mock.TypeHTTP, mock.TypeWebSocket:
 		// continue below
 	default:
-		// gRPC (port-based), MQTT (topic-based), OAuth (issuer-based) — no prefixing
+		// gRPC (port-based) — no prefixing
 		return m
 	}
 
@@ -113,21 +113,7 @@ func prefixMockForEngine(m *mock.Mock, ws *store.Workspace, rootWorkspaceID stri
 			cloned.WebSocket = &ws2
 		}
 
-	case mock.TypeGraphQL:
-		if cloned.GraphQL != nil && cloned.GraphQL.Path != "" {
-			gql := *cloned.GraphQL
-			gql.Path = effectiveMockPath(gql.Path, m.WorkspaceID, ws, rootWorkspaceID)
-			cloned.GraphQL = &gql
-		}
-
-	case mock.TypeSOAP:
-		if cloned.SOAP != nil && cloned.SOAP.Path != "" {
-			soap := *cloned.SOAP
-			soap.Path = effectiveMockPath(soap.Path, m.WorkspaceID, ws, rootWorkspaceID)
-			cloned.SOAP = &soap
-		}
-
-	case mock.TypeGRPC, mock.TypeMQTT, mock.TypeOAuth:
+	case mock.TypeGRPC:
 		// These types were already filtered by the early return above (line 79-82),
 		// but the exhaustive linter requires all cases to be listed.
 	}

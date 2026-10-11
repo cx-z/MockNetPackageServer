@@ -58,7 +58,7 @@
 //
 //	// Register handlers
 //	reg.Register(grpcHandler)
-//	reg.Register(mqttHandler)
+//	reg.Register(grpcHandler)
 //	reg.Register(wsHandler)
 //
 //	// Start all handlers
@@ -78,7 +78,7 @@
 //
 // Use type assertions to detect optional capabilities:
 //
-//	handler, ok := reg.Get("mqtt-broker")
+//	handler, ok := reg.Get("grpc-server")
 //	if !ok {
 //	    return errors.New("handler not found")
 //	}

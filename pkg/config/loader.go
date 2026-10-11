@@ -200,7 +200,7 @@ func ParseYAML(data []byte) (*MockCollection, error) {
 }
 
 // fillMockDefaults applies default values to mocks before validation:
-//   - If Type is empty, it is inferred from whichever spec field is populated (HTTP, GraphQL, etc.).
+//   - If Type is empty, it is inferred from whichever spec field is populated (HTTP, etc.).
 //     If no spec field is set, it defaults to "http".
 //   - If ID is empty, one is auto-generated using the type prefix (e.g., "http_a1b2c3...").
 //
@@ -229,16 +229,8 @@ func inferMockType(m *MockConfiguration) mock.Type {
 		return mock.TypeHTTP
 	case m.WebSocket != nil:
 		return mock.TypeWebSocket
-	case m.GraphQL != nil:
-		return mock.TypeGraphQL
 	case m.GRPC != nil:
 		return mock.TypeGRPC
-	case m.SOAP != nil:
-		return mock.TypeSOAP
-	case m.MQTT != nil:
-		return mock.TypeMQTT
-	case m.OAuth != nil:
-		return mock.TypeOAuth
 	default:
 		return mock.TypeHTTP
 	}

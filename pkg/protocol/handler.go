@@ -8,7 +8,7 @@ import (
 // Handler is the base interface that ALL protocol handlers must implement.
 // This provides the universal contract for identification and lifecycle management.
 //
-// Every protocol handler (gRPC, MQTT, WebSocket, SSE, GraphQL, SOAP, etc.)
+// Every protocol handler (gRPC, WebSocket, SSE, etc.)
 // must implement this interface to be managed by the engine and exposed
 // through the Admin API.
 type Handler interface {
@@ -17,8 +17,8 @@ type Handler interface {
 	Metadata() Metadata
 
 	// Start activates the handler.
-	// For standalone servers (gRPC, MQTT), this starts listening on a port.
-	// For HTTP-based handlers (GraphQL, SOAP, SSE), this prepares for serving.
+	// For standalone servers (gRPC), this starts listening on a port.
+	// For HTTP-based handlers (SSE), this prepares for serving.
 	// The context can be used for cancellation during startup.
 	Start(ctx context.Context) error
 
@@ -46,7 +46,7 @@ type Metadata struct {
 	// Optional - if empty, the ID may be used for display.
 	Name string `json:"name,omitempty"`
 
-	// Protocol identifies the protocol type (grpc, mqtt, websocket, etc.).
+	// Protocol identifies the protocol type (grpc, websocket, etc.).
 	Protocol Protocol `json:"protocol"`
 
 	// Version is the handler implementation version.

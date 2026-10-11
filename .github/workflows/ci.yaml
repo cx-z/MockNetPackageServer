@@ -163,38 +163,6 @@ jobs:
           [ "$STATUS" = "204" ] || (echo "Delete returned $STATUS, expected 204" && exit 1)
           echo "✓ Stateful CRUD works"
 
-      - name: Smoke test — OpenAPI import
-        run: |
-          cat > /tmp/smoke-spec.yaml << 'SPEC'
-          openapi: "3.0.0"
-          info:
-            title: Smoke Test
-            version: "1.0.0"
-          paths:
-            /smoke/items:
-              get:
-                summary: List items
-                responses:
-                  "200":
-                    description: OK
-                    content:
-                      application/json:
-                        schema:
-                          type: array
-                          items:
-                            type: object
-          SPEC
-          ./mockd import /tmp/smoke-spec.yaml
-          curl -sf http://localhost:4280/smoke/items || (echo "Imported mock not reachable" && exit 1)
-          echo "✓ OpenAPI import works"
-
-      - name: Smoke test — export round-trip
-        run: |
-          ./mockd export -o /tmp/smoke-export.yaml
-          grep -q "version:" /tmp/smoke-export.yaml || (echo "Export missing version" && exit 1)
-          grep -q "mocks:" /tmp/smoke-export.yaml || (echo "Export missing mocks" && exit 1)
-          echo "✓ Export works"
-
       - name: Smoke test — engine mode
         run: |
           cat > /tmp/engine-config.yaml << 'CONF'

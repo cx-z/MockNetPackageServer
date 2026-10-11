@@ -54,7 +54,7 @@ const (
 )
 
 // OperationRequest is a protocol-agnostic request to perform a CRUD operation
-// on a stateful resource. Protocol handlers (SOAP, GraphQL, gRPC, etc.)
+// on a stateful resource. Protocol handlers (gRPC, etc.)
 // translate their wire format into this struct before calling Bridge.Execute().
 type OperationRequest struct {
 	// WorkspaceID identifies which workspace's resources to operate on.
@@ -90,12 +90,12 @@ type OperationResult struct {
 	List *PaginatedResponse
 	// Error is the domain error, if any. Nil on success.
 	// Protocol adapters should inspect Error to generate protocol-specific error responses
-	// (e.g., HTTP status codes, SOAP faults, gRPC status codes).
+	// (e.g., HTTP status codes, gRPC status codes).
 	Error error
 }
 
 // Bridge is a protocol-agnostic service layer that routes operation requests
-// to stateful resources. Any protocol handler (HTTP, SOAP, GraphQL, gRPC, etc.)
+// to stateful resources. Any protocol handler (HTTP, gRPC, etc.)
 // can call Bridge.Execute() to perform CRUD operations on stateful resources.
 //
 // The Bridge also fires Observer hooks on every operation, making the Observer
@@ -124,7 +124,7 @@ func NewBridge(store *StateStore) *Bridge {
 }
 
 // GetResponseConfig returns the response transform config for a named resource.
-// Used by protocol adapters (SOAP, GraphQL) to apply item transforms.
+// Used by protocol adapters (gRPC) to apply item transforms.
 // Returns nil if the resource doesn't exist or has no transforms configured.
 func (b *Bridge) GetResponseConfig(workspaceID string, name string) *config.ResponseTransform {
 	r := b.store.Get(workspaceID, name)

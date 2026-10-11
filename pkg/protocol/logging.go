@@ -12,7 +12,7 @@ import (
 // not for user-visible request logging.
 //
 // Status: Capability contract for future Admin API extensions.
-// Implemented by gRPC and MQTT handlers but not type-asserted at runtime.
+// Implemented by gRPC handlers but not type-asserted at runtime.
 //
 // Example implementation:
 //
@@ -70,7 +70,7 @@ type RequestLoggable interface {
 // can be displayed in the Admin API.
 //
 // Status: Capability contract for future Admin API extensions.
-// Implemented by gRPC, MQTT, and WebSocket handlers but not type-asserted at runtime.
+// Implemented by gRPC and WebSocket handlers but not type-asserted at runtime.
 //
 // Example implementation:
 //

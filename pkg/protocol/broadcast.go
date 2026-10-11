@@ -4,7 +4,7 @@ package protocol
 // Used for broadcasting and pub/sub operations across different protocols.
 type Message struct {
 	// Type is an optional message type identifier.
-	// Interpretation is protocol-specific (e.g., WebSocket opcode, MQTT packet type).
+	// Interpretation is protocol-specific (e.g., WebSocket opcode).
 	Type string `json:"type,omitempty"`
 
 	// Data is the message payload.

@@ -63,7 +63,7 @@
 // # Sequences
 //
 // Auto-incrementing counters available in all contexts (HTTP, GraphQL,
-// SSE, SOAP, WebSocket, MQTT):
+// SSE, WebSocket):
 //   - {{sequence("name")}} - Auto-incrementing counter starting at 1
 //   - {{sequence("name", start)}} - Auto-incrementing counter starting at start
 //
@@ -72,11 +72,6 @@
 //
 // # Template Engine Boundary
 //
-// This package is the primary template engine for HTTP, GraphQL, SSE, SOAP,
-// and WebSocket response bodies. The MQTT handler (pkg/mqtt) has its own
-// independent template processing for topic patterns and message payloads,
-// which handles MQTT-specific concerns like topic wildcards and QoS-aware
-// substitution. Consolidating the two engines is a post-launch consideration;
-// for now, changes to template syntax here do not automatically propagate
-// to MQTT templates.
+// This package is the primary template engine for HTTP, SSE,
+// and WebSocket response bodies.
 package template

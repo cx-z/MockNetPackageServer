@@ -10,7 +10,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/getmockd/mockd/pkg/store"
 )
+
+// ErrNotFound is returned when a requested recording resource does not exist.
+var ErrNotFound = store.ErrNotFound
 
 // Recordable is the interface that recording types must satisfy for the generic store.
 type Recordable interface {
@@ -26,7 +31,7 @@ type RecordingStore[T Recordable] struct {
 	order      []string // Maintains insertion order
 	maxSize    int      // Maximum number of recordings to keep
 	dataDir    string   // Directory for persistent storage
-	filePrefix string   // Filename prefix for disk files (e.g. "mqtt_", "soap_")
+	filePrefix string   // Filename prefix for disk files (e.g. "http_")
 }
 
 // NewRecordingStore creates a new in-memory recording store.

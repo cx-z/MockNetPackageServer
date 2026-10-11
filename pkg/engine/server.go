@@ -19,7 +19,6 @@ import (
 	"github.com/getmockd/mockd/pkg/config"
 	"github.com/getmockd/mockd/pkg/grpc"
 	"github.com/getmockd/mockd/pkg/logging"
-	"github.com/getmockd/mockd/pkg/mqtt"
 	"github.com/getmockd/mockd/pkg/protocol"
 	"github.com/getmockd/mockd/pkg/ratelimit"
 	"github.com/getmockd/mockd/pkg/requestlog"
@@ -171,14 +170,12 @@ func NewServer(cfg *config.ServerConfiguration, opts ...ServerOption) *Server {
 	pm := NewProtocolManager()
 	pm.SetRequestLogger(logger)
 
-	// Create stateful bridge and wire into protocol manager for SOAP support
-	// and into the handler for HTTP custom operation support.
+	// Create stateful bridge and wire into the handler for HTTP custom operation support.
 	// The bridge is stored on the server so ConfigLoader can register custom operations.
 	bridge := stateful.NewBridge(statefulStore)
 	if s.tracer != nil {
 		bridge.SetTracer(s.tracer)
 	}
-	pm.SetSOAPStatefulExecutor(newSOAPStatefulAdapter(bridge))
 	handler.SetStatefulBridge(bridge)
 
 	mockManager := NewMockManager(mockStore, handler, pm)
@@ -300,11 +297,7 @@ func (s *Server) Start() error {
 
 	// Build protocol config from server config
 	protocolCfg := &ProtocolConfig{
-		GraphQL: s.cfg.GraphQL,
-		OAuth:   s.cfg.OAuth,
-		SOAP:    s.cfg.SOAP,
-		GRPC:    s.cfg.GRPC,
-		MQTT:    s.cfg.MQTT,
+		GRPC: s.cfg.GRPC,
 	}
 
 	// Start all protocol handlers via the protocol manager
@@ -564,7 +557,7 @@ func (s *Server) Store() storage.MockStore {
 }
 
 // StatefulBridge returns the stateful bridge for cross-protocol state sharing.
-// Protocol handlers (SOAP, GraphQL, gRPC, etc.) use the bridge to perform
+// Protocol handlers (gRPC, etc.) use the bridge to perform
 // CRUD operations on the same stateful resources as HTTP REST.
 func (s *Server) StatefulBridge() *stateful.Bridge {
 	return s.statefulBridge
@@ -680,24 +673,6 @@ func (s *Server) registerWebSocketEndpoint(cfg *config.WebSocketEndpointConfig) 
 	return s.handler.RegisterWebSocketEndpoint(cfg)
 }
 
-// GraphQLEndpoints returns the paths of all registered GraphQL endpoints.
-func (s *Server) GraphQLEndpoints() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Return paths from config
-	var endpoints []string
-	if s.cfg.GraphQL != nil {
-		for _, gqlCfg := range s.cfg.GraphQL {
-			if gqlCfg != nil && gqlCfg.Enabled {
-				endpoints = append(endpoints, gqlCfg.Path)
-			}
-		}
-	}
-
-	return endpoints
-}
-
 // GRPCPorts returns the ports of all running gRPC servers.
 func (s *Server) GRPCPorts() []int {
 	s.mu.RLock()
@@ -734,66 +709,6 @@ func (s *Server) StartGRPCServer(cfg *grpc.GRPCConfig) (*grpc.Server, error) {
 // StopGRPCServer stops a running gRPC server by ID.
 func (s *Server) StopGRPCServer(id string) error {
 	return s.protocolManager.StopGRPCServer(id)
-}
-
-// MQTTPorts returns the ports of all running MQTT brokers.
-func (s *Server) MQTTPorts() []int {
-	return s.protocolManager.MQTTPorts()
-}
-
-// StartMQTTBroker dynamically starts an MQTT broker with the given configuration.
-// Returns the broker instance or an error if the broker could not be started.
-func (s *Server) StartMQTTBroker(cfg *mqtt.MQTTConfig) (*mqtt.Broker, error) {
-	return s.protocolManager.StartMQTTBroker(cfg)
-}
-
-// StopMQTTBroker stops a running MQTT broker by ID.
-func (s *Server) StopMQTTBroker(id string) error {
-	return s.protocolManager.StopMQTTBroker(id)
-}
-
-// GetMQTTBroker returns a running MQTT broker by ID.
-func (s *Server) GetMQTTBroker(id string) *mqtt.Broker {
-	return s.protocolManager.GetMQTTBroker(id)
-}
-
-// GetMQTTBrokers returns all MQTT brokers (running or not).
-func (s *Server) GetMQTTBrokers() []*mqtt.Broker {
-	return s.protocolManager.GetMQTTBrokers()
-}
-
-// OAuthIssuers returns the issuers of all running OAuth providers.
-func (s *Server) OAuthIssuers() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var issuers []string
-	if s.cfg.OAuth != nil {
-		for _, oauthCfg := range s.cfg.OAuth {
-			if oauthCfg != nil && oauthCfg.Enabled {
-				issuers = append(issuers, oauthCfg.Issuer)
-			}
-		}
-	}
-
-	return issuers
-}
-
-// SOAPEndpoints returns the paths of all registered SOAP endpoints.
-func (s *Server) SOAPEndpoints() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var endpoints []string
-	if s.cfg.SOAP != nil {
-		for _, soapCfg := range s.cfg.SOAP {
-			if soapCfg != nil && soapCfg.Enabled {
-				endpoints = append(endpoints, soapCfg.Path)
-			}
-		}
-	}
-
-	return endpoints
 }
 
 // ChaosEnabled returns whether chaos injection is enabled.
@@ -936,51 +851,6 @@ func (s *Server) ProtocolStatus() map[string]ProtocolStatusInfo {
 				Status:  "running",
 			}
 			break
-		}
-	}
-
-	// MQTT status
-	mqttBrokers := s.protocolManager.GetMQTTBrokers()
-	for _, broker := range mqttBrokers {
-		if broker != nil && broker.IsRunning() {
-			stats := broker.GetStats()
-			status["mqtt"] = ProtocolStatusInfo{
-				Enabled:     true,
-				Port:        broker.Config().Port,
-				Connections: stats.ClientCount,
-				Status:      "running",
-			}
-			break
-		}
-	}
-
-	// GraphQL status (shares HTTP port)
-	graphqlHandlers := s.protocolManager.GraphQLHandlers()
-	if len(graphqlHandlers) > 0 && running {
-		status["graphql"] = ProtocolStatusInfo{
-			Enabled: true,
-			Port:    s.cfg.HTTPPort,
-			Status:  "running",
-		}
-	}
-
-	// SOAP status (shares HTTP port)
-	soapHandlers := s.protocolManager.SOAPHandlers()
-	if len(soapHandlers) > 0 && running {
-		status["soap"] = ProtocolStatusInfo{
-			Enabled: true,
-			Port:    s.cfg.HTTPPort,
-			Status:  "running",
-		}
-	}
-
-	// OAuth status (shares HTTP port)
-	oauthHandlers := s.protocolManager.OAuthHandlers()
-	if len(oauthHandlers) > 0 && running {
-		status["oauth"] = ProtocolStatusInfo{
-			Enabled: true,
-			Port:    s.cfg.HTTPPort,
-			Status:  "running",
 		}
 	}
 

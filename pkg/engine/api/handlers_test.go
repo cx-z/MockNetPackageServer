@@ -22,24 +22,22 @@ import (
 
 // mockEngine is a test double for EngineController.
 type mockEngine struct {
-	mocks           map[string]*config.MockConfiguration
-	requestLogs     map[string]*requestlog.Entry
-	running         bool
-	uptime          int
-	chaosConfig     *ChaosConfig
-	chaosStats      *ChaosStats
-	stateOverview   *StateOverview
-	handlers        []*ProtocolHandler
-	sseConnections  []*SSEConnection
-	wsConnections   []*WebSocketConnection
-	mqttConnections []*MQTTConnection
-	grpcStreams     []*GRPCStream
-	sseStats        *SSEStats
-	wsStats         *WebSocketStats
-	mqttStats       *MQTTStats
-	grpcStats       *GRPCStats
-	configResp      *ConfigResponse
-	protocols       map[string]ProtocolStatusInfo
+	mocks          map[string]*config.MockConfiguration
+	requestLogs    map[string]*requestlog.Entry
+	running        bool
+	uptime         int
+	chaosConfig    *ChaosConfig
+	chaosStats     *ChaosStats
+	stateOverview  *StateOverview
+	handlers       []*ProtocolHandler
+	sseConnections []*SSEConnection
+	wsConnections  []*WebSocketConnection
+	grpcStreams    []*GRPCStream
+	sseStats       *SSEStats
+	wsStats        *WebSocketStats
+	grpcStats      *GRPCStats
+	configResp     *ConfigResponse
+	protocols      map[string]ProtocolStatusInfo
 
 	// Custom operations support
 	customOps map[string]*CustomOperationDetail
@@ -379,33 +377,6 @@ func (m *mockEngine) SendToWebSocketConnection(id string, msgType string, data [
 		}
 	}
 	return websocket.ErrConnectionNotFound
-}
-
-func (m *mockEngine) ListMQTTConnections() []*MQTTConnection {
-	return m.mqttConnections
-}
-
-func (m *mockEngine) GetMQTTConnection(id string) *MQTTConnection {
-	for _, c := range m.mqttConnections {
-		if c.ID == id {
-			return c
-		}
-	}
-	return nil
-}
-
-func (m *mockEngine) CloseMQTTConnection(id string) error {
-	for i, c := range m.mqttConnections {
-		if c.ID == id {
-			m.mqttConnections = append(m.mqttConnections[:i], m.mqttConnections[i+1:]...)
-			return nil
-		}
-	}
-	return errors.New("connection not found")
-}
-
-func (m *mockEngine) GetMQTTStats() *MQTTStats {
-	return m.mqttStats
 }
 
 func (m *mockEngine) ListGRPCStreams() []*GRPCStream {
@@ -2641,156 +2612,6 @@ func TestHandleSendToWebSocketConnection(t *testing.T) {
 }
 
 // ============================================================================
-// MQTT handlers
-// ============================================================================
-
-func TestHandleListMQTTConnections(t *testing.T) {
-	t.Run("empty", func(t *testing.T) {
-		engine := newMockEngine()
-		server := newTestServer(engine)
-
-		req := httptest.NewRequest(http.MethodGet, "/mqtt/connections", nil)
-		rec := httptest.NewRecorder()
-
-		server.handleListMQTTConnections(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var resp MQTTConnectionListResponse
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-		assert.Empty(t, resp.Connections)
-	})
-
-	t.Run("with connections", func(t *testing.T) {
-		engine := newMockEngine()
-		engine.mqttConnections = []*MQTTConnection{
-			{ID: "client-1", BrokerID: "broker-1", Subscriptions: []string{"sensors/#"}, Status: "connected"},
-			{ID: "client-2", BrokerID: "broker-1", Subscriptions: []string{"devices/+"}, Status: "connected"},
-		}
-		server := newTestServer(engine)
-
-		req := httptest.NewRequest(http.MethodGet, "/mqtt/connections", nil)
-		rec := httptest.NewRecorder()
-
-		server.handleListMQTTConnections(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var resp MQTTConnectionListResponse
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-		assert.Len(t, resp.Connections, 2)
-		assert.Equal(t, "client-1", resp.Connections[0].ID)
-	})
-}
-
-func TestHandleGetMQTTConnection(t *testing.T) {
-	t.Run("found", func(t *testing.T) {
-		engine := newMockEngine()
-		engine.mqttConnections = []*MQTTConnection{
-			{ID: "client-1", BrokerID: "broker-1", ProtocolVersion: 5, Subscriptions: []string{"topic/a"}, Status: "connected"},
-		}
-		server := newTestServer(engine)
-
-		req := httptest.NewRequest(http.MethodGet, "/mqtt/connections/client-1", nil)
-		req.SetPathValue("id", "client-1")
-		rec := httptest.NewRecorder()
-
-		server.handleGetMQTTConnection(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var conn MQTTConnection
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &conn))
-		assert.Equal(t, "client-1", conn.ID)
-		assert.Equal(t, byte(5), conn.ProtocolVersion)
-	})
-
-	t.Run("not found", func(t *testing.T) {
-		engine := newMockEngine()
-		server := newTestServer(engine)
-
-		req := httptest.NewRequest(http.MethodGet, "/mqtt/connections/nonexistent", nil)
-		req.SetPathValue("id", "nonexistent")
-		rec := httptest.NewRecorder()
-
-		server.handleGetMQTTConnection(rec, req)
-
-		assert.Equal(t, http.StatusNotFound, rec.Code)
-	})
-}
-
-func TestHandleCloseMQTTConnection(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		engine := newMockEngine()
-		engine.mqttConnections = []*MQTTConnection{
-			{ID: "client-1", BrokerID: "broker-1", Status: "connected"},
-		}
-		server := newTestServer(engine)
-
-		req := httptest.NewRequest(http.MethodDelete, "/mqtt/connections/client-1", nil)
-		req.SetPathValue("id", "client-1")
-		rec := httptest.NewRecorder()
-
-		server.handleCloseMQTTConnection(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var resp map[string]interface{}
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-		assert.Equal(t, "MQTT connection closed", resp["message"])
-	})
-
-	t.Run("not found", func(t *testing.T) {
-		engine := newMockEngine()
-		server := newTestServer(engine)
-
-		req := httptest.NewRequest(http.MethodDelete, "/mqtt/connections/nonexistent", nil)
-		req.SetPathValue("id", "nonexistent")
-		rec := httptest.NewRecorder()
-
-		server.handleCloseMQTTConnection(rec, req)
-
-		assert.Equal(t, http.StatusNotFound, rec.Code)
-	})
-}
-
-func TestHandleGetMQTTStats(t *testing.T) {
-	t.Run("nil stats returns empty", func(t *testing.T) {
-		engine := newMockEngine()
-		server := newTestServer(engine)
-
-		req := httptest.NewRequest(http.MethodGet, "/mqtt/stats", nil)
-		rec := httptest.NewRecorder()
-
-		server.handleGetMQTTStats(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var stats MQTTStats
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &stats))
-		assert.NotNil(t, stats.SubscriptionsByClient)
-	})
-
-	t.Run("with stats", func(t *testing.T) {
-		engine := newMockEngine()
-		engine.mqttStats = &MQTTStats{
-			ConnectedClients:      3,
-			TotalSubscriptions:    7,
-			TopicCount:            4,
-			Port:                  1883,
-			SubscriptionsByClient: map[string]int{"c1": 3, "c2": 4},
-		}
-		server := newTestServer(engine)
-
-		req := httptest.NewRequest(http.MethodGet, "/mqtt/stats", nil)
-		rec := httptest.NewRecorder()
-
-		server.handleGetMQTTStats(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var stats MQTTStats
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &stats))
-		assert.Equal(t, 3, stats.ConnectedClients)
-		assert.Equal(t, 7, stats.TotalSubscriptions)
-		assert.Equal(t, 3, stats.SubscriptionsByClient["c1"])
-	})
-}
-
 // ============================================================================
 // gRPC stream handlers
 // ============================================================================

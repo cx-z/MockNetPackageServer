@@ -8,7 +8,7 @@
 // # Core Types
 //
 // Entry is the central type representing a captured request/response pair.
-// It supports multiple protocols (HTTP, gRPC, WebSocket, SSE, MQTT, SOAP, GraphQL)
+// It supports multiple protocols (HTTP, gRPC, WebSocket, SSE)
 // with protocol-specific metadata.
 //
 // # Store Interface

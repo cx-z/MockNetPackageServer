@@ -182,26 +182,6 @@ func matchesFilter(entry *requestlog.Entry, filter *requestlog.Filter) bool { //
 			return false
 		}
 	}
-	if filter.MQTTTopic != "" {
-		if entry.MQTT == nil || !matchesMQTTTopic(filter.MQTTTopic, entry.MQTT.Topic) {
-			return false
-		}
-	}
-	if filter.MQTTClientID != "" {
-		if entry.MQTT == nil || entry.MQTT.ClientID != filter.MQTTClientID {
-			return false
-		}
-	}
-	if filter.SOAPOperation != "" {
-		if entry.SOAP == nil || entry.SOAP.Operation != filter.SOAPOperation {
-			return false
-		}
-	}
-	if filter.GraphQLOpType != "" {
-		if entry.GraphQL == nil || entry.GraphQL.OperationType != filter.GraphQLOpType {
-			return false
-		}
-	}
 	if filter.WSConnectionID != "" {
 		if entry.WebSocket == nil || entry.WebSocket.ConnectionID != filter.WSConnectionID {
 			return false
@@ -214,52 +194,6 @@ func matchesFilter(entry *requestlog.Entry, filter *requestlog.Filter) bool { //
 	}
 
 	return true
-}
-
-// matchesMQTTTopic checks if a topic matches an MQTT topic pattern (supports + and # wildcards).
-func matchesMQTTTopic(pattern, topic string) bool {
-	if pattern == topic {
-		return true
-	}
-	if pattern == "#" {
-		return true
-	}
-
-	patternParts := splitTopic(pattern)
-	topicParts := splitTopic(topic)
-
-	for i, part := range patternParts {
-		if part == "#" {
-			return true // # matches everything remaining
-		}
-		if i >= len(topicParts) {
-			return false
-		}
-		if part == "+" {
-			continue // + matches any single level
-		}
-		if part != topicParts[i] {
-			return false
-		}
-	}
-
-	return len(patternParts) == len(topicParts)
-}
-
-// splitTopic splits a topic string by '/'.
-func splitTopic(topic string) []string {
-	if topic == "" {
-		return nil
-	}
-	result := make([]string, 0)
-	start := 0
-	for i := 0; i <= len(topic); i++ {
-		if i == len(topic) || topic[i] == '/' {
-			result = append(result, topic[start:i])
-			start = i + 1
-		}
-	}
-	return result
 }
 
 // Clear removes all log entries.

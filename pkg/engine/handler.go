@@ -14,18 +14,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/getmockd/mockd/internal/matching"
 	"github.com/getmockd/mockd/internal/storage"
-	"github.com/getmockd/mockd/pkg/graphql"
 	"github.com/getmockd/mockd/pkg/logging"
 	"github.com/getmockd/mockd/pkg/mock"
 	"github.com/getmockd/mockd/pkg/mtls"
-	"github.com/getmockd/mockd/pkg/oauth"
 	"github.com/getmockd/mockd/pkg/requestlog"
-	"github.com/getmockd/mockd/pkg/soap"
 	"github.com/getmockd/mockd/pkg/sse"
 	"github.com/getmockd/mockd/pkg/stateful"
 	"github.com/getmockd/mockd/pkg/template"
@@ -57,32 +53,18 @@ type Handler struct {
 	// When set, relative paths in bodyFile are resolved against this directory.
 	// When empty, relative paths are resolved against the process working directory.
 	baseDir string
-
-	// Enterprise feature routing
-	graphqlMu       sync.RWMutex
-	graphqlHandlers map[string]*graphql.Handler
-	graphqlSubMu    sync.RWMutex
-	graphqlSubs     map[string]*graphql.SubscriptionHandler
-	oauthMu         sync.RWMutex
-	oauthHandlers   map[string]*oauth.Handler
-	soapMu          sync.RWMutex
-	soapHandlers    map[string]*soap.Handler
 }
 
 // NewHandler creates a new Handler.
 func NewHandler(store storage.MockStore) *Handler {
 	tmplEngine := template.New()
 	h := &Handler{
-		store:           store,
-		log:             logging.Nop(),          // Default to no-op logger
-		sseHandler:      sse.NewSSEHandler(100), // 100 max SSE connections
-		chunkedHandler:  sse.NewChunkedHandler(),
-		wsManager:       websocket.NewConnectionManager(),
-		templateEngine:  tmplEngine,
-		graphqlHandlers: make(map[string]*graphql.Handler),
-		graphqlSubs:     make(map[string]*graphql.SubscriptionHandler),
-		oauthHandlers:   make(map[string]*oauth.Handler),
-		soapHandlers:    make(map[string]*soap.Handler),
+		store:          store,
+		log:            logging.Nop(),          // Default to no-op logger
+		sseHandler:     sse.NewSSEHandler(100), // 100 max SSE connections
+		chunkedHandler: sse.NewChunkedHandler(),
+		wsManager:      websocket.NewConnectionManager(),
+		templateEngine: tmplEngine,
 	}
 	// Wire template engine so SSE responses can use template variables
 	h.sseHandler.SetTemplateEngine(tmplEngine)
@@ -147,30 +129,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { //nolint:g
 
 	// Check for WebSocket upgrade first
 	if websocket.IsWebSocketRequest(r) {
-		// Check for GraphQL subscription WebSocket first
-		if subHandler := h.getGraphQLSubscriptionHandler(r.URL.Path); subHandler != nil {
-			subHandler.ServeHTTP(w, r)
-			return
-		}
-		h.handleWebSocket(w, r)
-		return
-	}
-
-	// Check for GraphQL handler
-	if gqlHandler := h.getGraphQLHandler(r.URL.Path); gqlHandler != nil {
-		gqlHandler.ServeHTTP(w, r)
-		return
-	}
-
-	// Check for OAuth handler
-	if oauthHandler := h.getOAuthHandler(r.URL.Path); oauthHandler != nil {
-		h.routeOAuthRequest(w, r, oauthHandler)
-		return
-	}
-
-	// Check for SOAP handler
-	if soapHandler := h.getSOAPHandler(r.URL.Path); soapHandler != nil {
-		soapHandler.ServeHTTP(w, r)
 		return
 	}
 

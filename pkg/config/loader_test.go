@@ -377,18 +377,6 @@ func TestParseYAML_InfersTypeFromSpec(t *testing.T) {
 		idPrefix     string
 	}{
 		{
-			name: "graphql",
-			yaml: `
-version: "1.0"
-mocks:
-  - graphql:
-      path: /graphql
-      schema: "type Query { hello: String }"
-`,
-			expectedType: mock.TypeGraphQL,
-			idPrefix:     "gql_",
-		},
-		{
 			name: "websocket",
 			yaml: `
 version: "1.0"
@@ -415,49 +403,6 @@ mocks:
 `,
 			expectedType: mock.TypeGRPC,
 			idPrefix:     "grpc_",
-		},
-		{
-			name: "soap",
-			yaml: `
-version: "1.0"
-mocks:
-  - soap:
-      path: /soap
-      operations:
-        GetWeather:
-          response: "<Temp>72</Temp>"
-`,
-			expectedType: mock.TypeSOAP,
-			idPrefix:     "soap_",
-		},
-		{
-			name: "mqtt",
-			yaml: `
-version: "1.0"
-mocks:
-  - mqtt:
-      port: 1883
-      topics:
-        - topic: sensors/temp
-          messages:
-            - payload: '{"temp": 72}'
-`,
-			expectedType: mock.TypeMQTT,
-			idPrefix:     "mqtt_",
-		},
-		{
-			name: "oauth",
-			yaml: `
-version: "1.0"
-mocks:
-  - oauth:
-      issuer: http://localhost:9999
-      clients:
-        - clientId: app
-          clientSecret: secret
-`,
-			expectedType: mock.TypeOAuth,
-			idPrefix:     "oauth_",
 		},
 	}
 

@@ -14,7 +14,7 @@ import (
 
 // Engine processes templates with variable substitution.
 // An Engine with no SequenceStore is stateless and fully thread-safe.
-// When a SequenceStore is attached (for MQTT sequence support), the store
+// When a SequenceStore is attached, the store
 // provides its own synchronization.
 type Engine struct {
 	sequences *SequenceStore
@@ -22,7 +22,7 @@ type Engine struct {
 
 // New creates a new template engine with a default sequence store.
 // Sequences like {{sequence("counter")}} work in all contexts (HTTP,
-// GraphQL, SSE, SOAP, WebSocket, MQTT).
+// SSE, WebSocket).
 func New() *Engine {
 	return &Engine{sequences: NewSequenceStore()}
 }
@@ -51,9 +51,7 @@ var (
 	// sequence("name") or sequence("name", start) — name stays case-sensitive
 	sequencePattern = regexp.MustCompile(`(?i)^sequence\("([^"]+)"(?:,\s*(\d+))?\)$`)
 	// {1}, {2} for wildcard substitution
-	wildcardPattern = regexp.MustCompile(`^\{(\d+)\}$`)
 	// payload.field.nested — field names stay case-sensitive
-	payloadPattern = regexp.MustCompile(`(?i)^payload\.(.+)$`)
 	// faker.type — case-insensitive prefix, type lowered in resolveFaker
 	fakerPattern = regexp.MustCompile(`(?i)^faker\.(\w+)$`)
 	// faker.type(args) — parameterized faker functions
@@ -138,18 +136,6 @@ func (e *Engine) evaluate(expr string, ctx *Context) string {
 		return funcRandomString(rng, 10)
 	}
 
-	// Handle MQTT context variables (case-insensitive)
-	if ctx != nil {
-		switch exprLower {
-		case "topic":
-			return ctx.MQTT.Topic
-		case "clientid":
-			return ctx.MQTT.ClientID
-		case "device_id":
-			return ctx.MQTT.DeviceID
-		}
-	}
-
 	// Handle parenthesized function calls: random.int(1, 100), sequence("name"), etc.
 	if result, handled := e.evaluateParenthesized(expr, ctx, rng); handled {
 		return result
@@ -158,16 +144,6 @@ func (e *Engine) evaluate(expr string, ctx *Context) string {
 	// Handle legacy space-separated function calls: random.int 1 100, upper value, etc.
 	if result, handled := e.evaluateSpaceSeparated(expr, ctx, rng); handled {
 		return result
-	}
-
-	// Handle wildcard substitution: {1}, {2}
-	if matches := wildcardPattern.FindStringSubmatch(expr); matches != nil {
-		return e.resolveWildcard(matches, ctx)
-	}
-
-	// Handle payload.field access (MQTT incoming message data)
-	if matches := payloadPattern.FindStringSubmatch(expr); matches != nil {
-		return e.resolvePayloadField(matches[1], ctx)
 	}
 
 	// Handle parameterized faker.type(args) patterns
@@ -435,44 +411,6 @@ func (e *Engine) resolveSequence(matches []string) string {
 	}
 	val := e.sequences.Next(name, start)
 	return strconv.FormatInt(val, 10)
-}
-
-// resolveWildcard resolves {1}, {2}, etc. from MQTT wildcard matches
-func (e *Engine) resolveWildcard(matches []string, ctx *Context) string {
-	if ctx == nil {
-		return ""
-	}
-	idx, _ := strconv.Atoi(matches[1])
-	if idx < 1 || idx > len(ctx.MQTT.WildcardVals) {
-		return ""
-	}
-	return ctx.MQTT.WildcardVals[idx-1]
-}
-
-// resolvePayloadField resolves payload.field access from MQTT message data
-func (e *Engine) resolvePayloadField(path string, ctx *Context) string {
-	if ctx == nil || ctx.MQTT.Payload == nil {
-		return ""
-	}
-
-	parts := strings.Split(path, ".")
-	current := ctx.MQTT.Payload
-
-	for i, part := range parts {
-		val, ok := current[part]
-		if !ok {
-			return ""
-		}
-		if i == len(parts)-1 {
-			return formatValue(val)
-		}
-		if nested, ok := val.(map[string]any); ok {
-			current = nested
-		} else {
-			return ""
-		}
-	}
-	return ""
 }
 
 // formatValue converts an arbitrary value to a string representation.

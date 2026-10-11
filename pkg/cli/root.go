@@ -32,7 +32,7 @@ var rootCmd = &cobra.Command{
 	Use:   "mockd",
 	Short: "mockd is a flexible multi-protocol mocking server",
 	Long: `mockd enables zero-code mocking, validation, and testing of backend endpoints locally.
-It supports HTTP, REST, GraphQL, gRPC, MQTT, WebSocket, and SOAP protocols.
+It supports HTTP, REST, gRPC, WebSocket, and SSE protocols.
 
 Configuration can be provided via flags, environment variables, or a configuration file.
 By default, mockd looks for a configuration file at ~/.mockd/config.yaml.`,

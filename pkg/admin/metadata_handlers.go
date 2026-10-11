@@ -99,14 +99,6 @@ var formatMetadata = map[portability.Format]SupportedFormat{
 		Export:      false,
 		Extensions:  []string{".txt", ".sh"},
 	},
-	portability.FormatWSDL: {
-		ID:          "wsdl",
-		Name:        "WSDL",
-		Description: "WSDL 1.1 service definition (generates SOAP mocks)",
-		Import:      true,
-		Export:      false,
-		Extensions:  []string{".wsdl", ".xml"},
-	},
 }
 
 // templateCategories maps template names to their categories.

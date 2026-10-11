@@ -134,7 +134,7 @@ type DeployResponse struct {
 
 // RequestLogEntry represents a logged request.
 // All fields from requestlog.Entry are preserved end-to-end so that protocol-
-// specific metadata (gRPC service, MQTT topic, GraphQL operation, etc.) is
+// specific metadata (gRPC service, etc.) is
 // visible to consumers of the Admin API and Engine Control API.
 type RequestLogEntry struct {
 	ID            string              `json:"id"`
@@ -161,9 +161,6 @@ type RequestLogEntry struct {
 	GRPC      *requestlog.GRPCMeta      `json:"grpc,omitempty"`
 	WebSocket *requestlog.WebSocketMeta `json:"websocket,omitempty"`
 	SSE       *requestlog.SSEMeta       `json:"sse,omitempty"`
-	MQTT      *requestlog.MQTTMeta      `json:"mqtt,omitempty"`
-	SOAP      *requestlog.SOAPMeta      `json:"soap,omitempty"`
-	GraphQL   *requestlog.GraphQLMeta   `json:"graphql,omitempty"`
 }
 
 // RequestListResponse lists request logs.
@@ -471,37 +468,6 @@ type SSEStats struct {
 	ConnectionsByMock map[string]int `json:"connectionsByMock"`
 }
 
-// --- MQTT ---
-
-// MQTTConnection represents an active MQTT client connection.
-type MQTTConnection struct {
-	ID              string    `json:"id"`
-	BrokerID        string    `json:"brokerId"`
-	ConnectedAt     time.Time `json:"connectedAt"`
-	Subscriptions   []string  `json:"subscriptions"`
-	ProtocolVersion byte      `json:"protocolVersion"`
-	Username        string    `json:"username,omitempty"`
-	RemoteAddr      string    `json:"remoteAddr,omitempty"`
-	Status          string    `json:"status"`
-}
-
-// MQTTConnectionListResponse lists MQTT connections.
-type MQTTConnectionListResponse struct {
-	Connections []*MQTTConnection `json:"connections"`
-	Stats       MQTTStats         `json:"stats"`
-}
-
-// MQTTStats represents MQTT broker statistics.
-type MQTTStats struct {
-	ConnectedClients    int            `json:"connectedClients"`
-	TotalSubscriptions  int            `json:"totalSubscriptions"`
-	TopicCount          int            `json:"topicCount"`
-	Port                int            `json:"port"`
-	TLSEnabled          bool           `json:"tlsEnabled"`
-	AuthEnabled         bool           `json:"authEnabled"`
-	SubscriptionsByClient map[string]int `json:"subscriptionsByClient"`
-}
-
 // --- WebSocket ---
 
 // WebSocketConnection represents an active WebSocket connection.
@@ -551,10 +517,10 @@ type GRPCStreamListResponse struct {
 
 // GRPCStats represents gRPC statistics.
 type GRPCStats struct {
-	ActiveStreams      int            `json:"activeStreams"`
-	TotalStreams       int64          `json:"totalStreams"`
-	TotalRPCs          int64          `json:"totalRPCs"`
-	TotalMessagesSent  int64          `json:"totalMessagesSent"`
-	TotalMessagesRecv  int64          `json:"totalMessagesRecv"`
-	StreamsByMethod    map[string]int `json:"streamsByMethod"`
+	ActiveStreams     int            `json:"activeStreams"`
+	TotalStreams      int64          `json:"totalStreams"`
+	TotalRPCs         int64          `json:"totalRPCs"`
+	TotalMessagesSent int64          `json:"totalMessagesSent"`
+	TotalMessagesRecv int64          `json:"totalMessagesRecv"`
+	StreamsByMethod   map[string]int `json:"streamsByMethod"`
 }

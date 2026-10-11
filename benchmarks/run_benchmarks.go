@@ -50,8 +50,6 @@ type Summary struct {
 	HTTP      ProtocolSummary `json:"http"`
 	WebSocket ProtocolSummary `json:"websocket"`
 	GRPC      ProtocolSummary `json:"grpc"`
-	MQTT      MQTTSummary     `json:"mqtt"`
-	SOAP      ProtocolSummary `json:"soap"`
 	Startup   StartupSummary  `json:"startup"`
 	Memory    MemorySummary   `json:"memory"`
 }
@@ -60,13 +58,6 @@ type ProtocolSummary struct {
 	ThroughputOpsPerSec float64 `json:"throughput_ops_per_sec"`
 	LatencyNs           float64 `json:"latency_ns"`
 	Claim               string  `json:"claim"`
-}
-
-type MQTTSummary struct {
-	QoS0OpsPerSec float64 `json:"qos0_ops_per_sec"`
-	QoS1OpsPerSec float64 `json:"qos1_ops_per_sec"`
-	QoS2OpsPerSec float64 `json:"qos2_ops_per_sec"`
-	Claim         string  `json:"claim"`
 }
 
 type StartupSummary struct {
@@ -107,10 +98,6 @@ func main() {
 	grpcBenches := runBenchmarks("BenchmarkGRPC")
 	results.Protocols["grpc"] = Protocol{Benchmarks: grpcBenches, Passed: true}
 
-	fmt.Println("Running MQTT benchmarks...")
-	mqttBenches := runBenchmarks("BenchmarkMQTT")
-	results.Protocols["mqtt"] = Protocol{Benchmarks: mqttBenches, Passed: true}
-
 	fmt.Println("Running startup benchmarks...")
 	startupBenches := runBenchmarks("BenchmarkServerStartup|BenchmarkCLIStartup")
 	results.Protocols["startup"] = Protocol{Benchmarks: startupBenches, Passed: true}
@@ -118,10 +105,6 @@ func main() {
 	fmt.Println("Running admin API benchmarks...")
 	adminBenches := runBenchmarks("BenchmarkAdminAPI")
 	results.Protocols["admin"] = Protocol{Benchmarks: adminBenches, Passed: true}
-
-	fmt.Println("Running SOAP benchmarks...")
-	soapBenches := runBenchmarks("BenchmarkSOAP")
-	results.Protocols["soap"] = Protocol{Benchmarks: soapBenches, Passed: true}
 
 	// Note: HTTP benchmarks are run via run_all.sh using Apache Bench against the CLI binary
 	// This provides more realistic real-world performance numbers
@@ -184,12 +167,12 @@ func runBenchmarks(pattern string) []Benchmark {
 // stripLogNoise removes interleaved log content from benchmark output so the
 // regex can match benchmark names with their results. Go's benchmark runner
 // prints "BenchmarkName-N \t" then the test body may emit log messages either:
-// (a) on the SAME line (e.g. MQTT broker logs after the tab), or
+// (a) on the SAME line (e.g. broker logs after the tab), or
 // (b) on entirely separate lines.
 // We handle both by stripping inline log content and removing full log lines.
 func stripLogNoise(output string) string {
 	// Regex to match log content that appears inline after a benchmark name
-	// e.g. "BenchmarkMQTT_PublishQoS0-8   \ttime=2026-... level=INFO ..."
+	// e.g. "BenchmarkGRPC_Unary-8   \ttime=2026-... level=INFO ..."
 	inlineLogRe := regexp.MustCompile(`\ttime=\d{4}-.*$`)
 	inlineStdLogRe := regexp.MustCompile(`\t\d{4}/\d{2}/\d{2}\s.*$`)
 
@@ -232,7 +215,6 @@ func parseBenchmarkOutput(output string) []Benchmark {
 	// both the normal single-line case and a two-pass reconnection.
 
 	// Pattern: BenchmarkName-N    iterations    ns/op    [optional MB/s]    bytes/op    allocs/op
-	// The MB/s field appears in some benchmarks (e.g. SOAP MessageSizes) and must be optional
 	re := regexp.MustCompile(`(Benchmark[\w/]+)-\d+\s+(\d+)\s+([\d.]+)\s+ns/op(?:\s+[\d.]+\s+MB/s)?\s+(\d+)\s+B/op\s+(\d+)\s+allocs/op`)
 
 	matches := re.FindAllStringSubmatch(cleaned, -1)
@@ -259,7 +241,7 @@ func parseBenchmarkOutput(output string) []Benchmark {
 
 	// Second pass: reconnect split lines. Look for orphaned benchmark names
 	// (line has "BenchmarkFoo-N" but no "ns/op") and orphaned result lines
-	// (line has "ns/op" but no "Benchmark"). This handles the MQTT case where
+	// (line has "ns/op" but no "Benchmark").
 	// log output splits the benchmark line.
 	if len(benchmarks) == 0 || len(matches) < strings.Count(cleaned, "ns/op") {
 		nameRe := regexp.MustCompile(`(Benchmark[\w/]+)-\d+\s*$`)
@@ -336,56 +318,6 @@ func calculateSummary(protocols map[string]Protocol) Summary {
 		summary.GRPC.Claim = fmt.Sprintf("%.0fK+ calls/s", summary.GRPC.ThroughputOpsPerSec/1000*0.7)
 	}
 
-	// MQTT - match both exact names and sub-benchmarks
-	if mqtt, ok := protocols["mqtt"]; ok {
-		for _, b := range mqtt.Benchmarks {
-			// Match exact QoS benchmarks (no slash suffix)
-			if b.Name == "BenchmarkMQTT_PublishQoS0" {
-				summary.MQTT.QoS0OpsPerSec = b.OpsPerSec
-			}
-			if b.Name == "BenchmarkMQTT_PublishQoS1" {
-				summary.MQTT.QoS1OpsPerSec = b.OpsPerSec
-			}
-			if b.Name == "BenchmarkMQTT_PublishQoS2" {
-				summary.MQTT.QoS2OpsPerSec = b.OpsPerSec
-			}
-			// Fallback to MessageSizes/64B for QoS0 estimate if not found
-			if summary.MQTT.QoS0OpsPerSec == 0 && b.Name == "BenchmarkMQTT_MessageSizes/64B" {
-				summary.MQTT.QoS0OpsPerSec = b.OpsPerSec
-			}
-		}
-		// Generate claim with conservative estimates
-		qos0Claim := summary.MQTT.QoS0OpsPerSec / 1000 * 0.9
-		qos1Claim := summary.MQTT.QoS1OpsPerSec / 1000 * 0.7
-		qos2Claim := summary.MQTT.QoS2OpsPerSec / 1000 * 0.8
-		if qos0Claim > 0 {
-			summary.MQTT.Claim = fmt.Sprintf("%.0fK+ QoS0", qos0Claim)
-			if qos1Claim > 0 {
-				summary.MQTT.Claim += fmt.Sprintf(", %.0fK+ QoS1", qos1Claim)
-			}
-			if qos2Claim > 0 {
-				summary.MQTT.Claim += fmt.Sprintf(", %.0fK+ QoS2", qos2Claim)
-			}
-		} else {
-			summary.MQTT.Claim = "100K+ msg/s (QoS 0)"
-		}
-	}
-
-	// SOAP
-	if soap, ok := protocols["soap"]; ok {
-		for _, b := range soap.Benchmarks {
-			if strings.Contains(b.Name, "RequestLatency") {
-				summary.SOAP.ThroughputOpsPerSec = b.OpsPerSec
-				summary.SOAP.LatencyNs = b.NsPerOp
-			}
-			// Use concurrent if available (higher throughput)
-			if strings.Contains(b.Name, "ConcurrentRequests") && b.OpsPerSec > summary.SOAP.ThroughputOpsPerSec {
-				summary.SOAP.ThroughputOpsPerSec = b.OpsPerSec
-			}
-		}
-		summary.SOAP.Claim = fmt.Sprintf("%.0fK+ req/s", summary.SOAP.ThroughputOpsPerSec/1000*0.8)
-	}
-
 	// Startup
 	if startup, ok := protocols["startup"]; ok {
 		for _, b := range startup.Benchmarks {
@@ -443,13 +375,6 @@ func writeMarkdown(results BenchmarkResults, path string) {
 		results.Summary.GRPC.ThroughputOpsPerSec,
 		results.Summary.GRPC.LatencyNs/1000,
 		results.Summary.GRPC.Claim)
-	fmt.Fprintf(&sb, "| MQTT QoS0 | %.0f msg/s | - | %s | Measured |\n",
-		results.Summary.MQTT.QoS0OpsPerSec,
-		results.Summary.MQTT.Claim)
-	fmt.Fprintf(&sb, "| SOAP | %.0f req/s | %.2fμs | %s | Measured |\n",
-		results.Summary.SOAP.ThroughputOpsPerSec,
-		results.Summary.SOAP.LatencyNs/1000,
-		results.Summary.SOAP.Claim)
 	fmt.Fprintf(&sb, "| Startup (CLI) | - | %.2fms | <10ms | Measured |\n",
 		results.Summary.Startup.CLINs/1e6)
 	sb.WriteString("| Memory | - | - | <25MB | Measured (RSS) |\n")
@@ -479,8 +404,7 @@ func writeMarkdown(results BenchmarkResults, path string) {
 	sb.WriteString("# Individual protocols:\n")
 	sb.WriteString("go test -bench=BenchmarkWS -benchtime=2s -benchmem ./tests/performance/...\n")
 	sb.WriteString("go test -bench=BenchmarkGRPC -benchtime=2s -benchmem ./tests/performance/...\n")
-	sb.WriteString("go test -bench=BenchmarkMQTT -benchtime=2s -benchmem ./tests/performance/...\n")
-	sb.WriteString("go test -bench=BenchmarkSOAP -benchtime=2s -benchmem ./tests/performance/...\n")
+
 	sb.WriteString("```\n")
 
 	_ = os.WriteFile(path, []byte(sb.String()), 0644)
@@ -497,13 +421,6 @@ func printSummary(results BenchmarkResults) {
 	fmt.Printf("gRPC:      %.0f calls/s (%.2fμs latency)\n",
 		results.Summary.GRPC.ThroughputOpsPerSec,
 		results.Summary.GRPC.LatencyNs/1000)
-	fmt.Printf("MQTT:      %.0f QoS0, %.0f QoS1, %.0f QoS2 msg/s\n",
-		results.Summary.MQTT.QoS0OpsPerSec,
-		results.Summary.MQTT.QoS1OpsPerSec,
-		results.Summary.MQTT.QoS2OpsPerSec)
-	fmt.Printf("SOAP:      %.0f req/s (%.2fμs latency)\n",
-		results.Summary.SOAP.ThroughputOpsPerSec,
-		results.Summary.SOAP.LatencyNs/1000)
 	fmt.Printf("Startup:   %.2fms server, %.2fms CLI\n",
 		results.Summary.Startup.ServerNs/1e6,
 		results.Summary.Startup.CLINs/1e6)

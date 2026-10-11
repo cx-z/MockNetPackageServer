@@ -7,12 +7,8 @@ import (
 
 	"github.com/getmockd/mockd/pkg/audit"
 	"github.com/getmockd/mockd/pkg/chaos"
-	"github.com/getmockd/mockd/pkg/graphql"
 	"github.com/getmockd/mockd/pkg/grpc"
 	"github.com/getmockd/mockd/pkg/mock"
-	"github.com/getmockd/mockd/pkg/mqtt"
-	"github.com/getmockd/mockd/pkg/oauth"
-	"github.com/getmockd/mockd/pkg/soap"
 	"github.com/getmockd/mockd/pkg/validation"
 )
 
@@ -164,20 +160,12 @@ type ServerConfiguration struct {
 	// Audit configures audit logging for request/response tracking
 	Audit *audit.AuditConfig `json:"audit,omitempty" yaml:"audit,omitempty"`
 
-	// GraphQL defines GraphQL mock endpoint configurations
-	GraphQL []*graphql.GraphQLConfig `json:"graphql,omitempty" yaml:"graphql,omitempty"`
 	// GRPC defines gRPC mock endpoint configurations
 	GRPC []*grpc.GRPCConfig `json:"grpc,omitempty" yaml:"grpc,omitempty"`
-	// OAuth defines OAuth/OIDC mock provider configurations
-	OAuth []*oauth.OAuthConfig `json:"oauth,omitempty" yaml:"oauth,omitempty"`
-	// SOAP defines SOAP mock endpoint configurations
-	SOAP []*soap.SOAPConfig `json:"soap,omitempty" yaml:"soap,omitempty"`
 	// Validation configures OpenAPI request/response validation
 	Validation *validation.ValidationConfig `json:"validation,omitempty" yaml:"validation,omitempty"`
 	// Chaos configures chaos/fault injection for testing resilience
 	Chaos *chaos.ChaosConfig `json:"chaos,omitempty" yaml:"chaos,omitempty"`
-	// MQTT defines MQTT broker configurations
-	MQTT []*mqtt.MQTTConfig `json:"mqtt,omitempty" yaml:"mqtt,omitempty"`
 }
 
 // MockCollection is a container for a set of mock configurations, typically loaded from a single config file.
@@ -369,7 +357,7 @@ type StatefulResourceConfig struct {
 	// Validation defines validation rules for CRUD operations
 	Validation *validation.StatefulValidation `json:"validation,omitempty" yaml:"validation,omitempty"`
 	// Response defines how stateful CRUD responses are transformed before serialization.
-	// This is the API gateway layer — same transforms apply across HTTP, SOAP, and GraphQL.
+	// This is the API gateway layer — same transforms apply across HTTP and gRPC.
 	// Nil means no transforms (current behavior, fully backward compatible).
 	Response *ResponseTransform `json:"response,omitempty" yaml:"response,omitempty"`
 	// Relationships maps field names to related tables for ?expand[] support.
@@ -379,14 +367,14 @@ type StatefulResourceConfig struct {
 // ResponseTransform defines how stateful resource responses are shaped.
 // This is the single, protocol-agnostic transform layer applied to all CRUD responses.
 // Item-level transforms (timestamps, fields) apply to every protocol.
-// List/verb overrides are HTTP-specific (SOAP/GraphQL have their own envelope conventions).
+// List/verb overrides are HTTP-specific.
 type ResponseTransform struct {
 	// Timestamps controls timestamp format and field naming in responses.
 	Timestamps *TimestampTransform `json:"timestamps,omitempty" yaml:"timestamps,omitempty"`
 	// Fields controls field injection, hiding, and renaming in item responses.
 	Fields *FieldTransform `json:"fields,omitempty" yaml:"fields,omitempty"`
 	// List controls the HTTP JSON list envelope shape (dataField, extraFields, meta renaming).
-	// This is HTTP-specific — SOAP/GraphQL use their own list envelope conventions.
+	// This is HTTP-specific.
 	List *ListTransform `json:"list,omitempty" yaml:"list,omitempty"`
 	// Create overrides the default HTTP status code for create operations (default: 201).
 	Create *VerbOverride `json:"create,omitempty" yaml:"create,omitempty"`
@@ -434,7 +422,7 @@ type FieldTransform struct {
 }
 
 // ListTransform controls the HTTP JSON list response envelope.
-// SOAP and GraphQL use their own envelope conventions — this is HTTP-only.
+// This is HTTP-only.
 type ListTransform struct {
 	// DataField is the key for the items array (default: "data").
 	DataField string `json:"dataField,omitempty" yaml:"dataField,omitempty"`
@@ -515,7 +503,7 @@ type ErrorTransform struct {
 //	      status: '"completed"'
 type CustomOperationConfig struct {
 	// Name is the unique operation name within a workspace (referenced in
-	// SOAP/GraphQL/gRPC configs). Two workspaces may each register an operation
+	// gRPC configs). Two workspaces may each register an operation
 	// with the same name.
 	Name string `json:"name" yaml:"name"`
 	// Workspace is the workspace this operation belongs to. An empty value means

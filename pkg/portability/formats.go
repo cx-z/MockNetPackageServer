@@ -21,7 +21,6 @@ const (
 	FormatHAR      Format = "har"      // HTTP Archive format
 	FormatWireMock Format = "wiremock" // WireMock JSON mappings
 	FormatCURL     Format = "curl"     // cURL command
-	FormatWSDL     Format = "wsdl"     // WSDL 1.1 service definition
 	FormatMockoon  Format = "mockoon"  // Mockoon environment JSON
 )
 
@@ -33,7 +32,7 @@ func (f Format) String() string {
 // IsValid returns true if the format is a known format.
 func (f Format) IsValid() bool {
 	switch f {
-	case FormatMockd, FormatOpenAPI, FormatPostman, FormatHAR, FormatWireMock, FormatCURL, FormatWSDL, FormatMockoon:
+	case FormatMockd, FormatOpenAPI, FormatPostman, FormatHAR, FormatWireMock, FormatCURL, FormatMockoon:
 		return true
 	default:
 		return false
@@ -43,7 +42,7 @@ func (f Format) IsValid() bool {
 // CanImport returns true if this format supports importing.
 func (f Format) CanImport() bool {
 	switch f {
-	case FormatMockd, FormatOpenAPI, FormatPostman, FormatHAR, FormatWireMock, FormatCURL, FormatWSDL, FormatMockoon:
+	case FormatMockd, FormatOpenAPI, FormatPostman, FormatHAR, FormatWireMock, FormatCURL, FormatMockoon:
 		return true
 	default:
 		return false
@@ -72,18 +71,6 @@ func DetectFormat(data []byte, filename string) Format {
 
 	// Check file extension for hints
 	ext := strings.ToLower(filepath.Ext(filename))
-
-	// Check for WSDL extension
-	if ext == ".wsdl" {
-		return FormatWSDL
-	}
-
-	// Check for WSDL content (XML with definitions root element)
-	if ext == ".xml" || ext == "" {
-		if isWSDLContent(trimmed) {
-			return FormatWSDL
-		}
-	}
 
 	// Check for HAR extension
 	if ext == ".har" {
@@ -252,7 +239,7 @@ func detectFormatFromYAML(data []byte) Format {
 	if t, ok := raw["type"]; ok {
 		if ts, ok := t.(string); ok {
 			switch ts {
-			case "http", "websocket", "graphql", "grpc", "soap", "mqtt", "oauth":
+			case "http", "websocket", "grpc", "oauth":
 				return FormatMockd
 			}
 		}
@@ -277,8 +264,6 @@ func ParseFormat(s string) Format {
 		return FormatWireMock
 	case "curl":
 		return FormatCURL
-	case "wsdl":
-		return FormatWSDL
 	case "mockoon":
 		return FormatMockoon
 	default:
@@ -295,7 +280,6 @@ func AllFormats() []Format {
 		FormatHAR,
 		FormatWireMock,
 		FormatCURL,
-		FormatWSDL,
 		FormatMockoon,
 	}
 }
@@ -309,7 +293,6 @@ func ImportFormats() []Format {
 		FormatHAR,
 		FormatWireMock,
 		FormatCURL,
-		FormatWSDL,
 		FormatMockoon,
 	}
 }
@@ -320,23 +303,4 @@ func ExportFormats() []Format {
 		FormatMockd,
 		FormatOpenAPI,
 	}
-}
-
-// isWSDLContent checks if the data looks like a WSDL document by inspecting
-// the XML root element for WSDL 1.1 <definitions> or WSDL 2.0 <description>.
-func isWSDLContent(data []byte) bool {
-	s := string(data)
-	// Quick check: must be XML
-	if !strings.HasPrefix(s, "<?xml") && !strings.HasPrefix(s, "<") {
-		return false
-	}
-	// Check for WSDL 1.1 root element (with or without namespace prefix)
-	if strings.Contains(s, "<definitions") || strings.Contains(s, "<wsdl:definitions") {
-		return true
-	}
-	// Check for WSDL 2.0 root element
-	if strings.Contains(s, "<description") || strings.Contains(s, "<wsdl:description") {
-		return true
-	}
-	return false
 }

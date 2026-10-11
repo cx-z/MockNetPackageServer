@@ -20,8 +20,6 @@ import (
 	"github.com/getmockd/mockd/pkg/cliconfig"
 	"github.com/getmockd/mockd/pkg/config"
 	"github.com/getmockd/mockd/pkg/engine"
-	"github.com/getmockd/mockd/pkg/graphql"
-	"github.com/getmockd/mockd/pkg/oauth"
 	"github.com/getmockd/mockd/pkg/validation"
 )
 
@@ -60,15 +58,6 @@ type ServerFlags struct {
 	AuditEnabled bool
 	AuditFile    string
 	AuditLevel   string
-
-	// GraphQL flags
-	GraphQLSchema string
-	GraphQLPath   string
-
-	// OAuth flags
-	OAuthEnabled bool
-	OAuthIssuer  string
-	OAuthPort    int
 
 	// Chaos flags
 	ChaosEnabled   bool
@@ -132,15 +121,6 @@ func RegisterServerFlags(fs *flag.FlagSet, f *ServerFlags) {
 	fs.StringVar(&f.AuditFile, "audit-file", "", "Path to audit log file")
 	fs.StringVar(&f.AuditLevel, "audit-level", "info", "Log level (debug, info, warn, error)")
 
-	// GraphQL flags
-	fs.StringVar(&f.GraphQLSchema, "graphql-schema", "", "Path to GraphQL schema file")
-	fs.StringVar(&f.GraphQLPath, "graphql-path", "/graphql", "GraphQL endpoint path")
-
-	// OAuth flags
-	fs.BoolVar(&f.OAuthEnabled, "oauth-enabled", false, "Enable OAuth provider")
-	fs.StringVar(&f.OAuthIssuer, "oauth-issuer", "", "OAuth issuer URL")
-	fs.IntVar(&f.OAuthPort, "oauth-port", 0, "OAuth server port")
-
 	// Chaos flags
 	fs.BoolVar(&f.ChaosEnabled, "chaos-enabled", false, "Enable chaos injection")
 	fs.StringVar(&f.ChaosLatency, "chaos-latency", "", "Add random latency (e.g., \"10ms-100ms\")")
@@ -197,16 +177,6 @@ func BuildServerConfig(f *ServerFlags) *config.ServerConfiguration {
 		serverCfg.Audit = BuildAuditConfig(f)
 	}
 
-	// Configure GraphQL if schema specified
-	if f.GraphQLSchema != "" {
-		serverCfg.GraphQL = BuildGraphQLConfig(f)
-	}
-
-	// Configure OAuth if enabled
-	if f.OAuthEnabled {
-		serverCfg.OAuth = BuildOAuthConfig(f)
-	}
-
 	// Configure validation if spec specified
 	if f.ValidateSpec != "" {
 		serverCfg.Validation = BuildValidationConfig(f)
@@ -251,30 +221,6 @@ func BuildAuditConfig(f *ServerFlags) *audit.AuditConfig {
 		Level:      f.AuditLevel,
 		OutputFile: f.AuditFile,
 	}
-}
-
-// BuildGraphQLConfig creates GraphQL configuration from flags.
-func BuildGraphQLConfig(f *ServerFlags) []*graphql.GraphQLConfig {
-	return []*graphql.GraphQLConfig{{
-		ID:            "cli-graphql",
-		Path:          f.GraphQLPath,
-		SchemaFile:    f.GraphQLSchema,
-		Introspection: true,
-		Enabled:       true,
-	}}
-}
-
-// BuildOAuthConfig creates OAuth configuration from flags.
-func BuildOAuthConfig(f *ServerFlags) []*oauth.OAuthConfig {
-	issuer := f.OAuthIssuer
-	if issuer == "" {
-		issuer = fmt.Sprintf("http://localhost:%d", f.OAuthPort)
-	}
-	return []*oauth.OAuthConfig{{
-		ID:      "cli-oauth",
-		Issuer:  issuer,
-		Enabled: true,
-	}}
 }
 
 // BuildValidationConfig creates validation configuration from flags.

@@ -14,13 +14,13 @@ var helpTopicCmd = &cobra.Command{
 	Short: "Show help for topics or commands",
 	Long: `Show detailed help for mockd topics like configuration, matching, templating, etc.
 
-Available topics: config, matching, templating, formats, websocket, graphql, grpc, mqtt, soap, sse
+Available topics: config, matching, templating, formats, websocket, grpc, sse
 
 Examples:
   mockd help templating    Show help on response templating
   mockd help matching      Show help on request matching rules
   mockd help graphql       Show help on GraphQL mocking`,
-	ValidArgs: []string{"config", "matching", "templating", "formats", "websocket", "graphql", "grpc", "mqtt", "soap", "sse"},
+	ValidArgs: []string{"config", "matching", "templating", "formats", "websocket", "grpc", "sse"},
 	Args:      cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {

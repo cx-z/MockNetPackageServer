@@ -93,10 +93,6 @@ func (a *API) handleListPorts(w http.ResponseWriter, r *http.Request) {
 				ports = append(ports, makePortInfo(grpcStatus.Port, "gRPC", "gRPC Server", false))
 			}
 
-			// Check for MQTT handler
-			if mqttStatus, ok := status.Protocols["mqtt"]; ok && mqttStatus.Enabled && mqttStatus.Port > 0 {
-				ports = append(ports, makePortInfo(mqttStatus.Port, "MQTT", "MQTT Broker", false))
-			}
 		}
 
 		// Also check protocol handlers list for additional ports
@@ -151,12 +147,6 @@ func handlerDisplayInfo(handlerType string) (protocol, component string) {
 		return "WebSocket", "WebSocket Server"
 	case "sse":
 		return "HTTP", "SSE Server"
-	case "graphql":
-		return "HTTP", "GraphQL Server"
-	case "soap":
-		return "HTTP", "SOAP Server"
-	case "mqtt":
-		return "MQTT", "MQTT Broker"
 	case "grpc":
 		return "gRPC", "gRPC Server"
 	default:

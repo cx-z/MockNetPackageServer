@@ -228,18 +228,6 @@ func (c *Client) ListRequests(ctx context.Context, filter *requestlog.Filter) (*
 		if filter.GRPCService != "" {
 			q.Set("grpcService", filter.GRPCService)
 		}
-		if filter.MQTTTopic != "" {
-			q.Set("mqttTopic", filter.MQTTTopic)
-		}
-		if filter.MQTTClientID != "" {
-			q.Set("mqttClientId", filter.MQTTClientID)
-		}
-		if filter.SOAPOperation != "" {
-			q.Set("soapOperation", filter.SOAPOperation)
-		}
-		if filter.GraphQLOpType != "" {
-			q.Set("graphqlOpType", filter.GraphQLOpType)
-		}
 		if filter.WSConnectionID != "" {
 			q.Set("wsConnectionId", filter.WSConnectionID)
 		}
@@ -1185,86 +1173,6 @@ func (c *Client) GetWebSocketStats(ctx context.Context) (*WebSocketStats, error)
 	var stats WebSocketStats
 	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
 		return nil, fmt.Errorf("failed to decode WebSocket stats: %w", err)
-	}
-	return &stats, nil
-}
-
-// ListMQTTConnections returns all active MQTT client connections.
-func (c *Client) ListMQTTConnections(ctx context.Context) ([]*MQTTConnection, error) {
-	resp, err := c.get(ctx, "/mqtt/connections")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.parseError(resp)
-	}
-
-	var result struct {
-		Connections []*MQTTConnection `json:"connections"`
-		Count       int               `json:"count"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode MQTT connections: %w", err)
-	}
-	return result.Connections, nil
-}
-
-// GetMQTTConnection returns a specific MQTT client connection.
-func (c *Client) GetMQTTConnection(ctx context.Context, id string) (*MQTTConnection, error) {
-	resp, err := c.get(ctx, "/mqtt/connections/"+url.PathEscape(id))
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotFound
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.parseError(resp)
-	}
-
-	var conn MQTTConnection
-	if err := json.NewDecoder(resp.Body).Decode(&conn); err != nil {
-		return nil, fmt.Errorf("failed to decode MQTT connection: %w", err)
-	}
-	return &conn, nil
-}
-
-// CloseMQTTConnection disconnects a specific MQTT client.
-func (c *Client) CloseMQTTConnection(ctx context.Context, id string) error {
-	resp, err := c.delete(ctx, "/mqtt/connections/"+url.PathEscape(id))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrNotFound
-	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return c.parseError(resp)
-	}
-	return nil
-}
-
-// GetMQTTStats returns MQTT broker statistics.
-func (c *Client) GetMQTTStats(ctx context.Context) (*MQTTStats, error) {
-	resp, err := c.get(ctx, "/mqtt/stats")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.parseError(resp)
-	}
-
-	var stats MQTTStats
-	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
-		return nil, fmt.Errorf("failed to decode MQTT stats: %w", err)
 	}
 	return &stats, nil
 }

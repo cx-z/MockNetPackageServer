@@ -7,8 +7,6 @@ import (
 
 	"github.com/getmockd/mockd/pkg/util"
 	"github.com/ohler55/ojg/jp"
-	"github.com/vektah/gqlparser/v2"
-	"github.com/vektah/gqlparser/v2/ast"
 )
 
 // ValidationError represents a validation failure with context.
@@ -47,16 +45,8 @@ func (m *Mock) Validate() error {
 		return m.validateHTTP()
 	case TypeWebSocket:
 		return m.validateWebSocket()
-	case TypeGraphQL:
-		return m.validateGraphQL()
 	case TypeGRPC:
 		return m.validateGRPC()
-	case TypeSOAP:
-		return m.validateSOAP()
-	case TypeMQTT:
-		return m.validateMQTT()
-	case TypeOAuth:
-		return m.validateOAuth()
 	case "":
 		// Legacy format - check if HTTP spec is present
 		if m.HTTP != nil {
@@ -468,56 +458,6 @@ func (c *ChunkedConfig) Validate() error {
 	return nil
 }
 
-// validateGraphQL validates GraphQL mock specifics.
-func (m *Mock) validateGraphQL() error {
-	if m.GraphQL == nil {
-		return &ValidationError{Field: "graphql", Message: "graphql spec is required for GraphQL mocks"}
-	}
-
-	if m.GraphQL.Path == "" {
-		return &ValidationError{Field: "graphql.path", Message: "path is required"}
-	}
-
-	if !strings.HasPrefix(m.GraphQL.Path, "/") {
-		return &ValidationError{Field: "graphql.path", Message: "path must start with /"}
-	}
-
-	// Either schema or schemaFile must be specified (but not both)
-	hasSchema := m.GraphQL.Schema != ""
-	hasSchemaFile := m.GraphQL.SchemaFile != ""
-
-	if !hasSchema && !hasSchemaFile {
-		return &ValidationError{Field: "graphql", Message: "one of schema or schemaFile is required"}
-	}
-
-	if hasSchema && hasSchemaFile {
-		return &ValidationError{Field: "graphql", Message: "cannot specify both schema and schemaFile"}
-	}
-
-	// Validate inline schema is parseable
-	if hasSchema {
-		source := &ast.Source{
-			Name:  "schema",
-			Input: m.GraphQL.Schema,
-		}
-		if _, err := gqlparser.LoadSchema(source); err != nil {
-			return &ValidationError{
-				Field:   "graphql.schema",
-				Message: "invalid GraphQL schema: " + err.Error(),
-			}
-		}
-	}
-
-	// Validate schemaFile path against traversal
-	if hasSchemaFile {
-		if _, safe := util.SafeFilePathAllowAbsolute(m.GraphQL.SchemaFile); !safe {
-			return &ValidationError{Field: "graphql.schemaFile", Message: "path cannot contain '..'"}
-		}
-	}
-
-	return nil
-}
-
 // validateGRPC validates gRPC mock specifics.
 func (m *Mock) validateGRPC() error {
 	if m.GRPC == nil {
@@ -573,156 +513,4 @@ func (m *Mock) validateGRPC() error {
 	return nil
 }
 
-// validateSOAP validates SOAP mock specifics.
-func (m *Mock) validateSOAP() error {
-	if m.SOAP == nil {
-		return &ValidationError{Field: "soap", Message: "soap spec is required for SOAP mocks"}
-	}
-
-	if m.SOAP.Path == "" {
-		return &ValidationError{Field: "soap.path", Message: "path is required"}
-	}
-
-	if !strings.HasPrefix(m.SOAP.Path, "/") {
-		return &ValidationError{Field: "soap.path", Message: "path must start with /"}
-	}
-
-	// WSDL and WSDLFile are mutually exclusive
-	hasWSDL := m.SOAP.WSDL != ""
-	hasWSDLFile := m.SOAP.WSDLFile != ""
-
-	if hasWSDL && hasWSDLFile {
-		return &ValidationError{Field: "soap", Message: "cannot specify both wsdl and wsdlFile"}
-	}
-
-	// Validate wsdlFile path against traversal
-	if hasWSDLFile {
-		if _, safe := util.SafeFilePathAllowAbsolute(m.SOAP.WSDLFile); !safe {
-			return &ValidationError{Field: "soap.wsdlFile", Message: "path cannot contain '..'"}
-		}
-	}
-
-	// Validate operations if present
-	validStatefulActions := map[string]bool{
-		"get": true, "list": true, "create": true,
-		"update": true, "patch": true, "delete": true, "custom": true,
-	}
-
-	for name, op := range m.SOAP.Operations {
-		if op.StatefulBinding != nil {
-			if op.StatefulBinding.Table == "" {
-				return &ValidationError{
-					Field:   fmt.Sprintf("soap.operations[%s].statefulBinding.table", name),
-					Message: "table is required when statefulBinding is set",
-				}
-			}
-			if op.StatefulBinding.Action == "" {
-				return &ValidationError{
-					Field:   fmt.Sprintf("soap.operations[%s].statefulBinding.action", name),
-					Message: "action is required when statefulBinding is set",
-				}
-			}
-			if !validStatefulActions[op.StatefulBinding.Action] {
-				return &ValidationError{
-					Field:   fmt.Sprintf("soap.operations[%s].statefulBinding.action", name),
-					Message: fmt.Sprintf("invalid stateful action %q; valid values: get, list, create, update, patch, delete, custom", op.StatefulBinding.Action),
-				}
-			}
-		} else if op.Response == "" && op.Fault == nil {
-			return &ValidationError{
-				Field:   fmt.Sprintf("soap.operations[%s]", name),
-				Message: "operation must have either response, fault, or statefulBinding",
-			}
-		}
-	}
-
-	return nil
-}
-
-// validateMQTT validates MQTT mock specifics.
-func (m *Mock) validateMQTT() error {
-	if m.MQTT == nil {
-		return &ValidationError{Field: "mqtt", Message: "mqtt spec is required for MQTT mocks"}
-	}
-
-	if m.MQTT.Port <= 0 || m.MQTT.Port > 65535 {
-		return &ValidationError{Field: "mqtt.port", Message: "port must be between 1 and 65535"}
-	}
-
-	// Validate TLS config if present
-	if m.MQTT.TLS != nil && m.MQTT.TLS.Enabled {
-		if m.MQTT.TLS.CertFile == "" {
-			return &ValidationError{Field: "mqtt.tls.certFile", Message: "certFile is required when TLS is enabled"}
-		}
-		if _, ok := util.SafeFilePathAllowAbsolute(m.MQTT.TLS.CertFile); !ok {
-			return &ValidationError{Field: "mqtt.tls.certFile", Message: "path cannot contain '..'"}
-		}
-		if m.MQTT.TLS.KeyFile == "" {
-			return &ValidationError{Field: "mqtt.tls.keyFile", Message: "keyFile is required when TLS is enabled"}
-		}
-		if _, ok := util.SafeFilePathAllowAbsolute(m.MQTT.TLS.KeyFile); !ok {
-			return &ValidationError{Field: "mqtt.tls.keyFile", Message: "path cannot contain '..'"}
-		}
-	}
-
-	// Validate auth config if present
-	if m.MQTT.Auth != nil && m.MQTT.Auth.Enabled {
-		if len(m.MQTT.Auth.Users) == 0 {
-			return &ValidationError{Field: "mqtt.auth.users", Message: "at least one user is required when auth is enabled"}
-		}
-		for i, user := range m.MQTT.Auth.Users {
-			if user.Username == "" {
-				return &ValidationError{
-					Field:   fmt.Sprintf("mqtt.auth.users[%d].username", i),
-					Message: "username is required",
-				}
-			}
-		}
-	}
-
-	// Validate topics if present
-	for i, topic := range m.MQTT.Topics {
-		if topic.Topic == "" {
-			return &ValidationError{
-				Field:   fmt.Sprintf("mqtt.topics[%d].topic", i),
-				Message: "topic is required",
-			}
-		}
-		if topic.QoS < 0 || topic.QoS > 2 {
-			return &ValidationError{
-				Field:   fmt.Sprintf("mqtt.topics[%d].qos", i),
-				Message: "qos must be 0, 1, or 2",
-			}
-		}
-	}
-
-	return nil
-}
-
-// validateOAuth validates OAuth mock specifics.
-func (m *Mock) validateOAuth() error {
-	if m.OAuth == nil {
-		return &ValidationError{Field: "oauth", Message: "oauth spec is required for OAuth mocks"}
-	}
-
-	if m.OAuth.Issuer == "" {
-		return &ValidationError{Field: "oauth.issuer", Message: "issuer is required"}
-	}
-
-	// Validate at least one client is configured
-	if len(m.OAuth.Clients) == 0 {
-		return &ValidationError{Field: "oauth.clients", Message: "at least one client must be configured"}
-	}
-
-	// Validate each client has clientId
-	for i, client := range m.OAuth.Clients {
-		if client.ClientID == "" {
-			return &ValidationError{
-				Field:   fmt.Sprintf("oauth.clients[%d].clientId", i),
-				Message: "clientId is required",
-			}
-		}
-	}
-
-	return nil
-}
+// validateWebSocket validates WebSocket mock specifics.

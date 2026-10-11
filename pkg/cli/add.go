@@ -45,7 +45,6 @@ var (
 	addEcho    bool
 
 	addOperation string
-	addOpType    string
 	addResponse  string
 
 	addService    string
@@ -54,24 +53,11 @@ var (
 	addProtoFiles flags.StringSlice
 	addProtoPaths flags.StringSlice
 
-	addTopic    string
-	addPayload  string
-	addQoS      int
-	addMQTTPort int
-
-	addSoapAction        string
 	addActionAlias       string
-	addMutation          bool
 	addStatefulOperation string
 
 	addTable      string
 	addBindAction string
-
-	addIssuer        string
-	addClientID      string
-	addClientSecret  string
-	addOAuthUser     string
-	addOAuthPassword string
 )
 
 var addCmd = &cobra.Command{
@@ -86,7 +72,7 @@ the protocol subcommands:
   mockd add --type http --path /api/hello   # flag type
   mockd http add --path /api/hello          # subcommand
 
-Valid types: http, websocket, graphql, grpc, mqtt, soap, oauth`,
+Valid types: http, websocket, grpc`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runAdd,
 }
@@ -94,13 +80,13 @@ Valid types: http, websocket, graphql, grpc, mqtt, soap, oauth`,
 func init() {
 	rootCmd.AddCommand(addCmd)
 
-	addCmd.Flags().StringVarP(&addMockType, "type", "t", "http", "Mock type (http, websocket, graphql, grpc, mqtt, soap, oauth)")
+	addCmd.Flags().StringVarP(&addMockType, "type", "t", "http", "Mock type (http, websocket, grpc)")
 	addCmd.Flags().StringVarP(&addName, "name", "n", "", "Mock display name")
 	addCmd.Flags().BoolVar(&addAllowDuplicate, "allow-duplicate", false, "Create a new mock even if one already exists on the same path")
 	addCmd.Flags().StringVar(&addStateful, "stateful", "", "Create a stateful CRUD resource (value is the resource name, e.g., users)")
 
 	addCmd.Flags().StringVarP(&addMethod, "method", "m", "GET", "HTTP method to match")
-	addCmd.Flags().StringVar(&addPath, "path", "", "URL path to match (required for http, websocket, graphql, soap)")
+	addCmd.Flags().StringVar(&addPath, "path", "", "URL path to match (required for http, websocket)")
 	addCmd.Flags().IntVarP(&addStatus, "status", "s", 200, "Response status code")
 	addCmd.Flags().StringVarP(&addBody, "body", "b", "", "Response body")
 	addCmd.Flags().StringVar(&addBodyFile, "body-file", "", "Read response body from file")
@@ -122,11 +108,7 @@ func init() {
 	addCmd.Flags().StringVar(&addMessage, "message", "", "Default response message (JSON) for WebSocket")
 	addCmd.Flags().BoolVar(&addEcho, "echo", false, "Enable echo mode for WebSocket")
 
-	addCmd.Flags().StringVar(&addOperation, "operation", "", "Operation name (required for graphql, soap)")
-	addCmd.Flags().StringVar(&addActionAlias, "action", "", "SOAP action name (alias for --operation)")
-	addCmd.Flags().StringVar(&addOpType, "op-type", "query", "GraphQL operation type (query/mutation)")
-	addCmd.Flags().BoolVar(&addMutation, "mutation", false, "Create a Mutation resolver instead of Query (GraphQL)")
-	addCmd.Flags().StringVar(&addResponse, "response", "", "JSON response data (for graphql, grpc)")
+	addCmd.Flags().StringVar(&addResponse, "response", "", "JSON response data (for grpc)")
 
 	addCmd.Flags().StringVar(&addService, "service", "", "gRPC service name (e.g., greeter.Greeter)")
 	addCmd.Flags().StringVar(&addRPCMethod, "rpc-method", "", "gRPC method name")
@@ -134,23 +116,11 @@ func init() {
 	addCmd.Flags().Var(&addProtoFiles, "proto", "Path to .proto file (required for gRPC, repeatable)")
 	addCmd.Flags().Var(&addProtoPaths, "proto-path", "Import path for proto dependencies (repeatable)")
 
-	addCmd.Flags().StringVar(&addTopic, "topic", "", "MQTT topic pattern")
-	addCmd.Flags().StringVar(&addPayload, "payload", "", "MQTT response payload")
-	addCmd.Flags().IntVar(&addQoS, "qos", 0, "MQTT QoS level (0, 1, 2)")
-	addCmd.Flags().IntVar(&addMQTTPort, "mqtt-port", 1883, "MQTT broker port")
-
 	addCmd.Flags().StringVar(&addStatefulOperation, "stateful-operation", "", "Wire to a custom stateful operation (e.g., TransferFunds)")
 
 	addCmd.Flags().StringVar(&addTable, "table", "", "Bind to a stateful resource table (e.g., users)")
 	addCmd.Flags().StringVar(&addBindAction, "bind", "", "Stateful action: list, get, create, update, patch, delete, custom")
 
-	addCmd.Flags().StringVar(&addSoapAction, "soap-action", "", "SOAPAction header value")
-
-	addCmd.Flags().StringVar(&addIssuer, "issuer", "", "OAuth issuer URL (default: http://localhost:4280)")
-	addCmd.Flags().StringVar(&addClientID, "client-id", "test-client", "OAuth client ID")
-	addCmd.Flags().StringVar(&addClientSecret, "client-secret", "test-secret", "OAuth client secret")
-	addCmd.Flags().StringVar(&addOAuthUser, "oauth-user", "testuser", "OAuth test username")
-	addCmd.Flags().StringVar(&addOAuthPassword, "oauth-password", "password", "OAuth test password")
 }
 
 func runAdd(cmd *cobra.Command, args []string) error { //nolint:gocyclo // CLI dispatch function
@@ -161,13 +131,8 @@ func runAdd(cmd *cobra.Command, args []string) error { //nolint:gocyclo // CLI d
 	}
 
 	// Resolve flag aliases:
-	// --action is an alias for --operation (SOAP compatibility)
 	if addActionAlias != "" && addOperation == "" {
 		addOperation = addActionAlias
-	}
-	// --mutation sets op-type to "mutation" (GraphQL shorthand)
-	if addMutation {
-		addOpType = "mutation"
 	}
 
 	// Normalize mock type
@@ -177,16 +142,12 @@ func runAdd(cmd *cobra.Command, args []string) error { //nolint:gocyclo // CLI d
 	validTypes := map[string]mock.Type{
 		"http":      mock.TypeHTTP,
 		"websocket": mock.TypeWebSocket,
-		"graphql":   mock.TypeGraphQL,
 		"grpc":      mock.TypeGRPC,
-		"mqtt":      mock.TypeMQTT,
-		"soap":      mock.TypeSOAP,
-		"oauth":     mock.TypeOAuth,
 	}
 
 	mockTypeEnum, ok := validTypes[mt]
 	if !ok {
-		return fmt.Errorf("invalid mock type: %s\n\nValid types: http, websocket, graphql, grpc, mqtt, soap, oauth", addMockType)
+		return fmt.Errorf("invalid mock type: %s\n\nValid types: http, websocket, grpc", addMockType)
 	}
 
 	// Handle --stateful: create a stateful CRUD resource instead of a mock
@@ -200,8 +161,8 @@ func runAdd(cmd *cobra.Command, args []string) error { //nolint:gocyclo // CLI d
 	}
 
 	// --table/--bind is only supported for protocols with stateful bindings
-	if addTable != "" && mockTypeEnum != mock.TypeHTTP && mockTypeEnum != mock.TypeSOAP {
-		return fmt.Errorf("--table/--bind is supported for http and soap mocks, not %s", mt)
+	if addTable != "" && mockTypeEnum != mock.TypeHTTP {
+		return fmt.Errorf("--table/--bind is supported for http mocks, not %s", mt)
 	}
 
 	// Build mock configuration based on type
@@ -214,24 +175,8 @@ func runAdd(cmd *cobra.Command, args []string) error { //nolint:gocyclo // CLI d
 			addSSE, addSSEEvents, addSSEDelay, addSSETemplate, addSSERepeat, addSSEKeepalive, addBodyContains, addPathPattern, addStatefulOperation, addTable, addBindAction, addOperation)
 	case mock.TypeWebSocket:
 		m, err = buildWebSocketMock(addName, addPath, addMessage, addEcho)
-	case mock.TypeGraphQL:
-		m, err = buildGraphQLMock(addName, addPath, addOperation, addOpType, addResponse)
 	case mock.TypeGRPC:
 		m, err = buildGRPCMock(addName, addService, addRPCMethod, addResponse, addGRPCPort, addProtoFiles, addProtoPaths)
-	case mock.TypeMQTT:
-		m, err = buildMQTTMock(addName, addTopic, addPayload, addQoS, addMQTTPort)
-	case mock.TypeSOAP:
-		// --table/--bind serve as aliases for SOAP's --stateful-resource/--stateful-action
-		soapRes, soapAct := soapAddTable, soapAddBindAction
-		if soapRes == "" && addTable != "" {
-			soapRes = addTable
-		}
-		if soapAct == "" && addBindAction != "" {
-			soapAct = addBindAction
-		}
-		m, err = buildSOAPMock(addName, addPath, addOperation, addSoapAction, addResponse, soapRes, soapAct)
-	case mock.TypeOAuth:
-		m = buildOAuthMock(addName, addIssuer, addClientID, addClientSecret, addOAuthUser, addOAuthPassword)
 	}
 
 	if err != nil {
@@ -258,17 +203,6 @@ func runAdd(cmd *cobra.Command, args []string) error { //nolint:gocyclo // CLI d
 				Mock:   updated,
 				Action: "updated",
 			}, mockTypeEnum, jsonOutput)
-		}
-	}
-
-	// For SOAP mocks: merge operations into existing mock on same path
-	if mockTypeEnum == mock.TypeSOAP && !addAllowDuplicate && m.SOAP != nil {
-		result, merged, err := mergeSOAPIfExists(client, m)
-		if err != nil {
-			return fmt.Errorf("%s", FormatConnectionError(err))
-		}
-		if merged {
-			return outputResult(result, mockTypeEnum, jsonOutput)
 		}
 	}
 
@@ -302,81 +236,6 @@ func findExistingHTTPMock(client AdminClient, method, path string) (string, erro
 		}
 	}
 	return "", nil
-}
-
-// findExistingSOAPMock looks for an existing SOAP mock on the same path.
-// Returns the mock ID if found, empty string if not.
-func findExistingSOAPMock(client AdminClient, path string) (string, error) {
-	mocks, err := client.ListMocks(resolvedWorkspace())
-	if err != nil {
-		return "", err
-	}
-
-	for _, m := range mocks {
-		if m.Type != mock.TypeSOAP {
-			continue
-		}
-		if m.SOAP != nil && m.SOAP.Path == path {
-			return m.ID, nil
-		}
-	}
-	return "", nil
-}
-
-// mergeSOAPIfExists merges new operations into an existing SOAP mock on the same path.
-// Returns (result, true, nil) if merged, (nil, false, nil) if no existing mock found.
-func mergeSOAPIfExists(client AdminClient, newMock *config.MockConfiguration) (*CreateMockResult, bool, error) {
-	existingID, err := findExistingSOAPMock(client, newMock.SOAP.Path)
-	if err != nil {
-		return nil, false, err
-	}
-	if existingID == "" {
-		return nil, false, nil
-	}
-
-	// Fetch the full existing mock to get its operations
-	existing, err := client.GetMock(existingID)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to get existing SOAP mock: %w", err)
-	}
-
-	if existing.SOAP == nil {
-		return nil, false, nil
-	}
-	if existing.SOAP.Operations == nil {
-		existing.SOAP.Operations = make(map[string]mock.OperationConfig)
-	}
-
-	// Merge new operations into the existing mock
-	addedOps := []string{}
-	for opName, opConfig := range newMock.SOAP.Operations {
-		if _, exists := existing.SOAP.Operations[opName]; !exists {
-			addedOps = append(addedOps, opName)
-		}
-		existing.SOAP.Operations[opName] = opConfig
-	}
-
-	// Collect all operation names after merge
-	totalOps := make([]string, 0, len(existing.SOAP.Operations))
-	for opName := range existing.SOAP.Operations {
-		totalOps = append(totalOps, opName)
-	}
-
-	// Update the existing mock with merged operations
-	updated, err := client.UpdateMock(existingID, existing)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to update mock: %w", err)
-	}
-
-	result := &CreateMockResult{
-		Mock:            updated,
-		Action:          "merged",
-		Message:         fmt.Sprintf("Merged %d operation(s) into existing SOAP mock %s", len(addedOps), existingID),
-		AddedOperations: addedOps,
-		TotalOperations: totalOps,
-	}
-
-	return result, true, nil
 }
 
 // buildHTTPMock creates an HTTP mock configuration.
@@ -662,87 +521,6 @@ Run 'mockd add --help' for more options`)
 	return m, nil
 }
 
-// buildGraphQLMock creates a GraphQL mock configuration.
-func buildGraphQLMock(name, path, operation, opType, response string) (*config.MockConfiguration, error) {
-	if operation == "" {
-		return nil, errors.New(`--operation is required for GraphQL mocks
-
-Usage: mockd add --type graphql --operation getUser [flags]
-
-Run 'mockd add --help' for more options`)
-	}
-
-	// Validate operation type
-	opType = strings.ToLower(opType)
-	if opType != "query" && opType != "mutation" {
-		return nil, fmt.Errorf("invalid --op-type: %s (must be 'query' or 'mutation')", opType)
-	}
-
-	// Default path
-	if path == "" {
-		path = "/graphql"
-	}
-
-	// Build resolver key based on operation type
-	// Capitalize first letter of opType (e.g., "query" -> "Query")
-	opTypeCapitalized := strings.ToUpper(opType[:1]) + opType[1:]
-	resolverKey := fmt.Sprintf("%s.%s", opTypeCapitalized, operation)
-
-	// Auto-generate a minimal schema for CLI-created GraphQL mocks
-	schema := generateMinimalGraphQLSchema(operation, opType, response)
-
-	gqlEnabled := true
-	m := &config.MockConfiguration{
-		Name:    name,
-		Type:    mock.TypeGraphQL,
-		Enabled: &gqlEnabled,
-		GraphQL: &mock.GraphQLSpec{
-			Path:      path,
-			Schema:    schema,
-			Resolvers: make(map[string]mock.ResolverConfig),
-		},
-	}
-
-	// Parse response if provided
-	if response != "" {
-		var responseData interface{}
-		if err := json.Unmarshal([]byte(response), &responseData); err != nil {
-			return nil, fmt.Errorf("invalid JSON response: %w", err)
-		}
-		m.GraphQL.Resolvers[resolverKey] = mock.ResolverConfig{
-			Response: responseData,
-		}
-	} else {
-		m.GraphQL.Resolvers[resolverKey] = mock.ResolverConfig{}
-	}
-
-	return m, nil
-}
-
-// generateMinimalGraphQLSchema creates a minimal schema for CLI-created GraphQL mocks.
-func generateMinimalGraphQLSchema(operation, opType, _ string) string {
-	// Generate a simple schema that supports the operation
-	// The response type is JSON (dynamic), so we use a scalar
-	var sb strings.Builder
-
-	sb.WriteString("scalar JSON\n\n")
-
-	if opType == "query" {
-		sb.WriteString("type Query {\n")
-		fmt.Fprintf(&sb, "  %s: JSON\n", operation)
-		sb.WriteString("}\n")
-	} else {
-		sb.WriteString("type Query {\n")
-		sb.WriteString("  _empty: String\n") // GraphQL requires at least one Query field
-		sb.WriteString("}\n\n")
-		sb.WriteString("type Mutation {\n")
-		fmt.Fprintf(&sb, "  %s: JSON\n", operation)
-		sb.WriteString("}\n")
-	}
-
-	return sb.String()
-}
-
 // buildGRPCMock creates a gRPC mock configuration.
 func buildGRPCMock(name, service, rpcMethod, response string, port int, protoFiles, protoPaths flags.StringSlice) (*config.MockConfiguration, error) {
 	// Proto file is required for gRPC mocks
@@ -839,159 +617,6 @@ Run 'mockd add --help' for more options`)
 	return m, nil
 }
 
-// buildMQTTMock creates an MQTT mock configuration.
-func buildMQTTMock(name, topic, payload string, qos, port int) (*config.MockConfiguration, error) {
-	if topic == "" {
-		return nil, errors.New(`--topic is required for MQTT mocks
-
-Usage: mockd add --type mqtt --topic sensors/temperature [flags]
-
-Run 'mockd add --help' for more options`)
-	}
-
-	// Validate QoS
-	if qos < 0 || qos > 2 {
-		return nil, fmt.Errorf("invalid --qos: %d (must be 0, 1, or 2)", qos)
-	}
-
-	mqttEnabled := true
-	m := &config.MockConfiguration{
-		Name:    name,
-		Type:    mock.TypeMQTT,
-		Enabled: &mqttEnabled,
-		MQTT: &mock.MQTTSpec{
-			Port: port,
-			Topics: []mock.TopicConfig{
-				{
-					Topic: topic,
-					QoS:   qos,
-				},
-			},
-		},
-	}
-
-	// Add payload as a message if provided
-	if payload != "" {
-		m.MQTT.Topics[0].Messages = []mock.MessageConfig{
-			{
-				Payload: payload,
-			},
-		}
-	}
-
-	return m, nil
-}
-
-// buildSOAPMock creates a SOAP mock configuration.
-func buildSOAPMock(name, path, operation, soapAction, response, table, bindAction string) (*config.MockConfiguration, error) {
-	if operation == "" {
-		return nil, errors.New(`--operation is required for SOAP mocks
-
-Usage: mockd add --type soap --operation GetWeather [flags]
-
-Run 'mockd add --help' for more options`)
-	}
-
-	// Validate stateful flags: both or neither
-	if (table != "") != (bindAction != "") {
-		return nil, errors.New("--table and --bind must be used together")
-	}
-
-	// Validate stateful action values
-	if bindAction != "" {
-		validActions := map[string]bool{
-			"list": true, "get": true, "create": true,
-			"update": true, "patch": true, "delete": true, "custom": true,
-		}
-		if !validActions[bindAction] {
-			return nil, fmt.Errorf("invalid --bind %q: must be one of list, get, create, update, patch, delete, custom", bindAction)
-		}
-	}
-
-	// Default path
-	if path == "" {
-		path = "/soap"
-	}
-
-	soapEnabled := true
-	m := &config.MockConfiguration{
-		Name:    name,
-		Type:    mock.TypeSOAP,
-		Enabled: &soapEnabled,
-		SOAP: &mock.SOAPSpec{
-			Path:       path,
-			Operations: make(map[string]mock.OperationConfig),
-		},
-	}
-
-	opConfig := mock.OperationConfig{
-		Response: response,
-	}
-
-	if soapAction != "" {
-		opConfig.SOAPAction = soapAction
-	}
-
-	if table != "" {
-		opConfig.StatefulBinding = &mock.StatefulBinding{
-			Table:  table,
-			Action: bindAction,
-		}
-	}
-
-	m.SOAP.Operations[operation] = opConfig
-
-	return m, nil
-}
-
-// buildOAuthMock creates an OAuth/OIDC mock configuration.
-func buildOAuthMock(name, issuer, clientID, clientSecret, username, password string) *config.MockConfiguration {
-	// Default issuer
-	if issuer == "" {
-		issuer = "http://localhost:4280"
-	}
-
-	// Default name
-	if name == "" {
-		name = "OAuth Mock"
-	}
-
-	oauthEnabled := true
-	m := &config.MockConfiguration{
-		Name:    name,
-		Type:    mock.TypeOAuth,
-		Enabled: &oauthEnabled,
-		OAuth: &mock.OAuthSpec{
-			Issuer:        issuer,
-			TokenExpiry:   "1h",
-			RefreshExpiry: "7d",
-			DefaultScopes: []string{"openid", "profile", "email"},
-			Clients: []mock.OAuthClient{
-				{
-					ClientID:     clientID,
-					ClientSecret: clientSecret,
-					RedirectURIs: []string{"http://localhost:3000/callback"},
-					GrantTypes:   []string{"authorization_code", "client_credentials", "refresh_token", "password"},
-				},
-			},
-			Users: []mock.OAuthUser{
-				{
-					Username: username,
-					Password: password,
-					Claims: map[string]interface{}{
-						"sub":   username,
-						"email": username + "@example.com",
-						"name":  username,
-					},
-				},
-			},
-		},
-	}
-
-	return m
-}
-
-// runAddStateful creates a stateful CRUD resource with HTTP endpoints via the admin API.
 // When --path is provided, it generates 5 CRUD mocks bound to the table.
 // Without --path, it creates a bridge-only table (no HTTP endpoints).
 func runAddStateful(name string) error {
@@ -1087,7 +712,7 @@ func outputResult(result *CreateMockResult, mockType mock.Type, jsonOutput bool)
 		fmt.Printf("Merged into mock: %s\n", created.ID)
 		fmt.Printf("  Type: %s\n", created.Type)
 
-		switch mockType { //nolint:exhaustive // only gRPC, MQTT, and SOAP have merge output
+		switch mockType { //nolint:exhaustive // only gRPC has merge output
 		case mock.TypeGRPC:
 			if len(result.AddedServices) > 0 {
 				fmt.Printf("  Added:\n")
@@ -1099,32 +724,6 @@ func outputResult(result *CreateMockResult, mockType mock.Type, jsonOutput bool)
 				fmt.Printf("  Total services:\n")
 				for _, svc := range result.TotalServices {
 					fmt.Printf("    - %s\n", svc)
-				}
-			}
-		case mock.TypeMQTT:
-			if len(result.AddedTopics) > 0 {
-				fmt.Printf("  Added:\n")
-				for _, topic := range result.AddedTopics {
-					fmt.Printf("    - %s\n", topic)
-				}
-			}
-			if len(result.TotalTopics) > 0 {
-				fmt.Printf("  Total topics:\n")
-				for _, topic := range result.TotalTopics {
-					fmt.Printf("    - %s\n", topic)
-				}
-			}
-		case mock.TypeSOAP:
-			if len(result.AddedOperations) > 0 {
-				fmt.Printf("  Added:\n")
-				for _, op := range result.AddedOperations {
-					fmt.Printf("    - %s\n", op)
-				}
-			}
-			if len(result.TotalOperations) > 0 {
-				fmt.Printf("  Total operations:\n")
-				for _, op := range result.TotalOperations {
-					fmt.Printf("    - %s\n", op)
 				}
 			}
 		}
@@ -1166,13 +765,6 @@ func outputResult(result *CreateMockResult, mockType mock.Type, jsonOutput bool)
 				fmt.Printf("  Echo: enabled\n")
 			}
 		}
-	case mock.TypeGraphQL:
-		if created.GraphQL != nil {
-			fmt.Printf("  Path: %s\n", created.GraphQL.Path)
-			for op := range created.GraphQL.Resolvers {
-				fmt.Printf("  Operation: %s\n", op)
-			}
-		}
 	case mock.TypeGRPC:
 		if created.GRPC != nil {
 			for svc, cfg := range created.GRPC.Services {
@@ -1180,31 +772,6 @@ func outputResult(result *CreateMockResult, mockType mock.Type, jsonOutput bool)
 				for method := range cfg.Methods {
 					fmt.Printf("  Method: %s\n", method)
 				}
-			}
-		}
-	case mock.TypeMQTT:
-		if created.MQTT != nil && len(created.MQTT.Topics) > 0 {
-			fmt.Printf("  Topic: %s\n", created.MQTT.Topics[0].Topic)
-			fmt.Printf("  QoS: %d\n", created.MQTT.Topics[0].QoS)
-		}
-	case mock.TypeSOAP:
-		if created.SOAP != nil {
-			fmt.Printf("  Path: %s\n", created.SOAP.Path)
-			for op, cfg := range created.SOAP.Operations {
-				fmt.Printf("  Operation: %s\n", op)
-				if cfg.SOAPAction != "" {
-					fmt.Printf("  SOAPAction: %s\n", cfg.SOAPAction)
-				}
-			}
-		}
-	case mock.TypeOAuth:
-		if created.OAuth != nil {
-			fmt.Printf("  Issuer: %s\n", created.OAuth.Issuer)
-			if len(created.OAuth.Clients) > 0 {
-				fmt.Printf("  Client ID: %s\n", created.OAuth.Clients[0].ClientID)
-			}
-			if len(created.OAuth.Users) > 0 {
-				fmt.Printf("  User: %s\n", created.OAuth.Users[0].Username)
 			}
 		}
 	}
@@ -1218,7 +785,7 @@ func outputJSONResult(result *CreateMockResult, mockType mock.Type) error { //no
 
 	// For merge results, include merge-specific information
 	if result.IsMerge() {
-		switch mockType { //nolint:exhaustive // only gRPC, MQTT, and SOAP have merge JSON output
+		switch mockType { //nolint:exhaustive // only gRPC has merge JSON output
 		case mock.TypeGRPC:
 			return output.JSON(struct {
 				ID            string   `json:"id"`
@@ -1232,36 +799,6 @@ func outputJSONResult(result *CreateMockResult, mockType mock.Type) error { //no
 				Action:        result.Action,
 				AddedServices: result.AddedServices,
 				TotalServices: result.TotalServices,
-			})
-		case mock.TypeMQTT:
-			return output.JSON(struct {
-				ID          string   `json:"id"`
-				Type        string   `json:"type"`
-				Action      string   `json:"action"`
-				AddedTopics []string `json:"addedTopics,omitempty"`
-				TotalTopics []string `json:"totalTopics,omitempty"`
-			}{
-				ID:          created.ID,
-				Type:        string(created.Type),
-				Action:      result.Action,
-				AddedTopics: result.AddedTopics,
-				TotalTopics: result.TotalTopics,
-			})
-		case mock.TypeSOAP:
-			return output.JSON(struct {
-				ID              string   `json:"id"`
-				Type            string   `json:"type"`
-				Action          string   `json:"action"`
-				Path            string   `json:"path"`
-				AddedOperations []string `json:"addedOperations,omitempty"`
-				TotalOperations []string `json:"totalOperations,omitempty"`
-			}{
-				ID:              created.ID,
-				Type:            string(created.Type),
-				Action:          result.Action,
-				Path:            created.SOAP.Path,
-				AddedOperations: result.AddedOperations,
-				TotalOperations: result.TotalOperations,
 			})
 		}
 	}
@@ -1337,29 +874,6 @@ func outputJSONResult(result *CreateMockResult, mockType mock.Type) error { //no
 			Echo:   echoEnabled,
 		})
 
-	case mock.TypeGraphQL:
-		gqlPath := ""
-		var operations []string
-		if created.GraphQL != nil {
-			gqlPath = created.GraphQL.Path
-			for op := range created.GraphQL.Resolvers {
-				operations = append(operations, op)
-			}
-		}
-		return output.JSON(struct {
-			ID         string   `json:"id"`
-			Type       string   `json:"type"`
-			Action     string   `json:"action"`
-			Path       string   `json:"path"`
-			Operations []string `json:"operations"`
-		}{
-			ID:         created.ID,
-			Type:       string(created.Type),
-			Action:     result.Action,
-			Path:       gqlPath,
-			Operations: operations,
-		})
-
 	case mock.TypeGRPC:
 		var services []string
 		var methods []string
@@ -1385,84 +899,6 @@ func outputJSONResult(result *CreateMockResult, mockType mock.Type) error { //no
 			Methods:  methods,
 		})
 
-	case mock.TypeMQTT:
-		mqttTopic := ""
-		mqttQoS := 0
-		if created.MQTT != nil && len(created.MQTT.Topics) > 0 {
-			mqttTopic = created.MQTT.Topics[0].Topic
-			mqttQoS = created.MQTT.Topics[0].QoS
-		}
-		return output.JSON(struct {
-			ID     string `json:"id"`
-			Type   string `json:"type"`
-			Action string `json:"action"`
-			Topic  string `json:"topic"`
-			QoS    int    `json:"qos"`
-		}{
-			ID:     created.ID,
-			Type:   string(created.Type),
-			Action: result.Action,
-			Topic:  mqttTopic,
-			QoS:    mqttQoS,
-		})
-
-	case mock.TypeSOAP:
-		soapPath := ""
-		var operations []string
-		var soapActions []string
-		if created.SOAP != nil {
-			soapPath = created.SOAP.Path
-			for op, cfg := range created.SOAP.Operations {
-				operations = append(operations, op)
-				if cfg.SOAPAction != "" {
-					soapActions = append(soapActions, cfg.SOAPAction)
-				}
-			}
-		}
-		return output.JSON(struct {
-			ID          string   `json:"id"`
-			Type        string   `json:"type"`
-			Action      string   `json:"action"`
-			Path        string   `json:"path"`
-			Operations  []string `json:"operations"`
-			SOAPActions []string `json:"soapActions,omitempty"`
-		}{
-			ID:          created.ID,
-			Type:        string(created.Type),
-			Action:      result.Action,
-			Path:        soapPath,
-			Operations:  operations,
-			SOAPActions: soapActions,
-		})
-
-	case mock.TypeOAuth:
-		oauthIssuer := ""
-		oauthClientID := ""
-		oauthUsername := ""
-		if created.OAuth != nil {
-			oauthIssuer = created.OAuth.Issuer
-			if len(created.OAuth.Clients) > 0 {
-				oauthClientID = created.OAuth.Clients[0].ClientID
-			}
-			if len(created.OAuth.Users) > 0 {
-				oauthUsername = created.OAuth.Users[0].Username
-			}
-		}
-		return output.JSON(struct {
-			ID       string `json:"id"`
-			Type     string `json:"type"`
-			Action   string `json:"action"`
-			Issuer   string `json:"issuer"`
-			ClientID string `json:"clientId,omitempty"`
-			Username string `json:"username,omitempty"`
-		}{
-			ID:       created.ID,
-			Type:     string(created.Type),
-			Action:   result.Action,
-			Issuer:   oauthIssuer,
-			ClientID: oauthClientID,
-			Username: oauthUsername,
-		})
 	}
 
 	// Fallback for unknown types

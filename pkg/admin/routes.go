@@ -63,36 +63,6 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /requests/{id}", a.requireEngine(a.handleGetRequest))
 	mux.HandleFunc("DELETE /requests", a.requireEngine(a.handleClearRequests))
 
-	// Proxy management
-	mux.HandleFunc("POST /proxy/start", a.proxyManager.handleProxyStart)
-	mux.HandleFunc("POST /proxy/stop", a.proxyManager.handleProxyStop)
-	mux.HandleFunc("GET /proxy/status", a.proxyManager.handleProxyStatus)
-	mux.HandleFunc("PUT /proxy/mode", a.proxyManager.handleProxyMode)
-	mux.HandleFunc("GET /proxy/filters", a.proxyManager.handleGetFilters)
-	mux.HandleFunc("PUT /proxy/filters", a.proxyManager.handleSetFilters)
-	mux.HandleFunc("GET /proxy/ca", a.proxyManager.handleGetCA)
-	mux.HandleFunc("POST /proxy/ca", a.proxyManager.handleGenerateCA)
-	mux.HandleFunc("GET /proxy/ca/download", a.proxyManager.handleDownloadCA)
-
-	// Recording management
-	mux.HandleFunc("GET /recordings", a.proxyManager.handleListRecordings)
-	mux.HandleFunc("DELETE /recordings", a.proxyManager.handleClearRecordings)
-	mux.HandleFunc("GET /recordings/{id}", a.proxyManager.handleGetRecording)
-	mux.HandleFunc("DELETE /recordings/{id}", a.proxyManager.handleDeleteRecording)
-	mux.HandleFunc("POST /recordings/convert", a.handleConvertRecordings)
-	mux.HandleFunc("POST /recordings/export", a.proxyManager.handleExportRecordings)
-	mux.HandleFunc("POST /recordings/{id}/to-mock", a.handleConvertSingleRecording)
-	mux.HandleFunc("GET /recordings/{id}/check-sensitive", a.proxyManager.handleCheckSensitiveData)
-	mux.HandleFunc("POST /recordings/{id}/preview-smart-match", a.proxyManager.handlePreviewSmartMatch)
-	mux.HandleFunc("POST /recordings/sessions/{id}/to-mocks", a.handleConvertSession)
-
-	// Session management
-	mux.HandleFunc("GET /sessions", a.proxyManager.handleListSessions)
-	mux.HandleFunc("POST /sessions", a.proxyManager.handleCreateSession)
-	mux.HandleFunc("DELETE /sessions", a.proxyManager.handleDeleteSessions)
-	mux.HandleFunc("GET /sessions/{id}", a.proxyManager.handleGetSession)
-	mux.HandleFunc("DELETE /sessions/{id}", a.proxyManager.handleDeleteSession)
-
 	// Table reset (top-level convenience endpoints)
 	mux.HandleFunc("POST /reset", a.requireEngine(a.handleResetTables))
 	mux.HandleFunc("POST /reset/{table}", a.requireEngine(a.handleResetTable))
@@ -129,14 +99,6 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /websocket/connections/{id}", a.handleCloseWebSocketConnection)
 	mux.HandleFunc("POST /websocket/connections/{id}/send", a.handleSendToWebSocketConnection)
 	mux.HandleFunc("GET /websocket/stats", a.handleGetWebSocketStats)
-
-	// MQTT connection management
-	// Routes use /mqtt-connections/ prefix to avoid ambiguity with existing
-	// /mqtt/{id}/status recording routes.
-	mux.HandleFunc("GET /mqtt-connections", a.handleListMQTTConnections)
-	mux.HandleFunc("GET /mqtt-connections/{id}", a.handleGetMQTTConnection)
-	mux.HandleFunc("DELETE /mqtt-connections/{id}", a.handleCloseMQTTConnection)
-	mux.HandleFunc("GET /mqtt-connections/stats", a.handleGetMQTTStats)
 
 	// gRPC stream management
 	mux.HandleFunc("GET /grpc/connections", a.handleListGRPCStreams)
@@ -201,39 +163,6 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 		a.handleListUnifiedMocks(w, r)
 	})
 
-	// MQTT broker management
-	mux.HandleFunc("GET /mqtt", a.handleListMQTTBrokers)
-	mux.HandleFunc("GET /mqtt/status", a.handleGetMQTTStatus)
-	mux.HandleFunc("GET /mqtt/{id}/status", a.mqttRecordingManager.handleGetMQTTBrokerStatus)
-	mux.HandleFunc("POST /mqtt/{id}/record/start", a.mqttRecordingManager.handleStartMQTTRecording)
-	mux.HandleFunc("POST /mqtt/{id}/record/stop", a.mqttRecordingManager.handleStopMQTTRecording)
-
-	// MQTT recording management
-	mux.HandleFunc("GET /mqtt-recordings", a.mqttRecordingManager.handleListMQTTRecordings)
-	mux.HandleFunc("GET /mqtt-recordings/stats", a.mqttRecordingManager.handleGetMQTTRecordingStats)
-	mux.HandleFunc("DELETE /mqtt-recordings", a.mqttRecordingManager.handleClearMQTTRecordings)
-	mux.HandleFunc("POST /mqtt-recordings/convert", a.mqttRecordingManager.handleConvertMQTTRecordings)
-	mux.HandleFunc("POST /mqtt-recordings/export", a.mqttRecordingManager.handleExportMQTTRecordings)
-	mux.HandleFunc("GET /mqtt-recordings/{id}", a.mqttRecordingManager.handleGetMQTTRecording)
-	mux.HandleFunc("DELETE /mqtt-recordings/{id}", a.mqttRecordingManager.handleDeleteMQTTRecording)
-	mux.HandleFunc("POST /mqtt-recordings/{id}/convert", a.mqttRecordingManager.handleConvertMQTTRecording)
-
-	// SOAP handler management
-	mux.HandleFunc("GET /soap", a.soapRecordingManager.handleListSOAPHandlers)
-	mux.HandleFunc("GET /soap/{id}/status", a.soapRecordingManager.handleGetSOAPHandlerStatus)
-	mux.HandleFunc("POST /soap/{id}/record/start", a.soapRecordingManager.handleStartSOAPRecording)
-	mux.HandleFunc("POST /soap/{id}/record/stop", a.soapRecordingManager.handleStopSOAPRecording)
-
-	// SOAP recording management
-	mux.HandleFunc("GET /soap-recordings", a.soapRecordingManager.handleListSOAPRecordings)
-	mux.HandleFunc("GET /soap-recordings/stats", a.soapRecordingManager.handleGetSOAPRecordingStats)
-	mux.HandleFunc("DELETE /soap-recordings", a.soapRecordingManager.handleClearSOAPRecordings)
-	mux.HandleFunc("POST /soap-recordings/convert", a.soapRecordingManager.handleConvertSOAPRecordings)
-	mux.HandleFunc("POST /soap-recordings/export", a.soapRecordingManager.handleExportSOAPRecordings)
-	mux.HandleFunc("GET /soap-recordings/{id}", a.soapRecordingManager.handleGetSOAPRecording)
-	mux.HandleFunc("DELETE /soap-recordings/{id}", a.soapRecordingManager.handleDeleteSOAPRecording)
-	mux.HandleFunc("POST /soap-recordings/{id}/convert", a.soapRecordingManager.handleConvertSOAPRecording)
-
 	// Preferences management
 	mux.HandleFunc("GET /preferences", a.handleGetPreferences)
 	mux.HandleFunc("PUT /preferences", a.handleUpdatePreferences)
@@ -251,17 +180,6 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /engines/{id}/heartbeat", a.handleEngineHeartbeat)
 	mux.HandleFunc("PUT /engines/{id}/workspace", a.handleAssignWorkspace)
 	mux.HandleFunc("GET /engines/{id}/config", a.handleGetEngineConfig)
-
-	// Engine tunnel management
-	mux.HandleFunc("POST /engines/{id}/tunnel/enable", a.handleEnableTunnel)
-	mux.HandleFunc("POST /engines/{id}/tunnel/disable", a.handleDisableTunnel)
-	mux.HandleFunc("GET /engines/{id}/tunnel/config", a.handleGetTunnelConfig)
-	mux.HandleFunc("PUT /engines/{id}/tunnel/config", a.handleUpdateTunnelConfig)
-	mux.HandleFunc("GET /engines/{id}/tunnel/status", a.handleGetTunnelStatus)
-	mux.HandleFunc("POST /engines/{id}/tunnel/preview", a.handleTunnelPreview)
-
-	// Global tunnel listing
-	mux.HandleFunc("GET /tunnels", a.handleListTunnels)
 
 	// Engine workspace management
 	mux.HandleFunc("POST /engines/{id}/workspaces", a.handleAddEngineWorkspace)
@@ -363,21 +281,6 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	// GET is public (no auth) — anyone with the link can view the read-only snapshot.
 	mux.HandleFunc("POST "+captureAPIPrefix+"/shares", a.requireAuth(a.handleCreateShare))
 	mux.HandleFunc("GET "+captureAPIPrefix+"/shares/{id}", a.handleGetShare)
-}
-
-// handleConvertRecordings wraps the convert handler to pass the dual-write mock creator.
-func (a *API) handleConvertRecordings(w http.ResponseWriter, r *http.Request) {
-	a.proxyManager.handleConvertRecordings(w, r, a.mockCreator())
-}
-
-// handleConvertSingleRecording wraps the single recording convert handler.
-func (a *API) handleConvertSingleRecording(w http.ResponseWriter, r *http.Request) {
-	a.proxyManager.handleConvertSingleRecording(w, r, a.mockCreator())
-}
-
-// handleConvertSession wraps the session convert handler.
-func (a *API) handleConvertSession(w http.ResponseWriter, r *http.Request) {
-	a.proxyManager.handleConvertSession(w, r, a.mockCreator())
 }
 
 // handleConvertStreamRecording wraps the stream recording convert handler.

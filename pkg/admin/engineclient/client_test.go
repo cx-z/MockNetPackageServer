@@ -472,7 +472,7 @@ func TestListHandlers_Success(t *testing.T) {
 		Handlers []*ProtocolHandler `json:"handlers"`
 		Count    int                `json:"count"`
 	}{
-		Handlers: []*ProtocolHandler{{ID: "h-1", Type: "graphql"}},
+		Handlers: []*ProtocolHandler{{ID: "h-1", Type: "grpc"}},
 		Count:    1,
 	}
 	_, c := mockServer(t, jsonHandler(t, 200, resp))

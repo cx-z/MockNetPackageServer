@@ -49,8 +49,6 @@ type (
 	SSEStats                     = types.SSEStats
 	WebSocketConnection          = types.WebSocketConnection
 	WebSocketStats               = types.WebSocketStats
-	MQTTConnection               = types.MQTTConnection
-	MQTTStats                    = types.MQTTStats
 	GRPCStream                   = types.GRPCStream
 	GRPCStats                    = types.GRPCStats
 	CustomOperationInfo          = types.CustomOperationInfo

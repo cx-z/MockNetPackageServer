@@ -213,25 +213,6 @@ func TestPrefixMockForEngine_GRPC_NoPrefix(t *testing.T) {
 	}
 }
 
-func TestPrefixMockForEngine_MQTT_NoPrefix(t *testing.T) {
-	paymentWS := &store.Workspace{ID: "ws_pay", BasePath: "/payment-api"}
-
-	original := &mock.Mock{
-		ID:          "mock_mqtt",
-		Type:        mock.TypeMQTT,
-		WorkspaceID: "ws_pay",
-		MQTT: &mock.MQTTSpec{
-			Port: 1883,
-		},
-	}
-
-	result := prefixMockForEngine(original, paymentWS, store.DefaultWorkspaceID)
-
-	if result != original {
-		t.Errorf("MQTT mock should not be cloned/modified")
-	}
-}
-
 func TestPrefixMockForEngine_PathPattern(t *testing.T) {
 	paymentWS := &store.Workspace{ID: "ws_pay", BasePath: "/payment-api"}
 

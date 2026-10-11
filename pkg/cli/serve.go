@@ -25,10 +25,7 @@ import (
 	"github.com/getmockd/mockd/pkg/cliconfig"
 	"github.com/getmockd/mockd/pkg/config"
 	"github.com/getmockd/mockd/pkg/engine"
-	"github.com/getmockd/mockd/pkg/graphql"
 	"github.com/getmockd/mockd/pkg/logging"
-	"github.com/getmockd/mockd/pkg/mqtt"
-	"github.com/getmockd/mockd/pkg/oauth"
 	"github.com/getmockd/mockd/pkg/recording"
 	"github.com/getmockd/mockd/pkg/store"
 	"github.com/getmockd/mockd/pkg/store/file"
@@ -54,8 +51,8 @@ var serveCmd = &cobra.Command{
 2. Runtime mode (--register): Register with control plane and receive deployments
 3. Pull mode (--pull): Pull mocks from cloud and serve locally
 
-The serve command is the full-featured server entrypoint with support for MCP,
-CORS, rate limiting, distributed tracing, log aggregation, and more.
+The serve command is the full-featured server entrypoint with support for CORS,
+rate limiting, distributed tracing, log aggregation, and more.
 Use 'mockd start' for a simpler startup experience.`,
 	Example: `  # Start with defaults
   mockd serve
@@ -77,9 +74,6 @@ Use 'mockd start' for a simpler startup experience.`,
 
   # Start with distributed tracing (send traces to Jaeger via OTLP)
   mockd serve --otlp-endpoint http://localhost:4318/v1/traces
-
-  # Start with MCP server enabled (for AI assistants via HTTP)
-  mockd serve --mcp
 
   # Start in daemon/background mode
   mockd serve -d`,
@@ -137,15 +131,6 @@ func initServeCmd() {
 	serveCmd.Flags().StringVar(&f.pull, "pull", "", "Pull and serve mocks from mockd:// URI")
 	serveCmd.Flags().StringVar(&f.cacheDir, "cache", "", "Local cache directory for pulled mocks")
 
-	// GraphQL flags
-	serveCmd.Flags().StringVar(&f.graphqlSchema, "graphql-schema", "", "Path to GraphQL schema file")
-	serveCmd.Flags().StringVar(&f.graphqlPath, "graphql-path", "/graphql", "GraphQL endpoint path")
-
-	// OAuth flags
-	serveCmd.Flags().BoolVar(&f.oauthEnabled, "oauth-enabled", false, "Enable OAuth provider")
-	serveCmd.Flags().StringVar(&f.oauthIssuer, "oauth-issuer", "", "OAuth issuer URL")
-	serveCmd.Flags().IntVar(&f.oauthPort, "oauth-port", 0, "OAuth server port")
-
 	// Chaos flags
 	serveCmd.Flags().BoolVar(&f.chaosEnabled, "chaos-enabled", false, "Enable chaos injection")
 	serveCmd.Flags().StringVar(&f.chaosLatency, "chaos-latency", "", "Add random latency (e.g., '10ms-100ms')")
@@ -172,11 +157,6 @@ func initServeCmd() {
 	// Tracing flags
 	serveCmd.Flags().StringVar(&f.otlpEndpoint, "otlp-endpoint", "", "OTLP HTTP endpoint for distributed tracing")
 	serveCmd.Flags().Float64Var(&f.traceSampler, "trace-sampler", 1.0, "Trace sampling ratio (0.0-1.0)")
-
-	// MCP flags
-	serveCmd.Flags().BoolVar(&f.mcpEnabled, "mcp", false, "Enable MCP (Model Context Protocol) HTTP server")
-	serveCmd.Flags().IntVar(&f.mcpPort, "mcp-port", 9091, "MCP server port")
-	serveCmd.Flags().BoolVar(&f.mcpAllowRemote, "mcp-allow-remote", false, "Allow remote MCP connections")
 
 	// CORS flags
 	serveCmd.Flags().StringVar(&f.corsOrigins, "cors-origins", "", "Comma-separated CORS allowed origins")
@@ -233,15 +213,6 @@ type serveFlags struct {
 	pull     string
 	cacheDir string
 
-	// GraphQL flags
-	graphqlSchema string
-	graphqlPath   string
-
-	// OAuth flags
-	oauthEnabled bool
-	oauthIssuer  string
-	oauthPort    int
-
 	// Chaos flags
 	chaosEnabled   bool
 	chaosLatency   string
@@ -269,11 +240,6 @@ type serveFlags struct {
 	otlpEndpoint string
 	traceSampler float64
 
-	// MCP flags
-	mcpEnabled     bool
-	mcpPort        int
-	mcpAllowRemote bool
-
 	// CORS flags
 	corsOrigins string
 
@@ -291,9 +257,7 @@ type serveContext struct {
 	server        *engine.Server
 	adminAPI      *admin.API
 	runtimeClient *runtime.Client
-	mqttBroker    *mqtt.Broker
 	chaosConfig   *engineclient.ChaosConfig // Chaos config to apply after engine starts
-	mcpServer     MCPStopper
 	store         *file.FileStore
 	log           *slog.Logger
 	tracer        *tracing.Tracer
@@ -393,7 +357,7 @@ func runServeWithFlags(flags *serveFlags) error {
 		return err
 	}
 
-	// PID file, MCP server, startup message (needs mock counts)
+	// PID file and startup message (needs mock counts)
 	if err := postStartup(sctx); err != nil {
 		return err
 	}
@@ -419,9 +383,6 @@ func validateServeFlags(f *serveFlags) error {
 	}
 	if f.httpsPort < 0 || f.httpsPort > 65535 {
 		return fmt.Errorf("invalid HTTPS port %d: must be between 0 and 65535", f.httpsPort)
-	}
-	if f.mcpEnabled && (f.mcpPort < 0 || f.mcpPort > 65535) {
-		return fmt.Errorf("invalid MCP port %d: must be between 0 and 65535", f.mcpPort)
 	}
 
 	if f.register && f.pull != "" {
@@ -469,11 +430,6 @@ func checkPortConflicts(f *serveFlags) error {
 	if f.httpsPort > 0 {
 		if err := ports.Check(f.httpsPort); err != nil {
 			return formatPortError(f.httpsPort, err)
-		}
-	}
-	if f.mcpEnabled {
-		if err := ports.Check(f.mcpPort); err != nil {
-			return formatPortError(f.mcpPort, err)
 		}
 	}
 	// Engine management port: the engine binds it itself and, when
@@ -545,30 +501,6 @@ func buildServerConfiguration(f *serveFlags) (*config.ServerConfiguration, error
 		}
 	}
 
-	// Configure GraphQL if schema specified
-	if f.graphqlSchema != "" {
-		serverCfg.GraphQL = []*graphql.GraphQLConfig{{
-			ID:            "cli-graphql",
-			Path:          f.graphqlPath,
-			SchemaFile:    f.graphqlSchema,
-			Introspection: true,
-			Enabled:       true,
-		}}
-	}
-
-	// Configure OAuth if enabled
-	if f.oauthEnabled {
-		issuer := f.oauthIssuer
-		if issuer == "" {
-			issuer = fmt.Sprintf("http://localhost:%d", f.oauthPort)
-		}
-		serverCfg.OAuth = []*oauth.OAuthConfig{{
-			ID:      "cli-oauth",
-			Issuer:  issuer,
-			Enabled: true,
-		}}
-	}
-
 	// Configure validation if spec specified
 	if f.validateSpec != "" {
 		serverCfg.Validation = &validation.ValidationConfig{
@@ -635,7 +567,7 @@ func initializePersistentStore(sctx *serveContext) error {
 
 	sctx.server.SetStore(sctx.store)
 
-	// Load mocks from store and register protocol handlers (GraphQL, SOAP, etc.)
+	// Load mocks from store and register protocol handlers (gRPC, etc.)
 	if err := sctx.server.LoadFromStore(sctx.ctx); err != nil {
 		output.Warn("failed to load from store: %v", err)
 	}
@@ -645,7 +577,7 @@ func initializePersistentStore(sctx *serveContext) error {
 
 // configureProtocolHandlers builds the chaos config from flags.
 // The config is applied to the engine in startServers after the engine is healthy.
-// Note: MQTT/gRPC are now started dynamically when mocks are added via the admin API.
+// Note: gRPC is now started dynamically when mocks are added via the admin API.
 func configureProtocolHandlers(sctx *serveContext) {
 	f := sctx.flags
 
@@ -887,7 +819,7 @@ func startServers(sctx *serveContext) error {
 }
 
 // postStartup runs after both servers are up and mocks are loaded.
-// It writes the PID file, starts MCP, and prints the startup message.
+// It writes the PID file and prints the startup message.
 func postStartup(sctx *serveContext) error {
 	f := sctx.flags
 
@@ -908,24 +840,6 @@ func postStartup(sctx *serveContext) error {
 		}
 	}
 
-	// Start MCP server if enabled
-	if f.mcpEnabled && MCPStartFunc != nil {
-		adminURL := fmt.Sprintf("http://localhost:%d", f.adminPort)
-		mcpServer, err := MCPStartFunc(
-			adminURL,
-			f.mcpPort,
-			f.mcpAllowRemote,
-			sctx.server.StatefulStore(),
-			sctx.log.With("component", "mcp"),
-		)
-		if err != nil {
-			_ = sctx.server.Stop()
-			_ = sctx.adminAPI.Stop()
-			return fmt.Errorf("failed to start MCP server: %w", err)
-		}
-		sctx.mcpServer = mcpServer
-	}
-
 	// Print startup message — count mocks and stateful resources
 	mocks, _ := engClient.ListMocks(sctx.ctx)
 	mocksLoaded := len(mocks)
@@ -933,7 +847,7 @@ func postStartup(sctx *serveContext) error {
 	if stateOverview, err := engClient.GetStateOverview(sctx.ctx, ""); err == nil {
 		statefulCount = stateOverview.Total
 	}
-	printServeStartupMessage(f.port, f.adminPort, f.httpsPort, f.mcpEnabled, f.mcpPort, f.register, f.pull, mocksLoaded, statefulCount)
+	printServeStartupMessage(f.port, f.adminPort, f.httpsPort, f.register, f.pull, mocksLoaded, statefulCount)
 
 	return nil
 }
@@ -974,13 +888,6 @@ func runMainLoop(sctx *serveContext) error {
 		// See: runtimeClient should expose a Deregister() method
 	}
 
-	// Stop MCP server if running
-	if sctx.mcpServer != nil {
-		if err := sctx.mcpServer.Stop(); err != nil {
-			output.Warn("MCP server shutdown error: %v", err)
-		}
-	}
-
 	// Stop admin API first (uses internal 5s timeout)
 	if sctx.adminAPI != nil {
 		if err := sctx.adminAPI.Stop(); err != nil {
@@ -992,13 +899,6 @@ func runMainLoop(sctx *serveContext) error {
 	if sctx.server != nil {
 		if err := sctx.server.Stop(); err != nil {
 			output.Warn("server shutdown error: %v", err)
-		}
-	}
-
-	// Stop MQTT broker if running
-	if sctx.mqttBroker != nil {
-		if err := sctx.mqttBroker.Stop(shutdownCtx, shutdownTimeout); err != nil {
-			output.Warn("MQTT broker shutdown error: %v", err)
 		}
 	}
 
@@ -1040,7 +940,7 @@ func cachePulledContent(cacheDir, uri string, content []byte) error {
 }
 
 // printServeStartupMessage prints the server startup information.
-func printServeStartupMessage(httpPort, adminPort, httpsPort int, mcpEnabled bool, mcpPort int, isRuntime bool, pullURI string, mocksLoaded, statefulCount int) {
+func printServeStartupMessage(httpPort, adminPort, httpsPort int, isRuntime bool, pullURI string, mocksLoaded, statefulCount int) {
 	if mocksLoaded == 0 && statefulCount == 0 && !isRuntime && pullURI == "" {
 		// No mocks configured - show welcome message
 		printWelcomeMessage(httpPort, adminPort)
@@ -1063,9 +963,6 @@ func printServeStartupMessage(httpPort, adminPort, httpsPort int, mcpEnabled boo
 			fmt.Printf("  HTTPS:       https://localhost:%d\n", httpsPort)
 		}
 		fmt.Printf("  Admin API:   http://localhost:%d\n", adminPort)
-		if mcpEnabled {
-			fmt.Printf("  MCP server:  http://localhost:%d/mcp\n", mcpPort)
-		}
 		fmt.Println()
 
 		if isRuntime {

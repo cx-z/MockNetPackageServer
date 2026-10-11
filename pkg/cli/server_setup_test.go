@@ -25,9 +25,6 @@ func TestRegisterServerFlags(t *testing.T) {
 	if sf.HTTPSPort != 0 {
 		t.Errorf("Expected default HTTPS port 0, got %d", sf.HTTPSPort)
 	}
-	if sf.GraphQLPath != "/graphql" {
-		t.Errorf("Expected default GraphQL path /graphql, got %s", sf.GraphQLPath)
-	}
 }
 
 func TestRegisterServerFlags_CustomValues(t *testing.T) {
@@ -45,8 +42,6 @@ func TestRegisterServerFlags_CustomValues(t *testing.T) {
 		"--mtls-enabled",
 		"--mtls-ca", "/path/to/ca",
 		"--audit-enabled",
-		"--graphql-schema", "/path/to/schema.graphql",
-		"--oauth-enabled",
 		"--chaos-enabled",
 		"--chaos-latency", "10ms-100ms",
 		"--chaos-error-rate", "0.1",
@@ -74,9 +69,6 @@ func TestRegisterServerFlags_CustomValues(t *testing.T) {
 	}
 	if !sf.AuditEnabled {
 		t.Error("Expected audit enabled")
-	}
-	if !sf.OAuthEnabled {
-		t.Error("Expected OAuth enabled")
 	}
 	if !sf.ChaosEnabled {
 		t.Error("Expected chaos enabled")
@@ -256,56 +248,5 @@ func TestParseLatencyRange(t *testing.T) {
 		if max != tt.expectMax {
 			t.Errorf("For %q, expected max %q, got %q", tt.input, tt.expectMax, max)
 		}
-	}
-}
-
-func TestBuildGraphQLConfig(t *testing.T) {
-	sf := &ServerFlags{
-		GraphQLSchema: "/path/to/schema.graphql",
-		GraphQLPath:   "/api/graphql",
-	}
-
-	cfgs := BuildGraphQLConfig(sf)
-
-	if len(cfgs) != 1 {
-		t.Fatalf("Expected 1 GraphQL config, got %d", len(cfgs))
-	}
-	if cfgs[0].Path != "/api/graphql" {
-		t.Errorf("Expected path /api/graphql, got %s", cfgs[0].Path)
-	}
-	if cfgs[0].SchemaFile != "/path/to/schema.graphql" {
-		t.Errorf("Expected schema file path, got %s", cfgs[0].SchemaFile)
-	}
-	if !cfgs[0].Introspection {
-		t.Error("Expected introspection enabled")
-	}
-}
-
-func TestBuildOAuthConfig(t *testing.T) {
-	// With explicit issuer
-	sf := &ServerFlags{
-		OAuthEnabled: true,
-		OAuthIssuer:  "https://auth.example.com",
-		OAuthPort:    8080,
-	}
-
-	cfgs := BuildOAuthConfig(sf)
-
-	if len(cfgs) != 1 {
-		t.Fatalf("Expected 1 OAuth config, got %d", len(cfgs))
-	}
-	if cfgs[0].Issuer != "https://auth.example.com" {
-		t.Errorf("Expected issuer URL, got %s", cfgs[0].Issuer)
-	}
-
-	// Without explicit issuer (defaults to localhost:port)
-	sf = &ServerFlags{
-		OAuthEnabled: true,
-		OAuthPort:    9000,
-	}
-
-	cfgs = BuildOAuthConfig(sf)
-	if cfgs[0].Issuer != "http://localhost:9000" {
-		t.Errorf("Expected default issuer, got %s", cfgs[0].Issuer)
 	}
 }

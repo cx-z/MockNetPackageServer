@@ -2,7 +2,7 @@ package protocol
 
 // StandaloneServer is a handler that runs as an independent server.
 // Implement this interface for protocols that listen on their own port
-// like gRPC, MQTT, etc.
+// like gRPC, etc.
 //
 // Example implementation:
 //

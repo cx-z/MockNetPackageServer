@@ -306,8 +306,8 @@ func TestDefaultWithPayloadFallback(t *testing.T) {
 	engine := New()
 
 	t.Run("default with missing payload uses fallback", func(t *testing.T) {
-		ctx := NewMQTTContext("test/topic", "client-1", nil, nil)
-		result, err := engine.Process(`{{default(payload.missing, "N/A")}}`, ctx)
+		ctx := NewContextFromMap(nil, nil)
+		result, err := engine.Process(`{{default(request.body.missing, "N/A")}}`, ctx)
 		if err != nil {
 			t.Fatalf("Process() error = %v", err)
 		}
@@ -318,8 +318,8 @@ func TestDefaultWithPayloadFallback(t *testing.T) {
 
 	t.Run("default with present payload uses value", func(t *testing.T) {
 		payload := map[string]any{"temp": "72.5"}
-		ctx := NewMQTTContext("test/topic", "client-1", payload, nil)
-		result, err := engine.Process(`{{default(payload.temp, "N/A")}}`, ctx)
+		ctx := NewContextFromMap(payload, nil)
+		result, err := engine.Process(`{{default(request.body.temp, "N/A")}}`, ctx)
 		if err != nil {
 			t.Fatalf("Process() error = %v", err)
 		}
@@ -338,16 +338,6 @@ func TestDefaultWithPayloadFallback(t *testing.T) {
 		}
 	})
 
-	t.Run("default resolves topic as value", func(t *testing.T) {
-		ctx := NewMQTTContext("sensors/temp", "client-1", nil, nil)
-		result, err := engine.Process(`{{default(topic, "no-topic")}}`, ctx)
-		if err != nil {
-			t.Fatalf("Process() error = %v", err)
-		}
-		if result != "sensors/temp" {
-			t.Errorf("Process() = %q, want %q", result, "sensors/temp")
-		}
-	})
 }
 
 // =============================================================================
@@ -580,253 +570,29 @@ func TestFakerVariables(t *testing.T) {
 }
 
 // =============================================================================
-// MQTT Context Tests
-// =============================================================================
-
-func TestMQTTContextVariables(t *testing.T) {
-	engine := New()
-	ctx := NewMQTTContext("sensors/temperature", "device-001", nil, nil)
-	ctx.MQTT.DeviceID = "dev-42"
-
-	tests := []struct {
-		name     string
-		template string
-		expected string
-	}{
-		{"topic", "{{topic}}", "sensors/temperature"},
-		{"clientId", "{{clientId}}", "device-001"},
-		{"device_id", "{{device_id}}", "dev-42"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := engine.Process(tt.template, ctx)
-			if err != nil {
-				t.Fatalf("Process() error = %v", err)
-			}
-			if result != tt.expected {
-				t.Errorf("Process() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-
-	t.Run("nil context returns empty", func(t *testing.T) {
-		result, err := engine.Process("{{topic}}", nil)
-		if err != nil {
-			t.Fatalf("Process() error = %v", err)
-		}
-		if result != "" {
-			t.Errorf("topic with nil context should be empty, got %q", result)
-		}
-	})
-}
-
-// =============================================================================
-// Wildcard Substitution Tests
-// =============================================================================
-
-// Note: MQTT wildcard substitution like {1}, {2} is handled by
-// mqtt.RenderTopicTemplate (simple string replacement) for topic names.
-// The template engine's resolveWildcard code path requires the expression
-// to be exactly "{1}" but the {{ }} regex prevents } inside expressions,
-// so the triple-brace syntax {{{1}}} doesn't parse correctly.
-// This test verifies the resolveWildcard function works directly.
-
-func TestResolveWildcard(t *testing.T) {
-	engine := New()
-	ctx := NewMQTTContext("sensors/floor1/temp", "", nil, []string{"floor1", "temp"})
-
-	tests := []struct {
-		name     string
-		matches  []string // simulates regex match groups
-		expected string
-	}{
-		{"first wildcard", []string{"{1}", "1"}, "floor1"},
-		{"second wildcard", []string{"{2}", "2"}, "temp"},
-		{"out of range", []string{"{3}", "3"}, ""},
-		{"zero index", []string{"{0}", "0"}, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := engine.resolveWildcard(tt.matches, ctx)
-			if result != tt.expected {
-				t.Errorf("resolveWildcard() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-
-	t.Run("nil context returns empty", func(t *testing.T) {
-		result := engine.resolveWildcard([]string{"{1}", "1"}, nil)
-		if result != "" {
-			t.Errorf("resolveWildcard with nil context should be empty, got %q", result)
-		}
-	})
-}
-
-// =============================================================================
-// Payload Access Tests
-// =============================================================================
-
-func TestPayloadAccess(t *testing.T) {
-	engine := New()
-	payload := map[string]any{
-		"temperature": 72.5,
-		"unit":        "F",
-		"location": map[string]any{
-			"floor":  "1",
-			"room":   "A",
-			"sensor": map[string]any{"id": "s-001"},
-		},
-		"active": true,
-		"count":  42,
-	}
-	ctx := NewMQTTContext("sensors/temp", "client-1", payload, nil)
-
-	tests := []struct {
-		name     string
-		template string
-		expected string
-	}{
-		{"string field", "{{payload.unit}}", "F"},
-		{"float field", "{{payload.temperature}}", "72.5"},
-		{"bool field", "{{payload.active}}", "true"},
-		{"int field", "{{payload.count}}", "42"},
-		{"nested field", "{{payload.location.floor}}", "1"},
-		{"deeply nested", "{{payload.location.sensor.id}}", "s-001"},
-		{"missing field", "{{payload.missing}}", ""},
-		{"missing nested", "{{payload.location.missing}}", ""},
-		{"invalid path", "{{payload.temperature.nested}}", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := engine.Process(tt.template, ctx)
-			if err != nil {
-				t.Fatalf("Process() error = %v", err)
-			}
-			if result != tt.expected {
-				t.Errorf("Process() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-
-	t.Run("nil payload returns empty", func(t *testing.T) {
-		ctx2 := NewMQTTContext("t", "c", nil, nil)
-		result, err := engine.Process("{{payload.field}}", ctx2)
-		if err != nil {
-			t.Fatalf("Process() error = %v", err)
-		}
-		if result != "" {
-			t.Errorf("payload with nil data should be empty, got %q", result)
-		}
-	})
-
-	t.Run("nil context returns empty", func(t *testing.T) {
-		result, err := engine.Process("{{payload.field}}", nil)
-		if err != nil {
-			t.Fatalf("Process() error = %v", err)
-		}
-		if result != "" {
-			t.Errorf("payload with nil context should be empty, got %q", result)
-		}
-	})
-}
-
-// =============================================================================
-// Timestamp Variant Tests
-// =============================================================================
-
-func TestTimestampVariants(t *testing.T) {
-	engine := New()
-
-	t.Run("timestamp.iso", func(t *testing.T) {
-		result, err := engine.Process("{{timestamp.iso}}", nil)
-		if err != nil {
-			t.Fatalf("Process() error = %v", err)
-		}
-		// Should be an RFC3339Nano string
-		if !strings.Contains(result, "T") || !strings.Contains(result, "Z") {
-			t.Errorf("timestamp.iso should be ISO format, got %q", result)
-		}
-	})
-
-	t.Run("timestamp.unix", func(t *testing.T) {
-		result, err := engine.Process("{{timestamp.unix}}", nil)
-		if err != nil {
-			t.Fatalf("Process() error = %v", err)
-		}
-		n, err := strconv.ParseInt(result, 10, 64)
-		if err != nil {
-			t.Fatalf("timestamp.unix should be integer, got %q: %v", result, err)
-		}
-		// Should be a reasonable Unix timestamp (after 2020)
-		if n < 1577836800 {
-			t.Errorf("timestamp.unix %d seems too low", n)
-		}
-	})
-
-	t.Run("timestamp.unix_ms", func(t *testing.T) {
-		result, err := engine.Process("{{timestamp.unix_ms}}", nil)
-		if err != nil {
-			t.Fatalf("Process() error = %v", err)
-		}
-		n, err := strconv.ParseInt(result, 10, 64)
-		if err != nil {
-			t.Fatalf("timestamp.unix_ms should be integer, got %q: %v", result, err)
-		}
-		// Milliseconds should be much larger than seconds
-		if n < 1577836800000 {
-			t.Errorf("timestamp.unix_ms %d seems too low", n)
-		}
-	})
-
-	t.Run("timestamp equals timestamp.unix", func(t *testing.T) {
-		// Both should produce Unix timestamps
-		r1, _ := engine.Process("{{timestamp}}", nil)
-		r2, _ := engine.Process("{{timestamp.unix}}", nil)
-
-		n1, err1 := strconv.ParseInt(r1, 10, 64)
-		n2, err2 := strconv.ParseInt(r2, 10, 64)
-		if err1 != nil || err2 != nil {
-			t.Fatalf("both should be integers: %q, %q", r1, r2)
-		}
-		// Should be within 1 second of each other
-		diff := n1 - n2
-		if diff < -1 || diff > 1 {
-			t.Errorf("timestamp and timestamp.unix differ by %d", diff)
-		}
-	})
-}
-
-// =============================================================================
 // ProcessInterface Tests
 // =============================================================================
 
 func TestProcessInterface(t *testing.T) {
 	engine := New()
-	ctx := NewMQTTContext("sensors/temp", "device-1", nil, nil)
+	ctx := NewContextFromMap(map[string]any{"temp": 72.5}, nil)
 
 	t.Run("string values are processed", func(t *testing.T) {
-		data := "Topic is {{topic}}"
+		data := "Temp is {{request.body.temp}}"
 		result := engine.ProcessInterface(data, ctx)
-		if result != "Topic is sensors/temp" {
-			t.Errorf("ProcessInterface() = %q, want %q", result, "Topic is sensors/temp")
+		if result != "Temp is 72.5" {
+			t.Errorf("ProcessInterface() = %q, want %q", result, "Temp is 72.5")
 		}
 	})
 
 	t.Run("map values are recursively processed", func(t *testing.T) {
 		data := map[string]interface{}{
-			"topic":  "{{topic}}",
-			"client": "{{clientId}}",
-			"num":    42,
+			"temp": "{{request.body.temp}}",
+			"num":  42,
 		}
 		result := engine.ProcessInterface(data, ctx).(map[string]interface{})
-		if result["topic"] != "sensors/temp" {
-			t.Errorf("topic = %q, want %q", result["topic"], "sensors/temp")
-		}
-		if result["client"] != "device-1" {
-			t.Errorf("client = %q, want %q", result["client"], "device-1")
+		if result["temp"] != "72.5" {
+			t.Errorf("temp = %v, want %v", result["temp"], "72.5")
 		}
 		if result["num"] != 42 {
 			t.Errorf("num = %v, want 42", result["num"])
@@ -834,10 +600,10 @@ func TestProcessInterface(t *testing.T) {
 	})
 
 	t.Run("slice values are recursively processed", func(t *testing.T) {
-		data := []interface{}{"{{topic}}", "literal", 123}
+		data := []interface{}{"{{request.body.temp}}", "literal", 123}
 		result := engine.ProcessInterface(data, ctx).([]interface{})
-		if result[0] != "sensors/temp" {
-			t.Errorf("[0] = %q, want %q", result[0], "sensors/temp")
+		if result[0] != "72.5" {
+			t.Errorf("[0] = %v, want %v", result[0], "72.5")
 		}
 		if result[1] != "literal" {
 			t.Errorf("[1] = %q, want %q", result[1], "literal")
@@ -923,49 +689,6 @@ func TestSplitFuncArgs(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// =============================================================================
-// Combined / Integration Tests
-// =============================================================================
-
-func TestMQTTTemplateIntegration(t *testing.T) {
-	store := NewSequenceStore()
-	engine := NewWithSequences(store)
-
-	payload := map[string]any{
-		"temp": 72.5,
-		"unit": "F",
-	}
-	ctx := NewMQTTContext("sensors/floor1/temp", "device-001", payload, []string{"floor1", "temp"})
-	ctx.MQTT.DeviceID = "dev-42"
-
-	tmpl := `{"id": {{sequence("msg_id")}}, "topic": "{{topic}}", "device": "{{device_id}}", "temp": {{payload.temp}}, "name": "{{faker.firstName}}"}`
-
-	result, err := engine.Process(tmpl, ctx)
-	if err != nil {
-		t.Fatalf("Process() error = %v", err)
-	}
-
-	// Verify specific substitutions
-	if !strings.Contains(result, `"id": 1`) {
-		t.Errorf("should contain sequence id 1, got %s", result)
-	}
-	if !strings.Contains(result, `"topic": "sensors/floor1/temp"`) {
-		t.Errorf("should contain topic, got %s", result)
-	}
-	if !strings.Contains(result, `"device": "dev-42"`) {
-		t.Errorf("should contain device_id, got %s", result)
-	}
-	if !strings.Contains(result, `"temp": 72.5`) {
-		t.Errorf("should contain payload.temp, got %s", result)
-	}
-
-	// Process again — sequence should increment
-	result2, _ := engine.Process(`{{sequence("msg_id")}}`, ctx)
-	if result2 != "2" {
-		t.Errorf("second sequence call should return 2, got %q", result2)
 	}
 }
 

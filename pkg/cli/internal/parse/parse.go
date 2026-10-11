@@ -6,7 +6,6 @@ import "strings"
 // Consolidates header parsing from:
 // - websocket.go:splitHeader (629-636)
 // - graphql.go:splitGraphQLHeaders (264-277)
-// - soap.go:splitSOAPHeaders (387-400)
 // - add.go:parseKeyValue (731-737)
 
 // KeyValue parses a "key:value" or "key=value" string.

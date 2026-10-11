@@ -9,7 +9,6 @@ import (
 
 	"github.com/getmockd/mockd/pkg/chaos"
 	"github.com/getmockd/mockd/pkg/config"
-	"github.com/getmockd/mockd/pkg/graphql"
 	"github.com/getmockd/mockd/pkg/logging"
 	"github.com/getmockd/mockd/pkg/stateful"
 	"github.com/getmockd/mockd/pkg/store"
@@ -52,7 +51,7 @@ func (cl *ConfigLoader) LoadFromStore(ctx context.Context, persistentStore store
 	}
 
 	// Register all enabled mocks using the unified registerHandler which handles
-	// all protocol types (HTTP, WebSocket, GraphQL, gRPC, MQTT, SOAP, OAuth, SSE).
+	// all protocol types (HTTP, WebSocket, gRPC, SSE).
 	// HTTP mocks are also matched via store lookup, but registerHandler is a no-op for them.
 	for _, m := range mocks {
 		if m.Enabled != nil && !*m.Enabled {
@@ -226,56 +225,11 @@ func (cl *ConfigLoader) loadCollection(collection *config.MockCollection, replac
 		cl.mergeServerConfig(collection.ServerConfig)
 	}
 
-	// Load GraphQL endpoints from collection's ServerConfig
-	if collection.ServerConfig != nil {
-		for _, gqlCfg := range collection.ServerConfig.GraphQL {
-			if gqlCfg == nil || !gqlCfg.Enabled {
-				continue
-			}
-
-			// Create GraphQL handler
-			gqlHandler, err := graphql.Endpoint(gqlCfg)
-			if err != nil {
-				return fmt.Errorf("failed to create GraphQL endpoint %s: %w", gqlCfg.Path, err)
-			}
-
-			cl.server.protocolManager.AddGraphQLHandler(gqlHandler)
-
-			// Register the handler at the configured path
-			cl.server.handler.RegisterGraphQLHandler(gqlCfg.Path, gqlHandler)
-
-			// Create subscription handler if subscriptions are configured
-			if len(gqlCfg.Subscriptions) > 0 {
-				// Parse schema for subscription handler
-				var schema *graphql.Schema
-				var schemaErr error
-				if gqlCfg.Schema != "" {
-					schema, schemaErr = graphql.ParseSchema(gqlCfg.Schema)
-				} else if gqlCfg.SchemaFile != "" {
-					schema, schemaErr = graphql.ParseSchemaFile(gqlCfg.SchemaFile)
-				}
-				if schemaErr != nil {
-					return fmt.Errorf("failed to parse GraphQL schema for subscriptions: %w", schemaErr)
-				}
-
-				subHandler := graphql.NewSubscriptionHandler(schema, gqlCfg)
-				cl.server.protocolManager.AddGraphQLSubscriptionHandler(subHandler)
-
-				// Register subscription handler at path/ws (or path + ws when path ends with slash).
-				wsPath, pathErr := buildGraphQLSubscriptionPath(gqlCfg.Path)
-				if pathErr != nil {
-					return fmt.Errorf("invalid GraphQL path for subscriptions: %w", pathErr)
-				}
-				cl.server.handler.RegisterGraphQLSubscriptionHandler(wsPath, subHandler)
-			}
-		}
-	}
-
 	return nil
 }
 
 // SaveToFile saves the current mock configurations to a file.
-// All protocol types (HTTP, WebSocket, GraphQL, gRPC, MQTT, SOAP, OAuth)
+// All protocol types (HTTP, WebSocket, gRPC)
 // are included in the export.
 func (cl *ConfigLoader) SaveToFile(path string, name string) error {
 	mocks := cl.server.Store().List()
@@ -283,7 +237,7 @@ func (cl *ConfigLoader) SaveToFile(path string, name string) error {
 }
 
 // Export exports the current configuration as a MockCollection.
-// All protocol types (HTTP, WebSocket, GraphQL, gRPC, MQTT, SOAP, OAuth)
+// All protocol types (HTTP, WebSocket, gRPC)
 // are included in the export, along with stateful resources and custom operations.
 func (cl *ConfigLoader) Export(name string) *config.MockCollection {
 	mocks := cl.server.Store().List()
@@ -366,7 +320,7 @@ func (cl *ConfigLoader) Import(collection *config.MockCollection, replace bool) 
 			if err := store.Set(cfg); err != nil {
 				return err
 			}
-			// Register protocol-specific handlers (MQTT brokers, WebSocket, GraphQL, etc.)
+			// Register protocol-specific handlers (WebSocket, GraphQL, etc.)
 			cl.server.mockManager.registerHandler(cfg)
 		}
 	}
@@ -444,12 +398,6 @@ func (cl *ConfigLoader) mergeServerConfig(src *config.ServerConfiguration) {
 	if dst.MTLS == nil && src.MTLS != nil {
 		dst.MTLS = src.MTLS
 		cl.log.Info("mTLS configured from config file")
-	}
-
-	// OAuth: merge if not already configured via CLI flags
-	if len(dst.OAuth) == 0 && len(src.OAuth) > 0 {
-		dst.OAuth = src.OAuth
-		cl.log.Info("OAuth configured from config file", "count", len(src.OAuth))
 	}
 
 	// Chaos: merge if not already configured

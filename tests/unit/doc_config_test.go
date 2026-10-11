@@ -117,11 +117,8 @@ func containsMockEntries(content string) bool {
 		return strings.Contains(content, "- id:") ||
 			strings.Contains(content, "- type:") ||
 			strings.Contains(content, "- http:") ||
-			strings.Contains(content, "- graphql:") ||
 			strings.Contains(content, "- grpc:") ||
 			strings.Contains(content, "- websocket:") ||
-			strings.Contains(content, "- soap:") ||
-			strings.Contains(content, "- mqtt:") ||
 			strings.Contains(content, "- oauth:") ||
 			strings.Contains(content, `"id"`) ||
 			strings.Contains(content, `"type"`) ||

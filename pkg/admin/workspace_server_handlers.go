@@ -15,7 +15,6 @@ type WorkspaceServerStatusResponse struct {
 	WorkspaceName string                 `json:"workspaceName"`
 	HTTPPort      int                    `json:"httpPort"`
 	GRPCPort      int                    `json:"grpcPort,omitempty"`
-	MQTTPort      int                    `json:"mqttPort,omitempty"`
 	Status        workspace.ServerStatus `json:"status"`
 	StatusMessage string                 `json:"statusMessage,omitempty"`
 	MockCount     int                    `json:"mockCount"`
@@ -100,7 +99,6 @@ func (a *API) handleStartWorkspaceServer(w http.ResponseWriter, r *http.Request)
 		WorkspaceName: status.WorkspaceName,
 		HTTPPort:      status.HTTPPort,
 		GRPCPort:      status.GRPCPort,
-		MQTTPort:      status.MQTTPort,
 		Status:        status.Status,
 		StatusMessage: status.StatusMessage,
 		MockCount:     status.MockCount,
@@ -208,7 +206,6 @@ func (a *API) handleGetWorkspaceServerStatus(w http.ResponseWriter, r *http.Requ
 			WorkspaceName: registeredWS.WorkspaceName,
 			HTTPPort:      registeredWS.HTTPPort,
 			GRPCPort:      registeredWS.GRPCPort,
-			MQTTPort:      registeredWS.MQTTPort,
 			Status:        workspace.ServerStatusStopped,
 			MockCount:     registeredWS.MockCount,
 		})
@@ -224,7 +221,6 @@ func (a *API) handleGetWorkspaceServerStatus(w http.ResponseWriter, r *http.Requ
 			WorkspaceName: registeredWS.WorkspaceName,
 			HTTPPort:      registeredWS.HTTPPort,
 			GRPCPort:      registeredWS.GRPCPort,
-			MQTTPort:      registeredWS.MQTTPort,
 			Status:        workspace.ServerStatusStopped,
 			MockCount:     registeredWS.MockCount,
 		})
@@ -236,7 +232,6 @@ func (a *API) handleGetWorkspaceServerStatus(w http.ResponseWriter, r *http.Requ
 		WorkspaceName: status.WorkspaceName,
 		HTTPPort:      status.HTTPPort,
 		GRPCPort:      status.GRPCPort,
-		MQTTPort:      status.MQTTPort,
 		Status:        status.Status,
 		StatusMessage: status.StatusMessage,
 		MockCount:     status.MockCount,
@@ -309,7 +304,6 @@ func (a *API) handleReloadWorkspaceServer(w http.ResponseWriter, r *http.Request
 		WorkspaceName: status.WorkspaceName,
 		HTTPPort:      status.HTTPPort,
 		GRPCPort:      status.GRPCPort,
-		MQTTPort:      status.MQTTPort,
 		Status:        status.Status,
 		StatusMessage: status.StatusMessage,
 		MockCount:     status.MockCount,
@@ -351,7 +345,6 @@ func (a *API) ListWorkspaceServers() *WorkspaceServerListResponse {
 			WorkspaceName: status.WorkspaceName,
 			HTTPPort:      status.HTTPPort,
 			GRPCPort:      status.GRPCPort,
-			MQTTPort:      status.MQTTPort,
 			Status:        status.Status,
 			StatusMessage: status.StatusMessage,
 			MockCount:     status.MockCount,

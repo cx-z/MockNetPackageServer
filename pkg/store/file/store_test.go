@@ -578,7 +578,7 @@ func TestMockStore_List_FilterByType(t *testing.T) {
 	ms := fs.Mocks()
 
 	_ = ms.Create(ctx, &mock.Mock{ID: "h1", Name: "HTTP", Type: mock.TypeHTTP})
-	_ = ms.Create(ctx, &mock.Mock{ID: "g1", Name: "GraphQL", Type: mock.TypeGraphQL})
+	_ = ms.Create(ctx, &mock.Mock{ID: "g1", Name: "GraphQL", Type: mock.TypeGRPC})
 	_ = ms.Create(ctx, &mock.Mock{ID: "h2", Name: "HTTP2", Type: mock.TypeHTTP})
 
 	result, _ := ms.List(ctx, &store.MockFilter{Type: mock.TypeHTTP})
@@ -586,7 +586,7 @@ func TestMockStore_List_FilterByType(t *testing.T) {
 		t.Errorf("expected 2 HTTP mocks, got %d", len(result))
 	}
 
-	result, _ = ms.List(ctx, &store.MockFilter{Type: mock.TypeGraphQL})
+	result, _ = ms.List(ctx, &store.MockFilter{Type: mock.TypeGRPC})
 	if len(result) != 1 {
 		t.Errorf("expected 1 GraphQL mock, got %d", len(result))
 	}
@@ -687,7 +687,7 @@ func TestMockStore_List_CombinedFilters(t *testing.T) {
 
 	_ = ms.Create(ctx, &mock.Mock{ID: "cf1", Name: "HTTP Enabled", Type: mock.TypeHTTP, Enabled: boolPtr(true), WorkspaceID: "ws-a"})
 	_ = ms.Create(ctx, &mock.Mock{ID: "cf2", Name: "HTTP Disabled", Type: mock.TypeHTTP, Enabled: boolPtr(false), WorkspaceID: "ws-a"})
-	_ = ms.Create(ctx, &mock.Mock{ID: "cf3", Name: "GQL Enabled", Type: mock.TypeGraphQL, Enabled: boolPtr(true), WorkspaceID: "ws-a"})
+	_ = ms.Create(ctx, &mock.Mock{ID: "cf3", Name: "GQL Enabled", Type: mock.TypeGRPC, Enabled: boolPtr(true), WorkspaceID: "ws-a"})
 	_ = ms.Create(ctx, &mock.Mock{ID: "cf4", Name: "HTTP Enabled B", Type: mock.TypeHTTP, Enabled: boolPtr(true), WorkspaceID: "ws-b"})
 
 	result, _ := ms.List(ctx, &store.MockFilter{
@@ -706,7 +706,7 @@ func TestMockStore_DeleteByType(t *testing.T) {
 	ms := fs.Mocks()
 
 	_ = ms.Create(ctx, &mock.Mock{ID: "h1", Name: "HTTP", Type: mock.TypeHTTP})
-	_ = ms.Create(ctx, &mock.Mock{ID: "g1", Name: "GQL", Type: mock.TypeGraphQL})
+	_ = ms.Create(ctx, &mock.Mock{ID: "g1", Name: "GQL", Type: mock.TypeGRPC})
 	_ = ms.Create(ctx, &mock.Mock{ID: "h2", Name: "HTTP2", Type: mock.TypeHTTP})
 
 	err := ms.DeleteByType(ctx, mock.TypeHTTP)
@@ -726,7 +726,7 @@ func TestMockStore_DeleteByType_NoMatch(t *testing.T) {
 	ms := fs.Mocks()
 
 	_ = ms.Create(ctx, &mock.Mock{ID: "h1", Name: "HTTP", Type: mock.TypeHTTP})
-	err := ms.DeleteByType(ctx, mock.TypeGraphQL)
+	err := ms.DeleteByType(ctx, mock.TypeGRPC)
 	if err != nil {
 		t.Fatalf("DeleteByType() with no matches should succeed, got %v", err)
 	}
@@ -742,7 +742,7 @@ func TestMockStore_DeleteAll(t *testing.T) {
 	ms := fs.Mocks()
 
 	_ = ms.Create(ctx, &mock.Mock{ID: "h1", Type: mock.TypeHTTP})
-	_ = ms.Create(ctx, &mock.Mock{ID: "g1", Type: mock.TypeGraphQL})
+	_ = ms.Create(ctx, &mock.Mock{ID: "g1", Type: mock.TypeGRPC})
 
 	if err := ms.DeleteAll(ctx); err != nil {
 		t.Fatalf("DeleteAll() failed: %v", err)
@@ -760,7 +760,7 @@ func TestMockStore_Count(t *testing.T) {
 	ms := fs.Mocks()
 
 	_ = ms.Create(ctx, &mock.Mock{ID: "h1", Type: mock.TypeHTTP})
-	_ = ms.Create(ctx, &mock.Mock{ID: "g1", Type: mock.TypeGraphQL})
+	_ = ms.Create(ctx, &mock.Mock{ID: "g1", Type: mock.TypeGRPC})
 	_ = ms.Create(ctx, &mock.Mock{ID: "h2", Type: mock.TypeHTTP})
 
 	total, _ := ms.Count(ctx, "")
@@ -773,7 +773,7 @@ func TestMockStore_Count(t *testing.T) {
 		t.Errorf("expected 2 HTTP, got %d", httpCount)
 	}
 
-	gqlCount, _ := ms.Count(ctx, mock.TypeGraphQL)
+	gqlCount, _ := ms.Count(ctx, mock.TypeGRPC)
 	if gqlCount != 1 {
 		t.Errorf("expected 1 GraphQL, got %d", gqlCount)
 	}
@@ -792,7 +792,7 @@ func TestMockStore_BulkCreate(t *testing.T) {
 	mocks := []*mock.Mock{
 		{ID: "b1", Name: "Bulk1", Type: mock.TypeHTTP},
 		{ID: "b2", Name: "Bulk2", Type: mock.TypeHTTP},
-		{ID: "b3", Name: "Bulk3", Type: mock.TypeGraphQL},
+		{ID: "b3", Name: "Bulk3", Type: mock.TypeGRPC},
 	}
 	if err := ms.BulkCreate(ctx, mocks); err != nil {
 		t.Fatalf("BulkCreate() failed: %v", err)

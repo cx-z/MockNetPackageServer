@@ -6,7 +6,6 @@ import (
 	"github.com/getmockd/mockd/pkg/chaos"
 	"github.com/getmockd/mockd/pkg/config"
 	"github.com/getmockd/mockd/pkg/mock"
-	"github.com/getmockd/mockd/pkg/oauth"
 	"github.com/getmockd/mockd/pkg/stateful"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -503,44 +502,6 @@ func TestMergeServerConfig(t *testing.T) {
 		assert.Empty(t, srv.cfg.Chaos.Rules)
 	})
 
-	t.Run("merge OAuth when dst has none", func(t *testing.T) {
-		t.Parallel()
-		srv := NewServer(nil)
-		srv.cfg.OAuth = nil
-		cl := NewConfigLoader(srv)
-
-		src := &config.ServerConfiguration{
-			OAuth: []*oauth.OAuthConfig{
-				{Issuer: "https://auth.example.com"},
-			},
-		}
-
-		cl.mergeServerConfig(src)
-
-		require.Len(t, srv.cfg.OAuth, 1)
-		assert.Equal(t, "https://auth.example.com", srv.cfg.OAuth[0].Issuer)
-	})
-
-	t.Run("OAuth not overwritten when dst already has entries", func(t *testing.T) {
-		t.Parallel()
-		srv := NewServer(nil)
-		srv.cfg.OAuth = []*oauth.OAuthConfig{
-			{Issuer: "https://existing.example.com"},
-		}
-		cl := NewConfigLoader(srv)
-
-		src := &config.ServerConfiguration{
-			OAuth: []*oauth.OAuthConfig{
-				{Issuer: "https://other.example.com"},
-			},
-		}
-
-		cl.mergeServerConfig(src)
-
-		require.Len(t, srv.cfg.OAuth, 1)
-		assert.Equal(t, "https://existing.example.com", srv.cfg.OAuth[0].Issuer)
-	})
-
 	t.Run("merge multiple fields at once", func(t *testing.T) {
 		t.Parallel()
 		srv := NewServer(nil)
@@ -549,7 +510,6 @@ func TestMergeServerConfig(t *testing.T) {
 		srv.cfg.TLS = nil
 		srv.cfg.MTLS = nil
 		srv.cfg.Chaos = nil
-		srv.cfg.OAuth = nil
 		cl := NewConfigLoader(srv)
 
 		src := &config.ServerConfiguration{
@@ -575,7 +535,6 @@ func TestMergeServerConfig(t *testing.T) {
 		// Fields not in src should stay nil
 		assert.Nil(t, srv.cfg.MTLS, "MTLS should remain nil")
 		assert.Nil(t, srv.cfg.Chaos, "Chaos should remain nil")
-		assert.Empty(t, srv.cfg.OAuth, "OAuth should remain empty")
 	})
 
 	t.Run("nil source is a no-op", func(t *testing.T) {

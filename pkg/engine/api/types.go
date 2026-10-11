@@ -41,9 +41,6 @@ type (
 	WebSocketConnection             = types.WebSocketConnection
 	WebSocketConnectionListResponse = types.WebSocketConnectionListResponse
 	WebSocketStats                  = types.WebSocketStats
-	MQTTConnection                  = types.MQTTConnection
-	MQTTConnectionListResponse      = types.MQTTConnectionListResponse
-	MQTTStats                       = types.MQTTStats
 	GRPCStream                      = types.GRPCStream
 	GRPCStreamListResponse          = types.GRPCStreamListResponse
 	GRPCStats                       = types.GRPCStats

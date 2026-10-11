@@ -502,7 +502,7 @@ func (a *ControlAPIAdapter) ListProtocolHandlers() []*api.ProtocolHandler {
 			Version: meta.Version,
 		}
 
-		// Get port if the handler is a standalone server (MQTT, gRPC, etc.)
+		// Get port if the handler is a standalone server (gRPC, etc.)
 		if ss, ok := h.(protocol.StandaloneServer); ok {
 			handler.Port = ss.Port()
 		}
@@ -790,123 +790,6 @@ func (a *ControlAPIAdapter) GetWebSocketStats() *api.WebSocketStats {
 		TotalMessagesRecv: stats.TotalMessagesReceived,
 		ConnectionsByMock: connectionsByMock,
 	}
-}
-
-// ErrMQTTBrokerNotInitialized is returned when no MQTT broker is available.
-var ErrMQTTBrokerNotInitialized = errors.New("MQTT broker not initialized")
-
-// ListMQTTConnections implements api.EngineController.
-func (a *ControlAPIAdapter) ListMQTTConnections() []*api.MQTTConnection {
-	brokers := a.server.GetMQTTBrokers()
-	var result []*api.MQTTConnection
-
-	for _, broker := range brokers {
-		if broker == nil || !broker.IsRunning() {
-			continue
-		}
-		infos := broker.ListClientInfos()
-		for _, info := range infos {
-			if info.Closed {
-				continue
-			}
-			conn := &api.MQTTConnection{
-				ID:              info.ID,
-				BrokerID:        info.BrokerID,
-				ConnectedAt:     info.ConnectedAt,
-				Subscriptions:   info.Subscriptions,
-				ProtocolVersion: info.ProtocolVersion,
-				Username:        info.Username,
-				RemoteAddr:      info.RemoteAddr,
-				Status:          "connected",
-			}
-			if conn.Subscriptions == nil {
-				conn.Subscriptions = []string{}
-			}
-			result = append(result, conn)
-		}
-	}
-
-	return result
-}
-
-// GetMQTTConnection implements api.EngineController.
-func (a *ControlAPIAdapter) GetMQTTConnection(id string) *api.MQTTConnection {
-	brokers := a.server.GetMQTTBrokers()
-
-	for _, broker := range brokers {
-		if broker == nil || !broker.IsRunning() {
-			continue
-		}
-		info := broker.GetClientInfo(id)
-		if info == nil {
-			continue
-		}
-		subs := info.Subscriptions
-		if subs == nil {
-			subs = []string{}
-		}
-		return &api.MQTTConnection{
-			ID:              info.ID,
-			BrokerID:        info.BrokerID,
-			ConnectedAt:     info.ConnectedAt,
-			Subscriptions:   subs,
-			ProtocolVersion: info.ProtocolVersion,
-			Username:        info.Username,
-			RemoteAddr:      info.RemoteAddr,
-			Status:          "connected",
-		}
-	}
-
-	return nil
-}
-
-// CloseMQTTConnection implements api.EngineController.
-func (a *ControlAPIAdapter) CloseMQTTConnection(id string) error {
-	brokers := a.server.GetMQTTBrokers()
-
-	for _, broker := range brokers {
-		if broker == nil || !broker.IsRunning() {
-			continue
-		}
-		if err := broker.DisconnectClient(id); err == nil {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("MQTT client %q not found", id)
-}
-
-// GetMQTTStats implements api.EngineController.
-func (a *ControlAPIAdapter) GetMQTTStats() *api.MQTTStats {
-	brokers := a.server.GetMQTTBrokers()
-	if len(brokers) == 0 {
-		return nil
-	}
-
-	stats := &api.MQTTStats{
-		SubscriptionsByClient: make(map[string]int),
-	}
-
-	for _, broker := range brokers {
-		if broker == nil || !broker.IsRunning() {
-			continue
-		}
-		connected, totalSubs, subsByClient := broker.GetConnectionStats()
-		stats.ConnectedClients += connected
-		stats.TotalSubscriptions += totalSubs
-		for k, v := range subsByClient {
-			stats.SubscriptionsByClient[k] = v
-		}
-		cfg := broker.Config()
-		if cfg != nil {
-			stats.TopicCount += len(cfg.Topics)
-			stats.Port = cfg.Port
-			stats.TLSEnabled = stats.TLSEnabled || (cfg.TLS != nil && cfg.TLS.Enabled)
-			stats.AuthEnabled = stats.AuthEnabled || (cfg.Auth != nil && cfg.Auth.Enabled)
-		}
-	}
-
-	return stats
 }
 
 // ErrGRPCServerNotInitialized is returned when no gRPC server is available.

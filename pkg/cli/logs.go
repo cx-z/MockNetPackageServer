@@ -84,7 +84,7 @@ func init() {
 
 	// Request logs flags
 	logsCmd.Flags().BoolVar(&logsRequests, "requests", false, "Show request logs from admin API instead of daemon logs")
-	logsCmd.Flags().StringVar(&logsProtocol, "protocol", "", "Filter by protocol (http, grpc, mqtt, soap, graphql, websocket, sse) [requests mode]")
+	logsCmd.Flags().StringVar(&logsProtocol, "protocol", "", "Filter by protocol (http, grpc, websocket, sse) [requests mode]")
 	logsCmd.Flags().StringVarP(&logsMethod, "method", "m", "", "Filter by HTTP method [requests mode]")
 	logsCmd.Flags().StringVarP(&logsPath, "path", "p", "", "Filter by path (substring match) [requests mode]")
 	logsCmd.Flags().BoolVar(&logsMatched, "matched", false, "Show only matched requests [requests mode]")
@@ -689,21 +689,6 @@ func printVerboseEntry(req *requestlog.Entry) {
 			fmt.Printf("  gRPC Service: %s, Method: %s, Status: %s\n",
 				req.GRPC.Service, req.GRPC.MethodName, req.GRPC.StatusCode)
 		}
-	case "mqtt":
-		if req.MQTT != nil {
-			fmt.Printf("  MQTT Topic: %s, ClientID: %s, QoS: %d\n",
-				req.MQTT.Topic, req.MQTT.ClientID, req.MQTT.QoS)
-		}
-	case "soap":
-		if req.SOAP != nil {
-			fmt.Printf("  SOAP Operation: %s, Version: %s\n",
-				req.SOAP.Operation, req.SOAP.SOAPVersion)
-		}
-	case "graphql":
-		if req.GraphQL != nil {
-			fmt.Printf("  GraphQL Type: %s, Operation: %s\n",
-				req.GraphQL.OperationType, req.GraphQL.OperationName)
-		}
 	case "websocket":
 		if req.WebSocket != nil {
 			fmt.Printf("  WebSocket Connection: %s, Direction: %s\n",
@@ -783,21 +768,6 @@ func printVerboseAPIEntry(req *apitypes.RequestLogEntry) {
 		if req.GRPC != nil {
 			fmt.Printf("  gRPC Service: %s, Method: %s, Status: %s\n",
 				req.GRPC.Service, req.GRPC.MethodName, req.GRPC.StatusCode)
-		}
-	case "mqtt":
-		if req.MQTT != nil {
-			fmt.Printf("  MQTT Topic: %s, ClientID: %s, QoS: %d\n",
-				req.MQTT.Topic, req.MQTT.ClientID, req.MQTT.QoS)
-		}
-	case "soap":
-		if req.SOAP != nil {
-			fmt.Printf("  SOAP Operation: %s, Version: %s\n",
-				req.SOAP.Operation, req.SOAP.SOAPVersion)
-		}
-	case "graphql":
-		if req.GraphQL != nil {
-			fmt.Printf("  GraphQL Type: %s, Operation: %s\n",
-				req.GraphQL.OperationType, req.GraphQL.OperationName)
 		}
 	case "websocket":
 		if req.WebSocket != nil {

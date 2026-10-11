@@ -1,5 +1,5 @@
 // Package mock provides the unified Mock type that represents all mock types
-// (HTTP, WebSocket, GraphQL, gRPC, SOAP, MQTT) with a common interface.
+// (HTTP, WebSocket, gRPC) with a common interface.
 package mock
 
 import (
@@ -17,11 +17,7 @@ type Type string
 const (
 	TypeHTTP      Type = "http"
 	TypeWebSocket Type = "websocket"
-	TypeGraphQL   Type = "graphql"
 	TypeGRPC      Type = "grpc"
-	TypeSOAP      Type = "soap"
-	TypeMQTT      Type = "mqtt"
-	TypeOAuth     Type = "oauth"
 )
 
 // Mock represents a unified mock definition that can be any of the supported types.
@@ -73,11 +69,7 @@ type Mock struct {
 	// Type-specific specs - exactly one is populated based on Type
 	HTTP      *HTTPSpec      `json:"http,omitempty" yaml:"http,omitempty"`
 	WebSocket *WebSocketSpec `json:"websocket,omitempty" yaml:"websocket,omitempty"`
-	GraphQL   *GraphQLSpec   `json:"graphql,omitempty" yaml:"graphql,omitempty"`
 	GRPC      *GRPCSpec      `json:"grpc,omitempty" yaml:"grpc,omitempty"`
-	SOAP      *SOAPSpec      `json:"soap,omitempty" yaml:"soap,omitempty"`
-	MQTT      *MQTTSpec      `json:"mqtt,omitempty" yaml:"mqtt,omitempty"`
-	OAuth     *OAuthSpec     `json:"oauth,omitempty" yaml:"oauth,omitempty"`
 }
 
 // UnmarshalJSON handles both the legacy format (matcher/response at top level)
@@ -173,16 +165,8 @@ func (m *Mock) GetSpec() interface{} {
 		return m.HTTP
 	case TypeWebSocket:
 		return m.WebSocket
-	case TypeGraphQL:
-		return m.GraphQL
 	case TypeGRPC:
 		return m.GRPC
-	case TypeSOAP:
-		return m.SOAP
-	case TypeMQTT:
-		return m.MQTT
-	case TypeOAuth:
-		return m.OAuth
 	default:
 		return nil
 	}
@@ -202,25 +186,9 @@ func (m *Mock) GetPath() string {
 		if m.WebSocket != nil {
 			return m.WebSocket.Path
 		}
-	case TypeGraphQL:
-		if m.GraphQL != nil {
-			return m.GraphQL.Path
-		}
 	case TypeGRPC:
 		if m.GRPC != nil {
 			return formatPort(m.GRPC.Port)
-		}
-	case TypeSOAP:
-		if m.SOAP != nil {
-			return m.SOAP.Path
-		}
-	case TypeMQTT:
-		if m.MQTT != nil {
-			return formatPort(m.MQTT.Port)
-		}
-	case TypeOAuth:
-		if m.OAuth != nil {
-			return m.OAuth.Issuer
 		}
 	}
 	return ""
@@ -645,66 +613,6 @@ type WSHeartbeatConfig struct {
 }
 
 // ============================================================================
-// GraphQL Spec
-// ============================================================================
-
-// GraphQLSpec contains GraphQL-specific mock configuration.
-type GraphQLSpec struct {
-	Path          string                        `json:"path" yaml:"path"`
-	Schema        string                        `json:"schema,omitempty" yaml:"schema,omitempty"`
-	SchemaFile    string                        `json:"schemaFile,omitempty" yaml:"schemaFile,omitempty"`
-	Introspection bool                          `json:"introspection" yaml:"introspection"`
-	Resolvers     map[string]ResolverConfig     `json:"resolvers,omitempty" yaml:"resolvers,omitempty"`
-	Subscriptions map[string]SubscriptionConfig `json:"subscriptions,omitempty" yaml:"subscriptions,omitempty"`
-}
-
-// ResolverConfig configures how a GraphQL field is resolved.
-type ResolverConfig struct {
-	Response any                 `json:"response,omitempty" yaml:"response,omitempty"`
-	Delay    string              `json:"delay,omitempty" yaml:"delay,omitempty"`
-	Match    *ResolverMatch      `json:"match,omitempty" yaml:"match,omitempty"`
-	Error    *GraphQLErrorConfig `json:"error,omitempty" yaml:"error,omitempty"`
-}
-
-// ResolverMatch specifies matching conditions for a resolver.
-type ResolverMatch struct {
-	Args map[string]any `json:"args,omitempty" yaml:"args,omitempty"`
-}
-
-// GraphQLErrorConfig configures a GraphQL error response.
-type GraphQLErrorConfig struct {
-	Message    string         `json:"message"`
-	Path       []string       `json:"path,omitempty"`
-	Extensions map[string]any `json:"extensions,omitempty"`
-}
-
-// SubscriptionConfig configures GraphQL subscriptions.
-type SubscriptionConfig struct {
-	// Events is a list of events to stream to the client.
-	Events []SubscriptionEventConfig `json:"events,omitempty" yaml:"events,omitempty"`
-	// Timing configures the timing behavior for events.
-	Timing *SubscriptionTimingConfig `json:"timing,omitempty" yaml:"timing,omitempty"`
-}
-
-// SubscriptionEventConfig configures a single subscription event.
-type SubscriptionEventConfig struct {
-	// Data is the event payload to send.
-	Data any `json:"data" yaml:"data"`
-	// Delay is the delay before sending this event (e.g., "100ms", "2s").
-	Delay string `json:"delay,omitempty" yaml:"delay,omitempty"`
-}
-
-// SubscriptionTimingConfig configures timing behavior for subscription events.
-type SubscriptionTimingConfig struct {
-	// FixedDelay is a fixed delay between events (e.g., "100ms", "1s").
-	FixedDelay string `json:"fixedDelay,omitempty" yaml:"fixedDelay,omitempty"`
-	// RandomDelay is a random delay range between events (e.g., "100ms-500ms").
-	RandomDelay string `json:"randomDelay,omitempty" yaml:"randomDelay,omitempty"`
-	// Repeat indicates whether to repeat the events after the sequence completes.
-	Repeat bool `json:"repeat,omitempty" yaml:"repeat,omitempty"`
-}
-
-// ============================================================================
 // gRPC Spec
 // ============================================================================
 
@@ -762,76 +670,6 @@ type GRPCErrorConfig struct {
 	Details map[string]any `json:"details,omitempty" yaml:"details,omitempty"`
 }
 
-// ============================================================================
-// SOAP Spec
-// ============================================================================
-
-// SOAPSpec contains SOAP-specific mock configuration.
-type SOAPSpec struct {
-	Path       string                     `json:"path" yaml:"path"`
-	WSDLFile   string                     `json:"wsdlFile,omitempty" yaml:"wsdlFile,omitempty"`
-	WSDL       string                     `json:"wsdl,omitempty" yaml:"wsdl,omitempty"`
-	Operations map[string]OperationConfig `json:"operations,omitempty" yaml:"operations,omitempty"`
-}
-
-// OperationConfig configures a single SOAP operation.
-type OperationConfig struct {
-	SOAPAction string     `json:"soapAction,omitempty" yaml:"soapAction,omitempty"`
-	Response   string     `json:"response" yaml:"response"`
-	Delay      string     `json:"delay,omitempty" yaml:"delay,omitempty"`
-	Fault      *SOAPFault `json:"fault,omitempty" yaml:"fault,omitempty"`
-	Match      *SOAPMatch `json:"match,omitempty" yaml:"match,omitempty"`
-
-	// StatefulBinding binds this operation to a stateful table+action.
-	// When set, the operation routes through the stateful bridge instead of
-	// returning a canned/template response.
-	StatefulBinding *StatefulBinding `json:"statefulBinding,omitempty" yaml:"statefulBinding,omitempty"`
-}
-
-// SOAPMatch defines XPath-based request matching conditions.
-type SOAPMatch struct {
-	XPath map[string]string `json:"xpath,omitempty" yaml:"xpath,omitempty"`
-}
-
-// SOAPFault defines a SOAP fault response.
-type SOAPFault struct {
-	Code    string `json:"code" yaml:"code"`
-	Message string `json:"message" yaml:"message"`
-	Detail  string `json:"detail,omitempty" yaml:"detail,omitempty"`
-}
-
-// ============================================================================
-// MQTT Spec
-// ============================================================================
-
-// MQTTSpec contains MQTT-specific mock configuration.
-type MQTTSpec struct {
-	Port   int             `json:"port" yaml:"port"`
-	TLS    *MQTTTLSConfig  `json:"tls,omitempty" yaml:"tls,omitempty"`
-	Auth   *MQTTAuthConfig `json:"auth,omitempty" yaml:"auth,omitempty"`
-	Topics []TopicConfig   `json:"topics,omitempty" yaml:"topics,omitempty"`
-}
-
-// MQTTTLSConfig configures TLS for the MQTT broker.
-type MQTTTLSConfig struct {
-	Enabled  bool   `json:"enabled" yaml:"enabled"`
-	CertFile string `json:"certFile" yaml:"certFile"`
-	KeyFile  string `json:"keyFile" yaml:"keyFile"`
-}
-
-// MQTTAuthConfig configures authentication for the MQTT broker.
-type MQTTAuthConfig struct {
-	Enabled bool       `json:"enabled" yaml:"enabled"`
-	Users   []MQTTUser `json:"users,omitempty" yaml:"users,omitempty"`
-}
-
-// MQTTUser represents an authenticated MQTT user.
-type MQTTUser struct {
-	Username string    `json:"username" yaml:"username"`
-	Password string    `json:"password" yaml:"password"`
-	ACL      []ACLRule `json:"acl,omitempty" yaml:"acl,omitempty"`
-}
-
 // ACLRule defines access control for topics.
 type ACLRule struct {
 	Topic  string `json:"topic" yaml:"topic"`
@@ -867,43 +705,4 @@ type MessageConfig struct {
 type PublishHandler struct {
 	Response *MessageConfig `json:"response,omitempty" yaml:"response,omitempty"`
 	Forward  string         `json:"forward,omitempty" yaml:"forward,omitempty"`
-}
-
-// OAuthSpec contains OAuth/OIDC mock provider configuration.
-type OAuthSpec struct {
-	// Issuer is the OAuth issuer URL (e.g., http://localhost:9999/oauth)
-	Issuer string `json:"issuer" yaml:"issuer"`
-
-	// TokenExpiry is the access token lifetime (e.g., "1h", "30m")
-	TokenExpiry string `json:"tokenExpiry,omitempty" yaml:"tokenExpiry,omitempty"`
-
-	// RefreshExpiry is the refresh token lifetime (e.g., "7d", "24h")
-	RefreshExpiry string `json:"refreshExpiry,omitempty" yaml:"refreshExpiry,omitempty"`
-
-	// DefaultScopes are the default scopes to include if none requested
-	DefaultScopes []string `json:"defaultScopes,omitempty" yaml:"defaultScopes,omitempty"`
-
-	// DefaultClaims are claims added to all tokens (e.g., iss, aud)
-	DefaultClaims map[string]interface{} `json:"defaultClaims,omitempty" yaml:"defaultClaims,omitempty"`
-
-	// Clients are the registered OAuth clients
-	Clients []OAuthClient `json:"clients,omitempty" yaml:"clients,omitempty"`
-
-	// Users are test users for resource owner password credentials flow
-	Users []OAuthUser `json:"users,omitempty" yaml:"users,omitempty"`
-}
-
-// OAuthClient defines an OAuth client configuration.
-type OAuthClient struct {
-	ClientID     string   `json:"clientId" yaml:"clientId"`
-	ClientSecret string   `json:"clientSecret" yaml:"clientSecret"`
-	RedirectURIs []string `json:"redirectUris,omitempty" yaml:"redirectUris,omitempty"`
-	GrantTypes   []string `json:"grantTypes,omitempty" yaml:"grantTypes,omitempty"`
-}
-
-// OAuthUser defines a test user for the resource owner password credentials flow.
-type OAuthUser struct {
-	Username string                 `json:"username" yaml:"username"`
-	Password string                 `json:"password" yaml:"password"`
-	Claims   map[string]interface{} `json:"claims,omitempty" yaml:"claims,omitempty"`
 }

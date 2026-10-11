@@ -518,19 +518,12 @@ func TestMetricsUpdateMockCounts(t *testing.T) {
 		initMetrics(t)
 
 		UpdateMockCounts("http", 10, 8)
-		UpdateMockCounts("graphql", 3, 2)
 
 		totalHTTP := collectGaugeValue(t, metrics.MocksTotal, "http")
 		assert.Equal(t, float64(10), totalHTTP)
 
 		enabledHTTP := collectGaugeValue(t, metrics.MocksEnabled, "http")
 		assert.Equal(t, float64(8), enabledHTTP)
-
-		totalGQL := collectGaugeValue(t, metrics.MocksTotal, "graphql")
-		assert.Equal(t, float64(3), totalGQL)
-
-		enabledGQL := collectGaugeValue(t, metrics.MocksEnabled, "graphql")
-		assert.Equal(t, float64(2), enabledGQL)
 	})
 
 	t.Run("NilMetricsNoPanic", func(t *testing.T) {

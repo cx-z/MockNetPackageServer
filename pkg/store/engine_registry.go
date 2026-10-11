@@ -27,75 +27,11 @@ type EngineWorkspace struct {
 	WorkspaceName string    `json:"workspaceName"`
 	HTTPPort      int       `json:"httpPort"`
 	GRPCPort      int       `json:"grpcPort,omitempty"`
-	MQTTPort      int       `json:"mqttPort,omitempty"`
 	MockCount     int       `json:"mockCount"`
 	WSCount       int       `json:"wsCount"`
-	GraphQLCount  int       `json:"graphqlCount"`
 	GRPCCount     int       `json:"grpcCount"`
-	SOAPCount     int       `json:"soapCount"`
-	MQTTCount     int       `json:"mqttCount"`
 	Status        string    `json:"status"` // "running", "stopped", "error"
 	LastSynced    time.Time `json:"lastSynced,omitempty"`
-}
-
-// TunnelConfig defines tunnel settings for an engine.
-// Stored by admin, delivered to engine, presented to relay via JWT.
-type TunnelConfig struct {
-	Enabled      bool           `json:"enabled"`
-	Subdomain    string         `json:"subdomain,omitempty"`    // Custom subdomain (Pro+)
-	CustomDomain string         `json:"customDomain,omitempty"` // Custom domain (Pro+)
-	Expose       TunnelExposure `json:"expose"`
-	Auth         *TunnelAuth    `json:"auth,omitempty"` // Incoming request auth
-
-	// Runtime state (read-only, set by relay/engine)
-	PublicURL   string     `json:"publicUrl,omitempty"`
-	Status      string     `json:"status,omitempty"` // "connected","disconnected","connecting","error"
-	ConnectedAt *time.Time `json:"connectedAt,omitempty"`
-	SessionID   string     `json:"sessionId,omitempty"`
-	Transport   string     `json:"transport,omitempty"` // "quic","websocket"
-}
-
-// TunnelExposure defines what to expose through the tunnel.
-type TunnelExposure struct {
-	// Mode controls the exposure strategy.
-	//   "all"      - expose everything on the engine
-	//   "selected" - apply include/exclude filters
-	//   "none"     - tunnel connected but nothing routed
-	Mode string `json:"mode"` // "all", "selected", "none"
-
-	// Include filters (union -- mock matches ANY of these)
-	Workspaces []string `json:"workspaces,omitempty"` // Workspace IDs or names
-	Folders    []string `json:"folders,omitempty"`    // Folder IDs (recursive into subfolders)
-	Mocks      []string `json:"mocks,omitempty"`      // Specific mock IDs
-	Types      []string `json:"types,omitempty"`      // mock.Type filter: "http","grpc","mqtt","websocket","graphql","soap","oauth"
-
-	// Exclude filters (applied after includes)
-	Exclude *TunnelExclude `json:"exclude,omitempty"`
-}
-
-// TunnelExclude defines what to exclude from tunnel exposure.
-type TunnelExclude struct {
-	Workspaces []string `json:"workspaces,omitempty"`
-	Folders    []string `json:"folders,omitempty"`
-	Mocks      []string `json:"mocks,omitempty"`
-}
-
-// TunnelAuth protects incoming requests through the tunnel.
-type TunnelAuth struct {
-	Type       string   `json:"type"`                 // "none","token","basic","ip"
-	Token      string   `json:"token,omitempty"`      // For type=token: required header value
-	Username   string   `json:"username,omitempty"`   // For type=basic
-	Password   string   `json:"password,omitempty"`   // For type=basic
-	AllowedIPs []string `json:"allowedIPs,omitempty"` // For type=ip: CIDR ranges
-}
-
-// TunnelStats holds runtime statistics for an active tunnel.
-type TunnelStats struct {
-	RequestsServed    int64  `json:"requestsServed"`
-	BytesIn           int64  `json:"bytesIn"`
-	BytesOut          int64  `json:"bytesOut"`
-	Uptime            string `json:"uptime"`
-	ActiveConnections int    `json:"activeConnections"`
 }
 
 // Engine represents a registered mock engine.
@@ -114,7 +50,6 @@ type Engine struct {
 	RegisteredAt   time.Time         `json:"registeredAt"`
 	Fingerprint    string            `json:"fingerprint,omitempty"` // Machine fingerprint for identity verification
 	Token          string            `json:"-"`                     // Engine-specific token, not exposed in JSON
-	Tunnel         *TunnelConfig     `json:"tunnel,omitempty"`      // Tunnel configuration
 
 	// RootWorkspaceID is the workspace whose mocks are served at "/" (no prefix)
 	// on this engine. All other workspaces have their mocks prefixed with
@@ -216,51 +151,6 @@ func (e *Engine) Copy() *Engine {
 		engineCopy.Workspaces = make([]EngineWorkspace, len(e.Workspaces))
 		copy(engineCopy.Workspaces, e.Workspaces)
 	}
-	if e.Tunnel != nil {
-		tunnelCopy := *e.Tunnel
-		if e.Tunnel.Auth != nil {
-			authCopy := *e.Tunnel.Auth
-			if e.Tunnel.Auth.AllowedIPs != nil {
-				authCopy.AllowedIPs = make([]string, len(e.Tunnel.Auth.AllowedIPs))
-				copy(authCopy.AllowedIPs, e.Tunnel.Auth.AllowedIPs)
-			}
-			tunnelCopy.Auth = &authCopy
-		}
-		// Deep copy exposure slices
-		if e.Tunnel.Expose.Workspaces != nil {
-			tunnelCopy.Expose.Workspaces = make([]string, len(e.Tunnel.Expose.Workspaces))
-			copy(tunnelCopy.Expose.Workspaces, e.Tunnel.Expose.Workspaces)
-		}
-		if e.Tunnel.Expose.Folders != nil {
-			tunnelCopy.Expose.Folders = make([]string, len(e.Tunnel.Expose.Folders))
-			copy(tunnelCopy.Expose.Folders, e.Tunnel.Expose.Folders)
-		}
-		if e.Tunnel.Expose.Mocks != nil {
-			tunnelCopy.Expose.Mocks = make([]string, len(e.Tunnel.Expose.Mocks))
-			copy(tunnelCopy.Expose.Mocks, e.Tunnel.Expose.Mocks)
-		}
-		if e.Tunnel.Expose.Types != nil {
-			tunnelCopy.Expose.Types = make([]string, len(e.Tunnel.Expose.Types))
-			copy(tunnelCopy.Expose.Types, e.Tunnel.Expose.Types)
-		}
-		if e.Tunnel.Expose.Exclude != nil {
-			excludeCopy := *e.Tunnel.Expose.Exclude
-			if e.Tunnel.Expose.Exclude.Workspaces != nil {
-				excludeCopy.Workspaces = make([]string, len(e.Tunnel.Expose.Exclude.Workspaces))
-				copy(excludeCopy.Workspaces, e.Tunnel.Expose.Exclude.Workspaces)
-			}
-			if e.Tunnel.Expose.Exclude.Folders != nil {
-				excludeCopy.Folders = make([]string, len(e.Tunnel.Expose.Exclude.Folders))
-				copy(excludeCopy.Folders, e.Tunnel.Expose.Exclude.Folders)
-			}
-			if e.Tunnel.Expose.Exclude.Mocks != nil {
-				excludeCopy.Mocks = make([]string, len(e.Tunnel.Expose.Exclude.Mocks))
-				copy(excludeCopy.Mocks, e.Tunnel.Expose.Exclude.Mocks)
-			}
-			tunnelCopy.Expose.Exclude = &excludeCopy
-		}
-		engineCopy.Tunnel = &tunnelCopy
-	}
 	return &engineCopy
 }
 
@@ -311,7 +201,7 @@ func (r *EngineRegistry) AssignWorkspace(id string, workspaceID string) error {
 }
 
 // AddWorkspace adds a workspace to an engine with port assignments.
-func (e *Engine) AddWorkspace(workspaceID, workspaceName string, httpPort, grpcPort, mqttPort int) *EngineWorkspace {
+func (e *Engine) AddWorkspace(workspaceID, workspaceName string, httpPort, grpcPort int) *EngineWorkspace {
 	// Check if workspace already exists
 	for i := range e.Workspaces {
 		if e.Workspaces[i].WorkspaceID == workspaceID {
@@ -323,9 +213,6 @@ func (e *Engine) AddWorkspace(workspaceID, workspaceName string, httpPort, grpcP
 			if grpcPort > 0 {
 				e.Workspaces[i].GRPCPort = grpcPort
 			}
-			if mqttPort > 0 {
-				e.Workspaces[i].MQTTPort = mqttPort
-			}
 			return &e.Workspaces[i]
 		}
 	}
@@ -336,7 +223,6 @@ func (e *Engine) AddWorkspace(workspaceID, workspaceName string, httpPort, grpcP
 		WorkspaceName: workspaceName,
 		HTTPPort:      httpPort,
 		GRPCPort:      grpcPort,
-		MQTTPort:      mqttPort,
 		Status:        "stopped",
 	}
 
@@ -401,15 +287,12 @@ func (e *Engine) GetUsedPorts() map[int]bool {
 		if ws.GRPCPort > 0 {
 			used[ws.GRPCPort] = true
 		}
-		if ws.MQTTPort > 0 {
-			used[ws.MQTTPort] = true
-		}
 	}
 	return used
 }
 
 // UpdateWorkspace updates a workspace's port assignments.
-func (e *Engine) UpdateWorkspace(workspaceID string, httpPort, grpcPort, mqttPort int) *EngineWorkspace {
+func (e *Engine) UpdateWorkspace(workspaceID string, httpPort, grpcPort int) *EngineWorkspace {
 	for i := range e.Workspaces {
 		if e.Workspaces[i].WorkspaceID == workspaceID {
 			if httpPort > 0 {
@@ -417,9 +300,6 @@ func (e *Engine) UpdateWorkspace(workspaceID string, httpPort, grpcPort, mqttPor
 			}
 			if grpcPort >= 0 {
 				e.Workspaces[i].GRPCPort = grpcPort
-			}
-			if mqttPort >= 0 {
-				e.Workspaces[i].MQTTPort = mqttPort
 			}
 			return &e.Workspaces[i]
 		}
@@ -439,7 +319,7 @@ func (e *Engine) SyncWorkspace(workspaceID string) *EngineWorkspace {
 }
 
 // AddWorkspaceToEngine adds a workspace to an engine by engine ID (registry method).
-func (r *EngineRegistry) AddWorkspaceToEngine(engineID, workspaceID, workspaceName string, httpPort, grpcPort, mqttPort int) (*EngineWorkspace, error) {
+func (r *EngineRegistry) AddWorkspaceToEngine(engineID, workspaceID, workspaceName string, httpPort, grpcPort int) (*EngineWorkspace, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -448,7 +328,7 @@ func (r *EngineRegistry) AddWorkspaceToEngine(engineID, workspaceID, workspaceNa
 		return nil, ErrNotFound
 	}
 
-	ws := engine.AddWorkspace(workspaceID, workspaceName, httpPort, grpcPort, mqttPort)
+	ws := engine.AddWorkspace(workspaceID, workspaceName, httpPort, grpcPort)
 	return ws, nil
 }
 
@@ -469,7 +349,7 @@ func (r *EngineRegistry) RemoveWorkspaceFromEngine(engineID, workspaceID string)
 }
 
 // UpdateWorkspaceInEngine updates a workspace's ports in an engine.
-func (r *EngineRegistry) UpdateWorkspaceInEngine(engineID, workspaceID string, httpPort, grpcPort, mqttPort int) (*EngineWorkspace, error) {
+func (r *EngineRegistry) UpdateWorkspaceInEngine(engineID, workspaceID string, httpPort, grpcPort int) (*EngineWorkspace, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -478,7 +358,7 @@ func (r *EngineRegistry) UpdateWorkspaceInEngine(engineID, workspaceID string, h
 		return nil, ErrNotFound
 	}
 
-	ws := engine.UpdateWorkspace(workspaceID, httpPort, grpcPort, mqttPort)
+	ws := engine.UpdateWorkspace(workspaceID, httpPort, grpcPort)
 	if ws == nil {
 		return nil, ErrNotFound
 	}
@@ -574,128 +454,6 @@ func (r *EngineRegistry) GetSiblingWorkspaceIDs(workspaceID string) []string {
 		siblings = append(siblings, wsID)
 	}
 	return siblings
-}
-
-// SetTunnelConfig sets the tunnel configuration for an engine.
-func (r *EngineRegistry) SetTunnelConfig(engineID string, cfg *TunnelConfig) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	engine, exists := r.engines[engineID]
-	if !exists {
-		return ErrNotFound
-	}
-
-	engine.Tunnel = cfg
-	return nil
-}
-
-// GetTunnelConfig returns the tunnel configuration for an engine.
-// The returned value is a deep copy — callers can safely modify it.
-func (r *EngineRegistry) GetTunnelConfig(engineID string) (*TunnelConfig, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	engine, exists := r.engines[engineID]
-	if !exists {
-		return nil, ErrNotFound
-	}
-
-	if engine.Tunnel == nil {
-		return nil, nil
-	}
-
-	return deepCopyTunnelConfig(engine.Tunnel), nil
-}
-
-// deepCopyTunnelConfig returns a fully independent copy of a TunnelConfig.
-func deepCopyTunnelConfig(src *TunnelConfig) *TunnelConfig {
-	cfg := *src // shallow copy scalars and strings
-
-	// Deep copy Expose slices
-	cfg.Expose.Workspaces = copyStringSlice(src.Expose.Workspaces)
-	cfg.Expose.Folders = copyStringSlice(src.Expose.Folders)
-	cfg.Expose.Mocks = copyStringSlice(src.Expose.Mocks)
-	cfg.Expose.Types = copyStringSlice(src.Expose.Types)
-
-	// Deep copy Exclude
-	if src.Expose.Exclude != nil {
-		excl := *src.Expose.Exclude
-		excl.Workspaces = copyStringSlice(src.Expose.Exclude.Workspaces)
-		excl.Folders = copyStringSlice(src.Expose.Exclude.Folders)
-		excl.Mocks = copyStringSlice(src.Expose.Exclude.Mocks)
-		cfg.Expose.Exclude = &excl
-	}
-
-	// Deep copy Auth
-	if src.Auth != nil {
-		auth := *src.Auth
-		auth.AllowedIPs = copyStringSlice(src.Auth.AllowedIPs)
-		cfg.Auth = &auth
-	}
-
-	// Deep copy ConnectedAt
-	if src.ConnectedAt != nil {
-		t := *src.ConnectedAt
-		cfg.ConnectedAt = &t
-	}
-
-	return &cfg
-}
-
-// copyStringSlice returns a new independent copy of a string slice.
-func copyStringSlice(s []string) []string {
-	if s == nil {
-		return nil
-	}
-	cp := make([]string, len(s))
-	copy(cp, s)
-	return cp
-}
-
-// UpdateTunnelStatus updates the runtime tunnel status for an engine.
-func (r *EngineRegistry) UpdateTunnelStatus(engineID, status, publicURL, sessionID, transport string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	engine, exists := r.engines[engineID]
-	if !exists {
-		return ErrNotFound
-	}
-
-	if engine.Tunnel == nil {
-		return ErrNotFound
-	}
-
-	engine.Tunnel.Status = status
-	if publicURL != "" {
-		engine.Tunnel.PublicURL = publicURL
-	}
-	if sessionID != "" {
-		engine.Tunnel.SessionID = sessionID
-	}
-	if transport != "" {
-		engine.Tunnel.Transport = transport
-	}
-	if status == "connected" {
-		now := time.Now()
-		engine.Tunnel.ConnectedAt = &now
-	}
-	return nil
-}
-
-// ListTunnels returns all engines that have tunnel configurations.
-func (r *EngineRegistry) ListTunnels() []*Engine {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var engines []*Engine
-	for _, engine := range r.engines {
-		if engine.Tunnel != nil && engine.Tunnel.Enabled {
-			engines = append(engines, engine.Copy())
-		}
-	}
-	return engines
 }
 
 // UpdateWorkspaceStatus updates the status of a workspace in an engine.

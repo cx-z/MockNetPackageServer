@@ -3,28 +3,22 @@ module github.com/getmockd/mockd
 go 1.26.9
 
 require (
-	github.com/beevik/etree v1.6.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/charmbracelet/huh v0.8.0
 	github.com/coder/websocket v1.8.14
-	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/expr-lang/expr v1.17.8
 	github.com/getkin/kin-openapi v0.144.0
-	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jhump/protoreflect v1.17.0
 	github.com/mark3labs/mcp-go v1.1.1
-	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/ohler55/ojg v1.27.0
-	github.com/quic-go/quic-go v0.59.1
 	github.com/rogpeppe/go-internal v1.14.1
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.40.0
-	github.com/vektah/gqlparser/v2 v2.5.31
 	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
@@ -38,7 +32,6 @@ require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/agnivade/levenshtein v1.2.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
@@ -102,7 +95,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/rs/xid v1.4.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/shirou/gopsutil/v4 v4.25.6 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect

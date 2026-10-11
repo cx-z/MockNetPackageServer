@@ -181,7 +181,6 @@ type SSERecordingData struct {
 }
 
 // HTTPRecordingData contains HTTP-specific recording data.
-// This wraps the existing Recording type for unified storage.
 type HTTPRecordingData struct {
 	// Request is the recorded HTTP request.
 	Request HTTPRecordedRequest `json:"request"`

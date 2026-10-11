@@ -40,22 +40,10 @@ var AvailableTemplates = []Template{
 		Filename:    "websocket-chat.yaml",
 	},
 	{
-		ID:          "graphql-api",
-		Name:        "GraphQL API",
-		Description: "GraphQL API with User CRUD resolvers",
-		Filename:    "graphql-api.yaml",
-	},
-	{
 		ID:          "grpc-service",
 		Name:        "gRPC Service",
 		Description: "gRPC Greeter service with reflection",
 		Filename:    "grpc-service.yaml",
-	},
-	{
-		ID:          "mqtt-iot",
-		Name:        "MQTT IoT",
-		Description: "MQTT broker with IoT sensor topics",
-		Filename:    "mqtt-iot.yaml",
 	},
 }
 
