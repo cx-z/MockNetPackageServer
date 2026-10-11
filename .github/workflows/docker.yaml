@@ -69,16 +69,22 @@ jobs:
           TAG="${{ github.ref_name }}"
           mkdir -p pkg/admin/dashboard/dist
           # Try matching mockd tag first, then fall back to latest stable release.
-          gh release download "$TAG" --repo getmockd/mockd-desktop \
+          if gh release download "$TAG" --repo getmockd/mockd-desktop \
             --pattern 'dashboard-dist.tar.gz' \
             --dir /tmp/dashboard 2>/dev/null \
           || gh release download --repo getmockd/mockd-desktop \
             --pattern 'dashboard-dist.tar.gz' \
-            --dir /tmp/dashboard 2>/dev/null \
-          || { echo "::warning::Dashboard dist not found — building without embedded UI"; exit 0; }
-          tar -xzf /tmp/dashboard/dashboard-dist.tar.gz -C pkg/admin/dashboard/dist/
-          echo "Dashboard dist installed from mockd-desktop:"
-          ls -la pkg/admin/dashboard/dist/
+            --dir /tmp/dashboard 2>/dev/null; then
+            tar -xzf /tmp/dashboard/dashboard-dist.tar.gz -C pkg/admin/dashboard/dist/
+            echo "Dashboard dist installed from mockd-desktop:"
+            ls -la pkg/admin/dashboard/dist/
+          else
+            # Upstream release unavailable: write a placeholder so the
+            # //go:embed all:dashboard/dist pattern matches and the image
+            # still builds without the embedded UI.
+            printf '%s\n' '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>MockNetPack Dashboard</title></head><body><h1>MockNetPack Dashboard</h1><p>Dashboard 前端资源未随本构建打包（building without embedded UI）。</p></body></html>' > pkg/admin/dashboard/dist/index.html
+            echo "::warning::Dashboard dist not found — building without embedded UI"
+          fi
 
       - name: Build and push
         uses: docker/build-push-action@v6
