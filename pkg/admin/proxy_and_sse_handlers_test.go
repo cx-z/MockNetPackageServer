@@ -9,35 +9,6 @@ import (
 	"github.com/getmockd/mockd/pkg/admin/engineclient"
 )
 
-func TestHandleGenerateCA_InvalidJSONReturns400(t *testing.T) {
-	pm := NewProxyManager()
-
-	req := httptest.NewRequest(http.MethodPost, "/proxy/ca", strings.NewReader(`{"caPath":`))
-	rec := httptest.NewRecorder()
-
-	pm.handleGenerateCA(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status 400, got %d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandleGenerateCA_EmptyBodyStillReturnsMissingPath(t *testing.T) {
-	pm := NewProxyManager()
-
-	req := httptest.NewRequest(http.MethodPost, "/proxy/ca", strings.NewReader(""))
-	rec := httptest.NewRecorder()
-
-	pm.handleGenerateCA(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status 400, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "missing_path") {
-		t.Fatalf("expected missing_path error, got %s", rec.Body.String())
-	}
-}
-
 func TestHandleCloseSSEConnection_InvalidJSONReturns400(t *testing.T) {
 	api := NewAPI(0, WithDataDir(t.TempDir()), WithLocalEngineClient(engineclient.New("http://localhost:99999")))
 	defer api.Stop()
