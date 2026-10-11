@@ -12,6 +12,12 @@ MockNetPack 的中央 Mock 服务端（Go，fork 自 getmockd/mockd），与 iOS
    - 本机未安装时：`brew install golangci-lint`（或 `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.2` 对齐 CI 版本）。
 2. **编译**：`go build ./...` 必须通过。
 3. **测试**：`go test ./...` 必须通过。
+4. **漏洞扫描（govulncheck）**
+   - 本地命令：`govulncheck ./...`。CI 对应 `.github/workflows/ci.yaml` 的 `Vulnerability Check` job（`go install golang.org/x/vuln/cmd/govulncheck@latest`）。
+   - 任何依赖升级、标准库调用变更后必须跑一次；输出里出现 `=== symbols ===` / `Vulnerability #N: ...` 且标注 `Reachable` 时，必须修掉再提交。
+   - 修复方式优先升级对应依赖或 Go toolchain；不要用 `//nolint`、忽略输出、或在 CI 里跳过此 job 来绕过。
+   - 升级依赖后注意两个测试副作用：二进制体积阈值在 `tests/performance/cli_startup_test.go`（当前 < 46MB），性能测试就绪超时在 `tests/performance/testserver.go`（当前 10s）；不要随意放宽，确需调整要说明理由。
+   - 本机未安装时：`go install golang.org/x/vuln/cmd/govulncheck@latest`。
 
 ## 代码风格约定
 
@@ -27,4 +33,5 @@ MockNetPack 的中央 Mock 服务端（Go，fork 自 getmockd/mockd），与 iOS
 go build ./...      # 编译全部
 go test ./...       # 全部测试
 golangci-lint run   # lint 门禁（见上）
+govulncheck ./...   # 漏洞扫描门禁（见上）
 ```
