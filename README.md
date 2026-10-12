@@ -1,318 +1,159 @@
-<!--
-  MockNetPack fork notice
-  This repository is a secondary development based on the open-source project getmockd/mockd.
-  Upstream baseline commit: 45c2906b095a0428842faaa931afab0edbde3fdb (v0.7.1)
-  Upstream repository: https://github.com/getmockd/mockd
-  Fork: https://github.com/cx-z/mockd
-  Upstream copyright: Copyright 2025 GetMockd LLC, Apache License 2.0 (see LICENSE and NOTICE, unmodified)
-  Below is the upstream original README, kept to document the baseline behavior.
--->
+# MockNetPack Server
 
-> **MockNetPack central Mock server** — the server side of the internal HTTP capture & Mock platform,
-> **a secondary development based on [getmockd/mockd @ [`45c2906`](https://github.com/cx-z/mockd/commit/45c2906b095a0428842faaa931afab0edbde3fdb) (v0.7.1)]**.
-> The upstream LICENSE (Apache-2.0) and NOTICE are kept unmodified. Below is the upstream original README.
+MockNetPack's central service manages device pairing, capture sessions, HTTP traffic, device-scoped mock rules, share links, accounts, and permissions. The iOS and Android SDKs capture traffic and execute mocks inside the app; the server provides the Web console, HTTP API, CLI, and remote MCP access.
 
----
+This repository is based on [getmockd/mockd](https://github.com/getmockd/mockd) at `45c2906b095a0428842faaa931afab0edbde3fdb` (v0.7.1). Its Go module path remains `github.com/getmockd/mockd`. This README describes the current MockNetPack fork.
 
-<p align="center">
-  <a href="https://mockd.io"><img src="https://mockd.io/getmockd.svg" alt="mockd" width="200"></a>
-</p>
+## Platform workflow
 
-<h3 align="center">One binary. Seven protocols. Zero dependencies.</h3>
+1. Integrate the SDK into the host app's debug build and initialize it early during startup.
+2. Sign in to the Web console, select the app, and generate a pairing QR code. Scan it from the app's debug screen.
+3. The SDK registers or reuses the device with the pairing token, saves the server address, and reconnects on subsequent launches.
+4. Open the device's request viewer and activate a capture session. The SDK uses heartbeat responses to start capture and synchronize rules.
+5. Create rules from captured traffic or enter them manually, edit the response, and enable the rule. Matching requests receive a local mock response; unmatched requests reach the real business server.
 
-<p align="center">
-  Mock HTTP, gRPC, GraphQL, WebSocket, MQTT, SSE, and SOAP from a single CLI tool.<br>
-  Import OpenAPI specs. Build digital twins. Let AI agents create mocks for you.
-</p>
+SDK rules match **HTTP method + URL path**, ignoring the host, query string, and request body. Rules are isolated by `(App, did)`. Capture and mock execution depend on the capture session state. Active viewers renew observer leases; when the last observer releases its lease or expires, the session ends and device rules are disabled. Ended-session traffic is kept according to the server's retention policy.
 
-<p align="center">
-  <a href="https://github.com/getmockd/mockd/actions/workflows/ci.yaml"><img src="https://github.com/getmockd/mockd/actions/workflows/ci.yaml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/getmockd/mockd/releases"><img src="https://img.shields.io/github/v/release/getmockd/mockd?include_prereleases" alt="Release"></a>
-  <a href="https://github.com/getmockd/mockd/stargazers"><img src="https://img.shields.io/github/stars/getmockd/mockd?style=social" alt="Stars"></a>
-  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go" alt="Go"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
-</p>
+## Deployment addresses
 
-<p align="center">
-  <a href="https://mockd.io">Website</a> &middot;
-  <a href="https://docs.mockd.io">Docs</a> &middot;
-  <a href="https://github.com/getmockd/mockd-samples">Samples</a> &middot;
-  <a href="https://github.com/getmockd/mockd/blob/main/CONTRIBUTING.md">Contributing</a>
-</p>
+`server_address` is a placeholder for the deployed server's DNS name or IP address. Replace it with an address reachable by phones, browsers, CLI clients, and MCP clients. The local project checkout is used for development and testing; the deployed service is the shared platform endpoint.
 
-<p align="center">
-  <img src=".github/assets/demo.gif" alt="mockd demo" width="800">
-</p>
+The examples use the default service ports. If your deployment exposes HTTPS or different ports through a reverse proxy, use its actual external URLs.
 
----
+| Service | Example endpoint | Purpose |
+|---|---|---|
+| Web console | `http://server_address:4290/mocknetpack/` | Sign-in, pairing, devices, traffic, rules, and shares |
+| Platform API | `http://server_address:4290/api/v1` | Capture management API used by SDKs and platform clients |
+| Mock engine | `http://server_address:4280` | Separate mock data plane with HTTP, gRPC, WebSocket, and SSE support |
+| Remote MCP gateway | `http://server_address:4291/mcp` | Streamable HTTP endpoint provided by `mocknetpack-mcp` |
 
-## Quick Start
+Pairing QR codes must contain the externally reachable Platform API base URL, such as `http://server_address:4290/api/v1`. Verify the address and port are accessible from the device before pairing.
+
+## Deploy from source
+
+Go **1.26.9 or later** is required; CI uses Go 1.26.9. The scripts support macOS and Linux and use `ss` or `lsof` for port inspection. Run the following commands on the deployment server:
 
 ```bash
-# Install
-curl -sSL https://get.mockd.io | sh
+git clone https://github.com/cx-z/MockNetPackageServer.git
+cd MockNetPackageServer
 
-# Start + create a stateful CRUD API in one command
-mockd start
-mockd add http --path /api/users --stateful users
+# Enter the actual Bundle IDs / applicationIds, one per line.
+# This Git-ignored catalog is reloaded without restarting the service.
+cat > .allowed-apps.local <<'APPS'
+com.example.iosapp
+com.example.androidapp
+APPS
 
-# It works immediately
-curl -X POST localhost:4280/api/users -d '{"name":"Alice","email":"alice@test.com"}'
-# → {"id":"a1b2c3","name":"Alice","email":"alice@test.com"}
-
-curl localhost:4280/api/users
-# → {"data":[{"id":"a1b2c3","name":"Alice","email":"alice@test.com"}],"meta":{"total":1}}
+./start.sh
 ```
 
-<details>
-<summary><strong>More install options</strong></summary>
+`start.sh` builds `bin/mockd-bin` and `bin/mocknetpack-mcp-bin` when source files change, restarts the service and MCP gateway, and persists runtime data in `mockd-data/`. Use `./start.sh rebuild` to force rebuilding. The script stops old processes occupying its fixed service ports; run it on the dedicated deployment host.
+
+Open `http://server_address:4290/mocknetpack/` in a browser. Public registration creates a developer account, which can manage its own devices and generate pairing QR codes. The phone app's Bundle ID / applicationId must match the selected app. Pairing tokens expire after 10 minutes by default; refresh the QR code when it expires.
+
+To create the first administrator, start the service in the foreground on the deployment server and replace the password placeholder:
 
 ```bash
-brew install getmockd/tap/mockd                                          # Homebrew
-docker run -p 4280:4280 -p 4290:4290 ghcr.io/getmockd/mockd:latest      # Docker
-go install github.com/getmockd/mockd/cmd/mockd@latest                    # Go
+mkdir -p bin
+go build -o bin/mockd-bin ./cmd/mockd
+./bin/mockd-bin start --port 4280 --admin-port 4290 \
+  --data-dir ./mockd-data \
+  --create-admin admin --admin-password '<your-password>'
 ```
 
-Pre-built binaries for Linux, macOS, and Windows on the [Releases](https://github.com/getmockd/mockd/releases) page.
-</details>
+Only `--create-admin` creates administrator accounts. Creating an existing username fails. Remove the two account-creation flags on later starts. Stop the foreground process with Ctrl+C before switching to `./start.sh`.
 
-## Why mockd?
+Runtime files on the deployment host:
 
-Every other mock tool makes you choose: pick one protocol, install a runtime, bolt on extensions. mockd doesn't.
+| Path | Contents |
+|---|---|
+| `mockd-data/` | Persistent devices, accounts, sessions, rules, and traffic |
+| `.allowed-apps.local` | App catalog; alternatively configure `MOCKD_ALLOWED_APPS_FILE` or comma-separated `MOCKD_ALLOWED_APPS` |
+| `~/.mockd/daemon.log` | Main service log; the startup script archives the previous log before restarting |
+| `~/.mockd/mcp.log` | MCP gateway log |
+| `/tmp/mockd-web.pid`, `/tmp/mocknetpack-mcp.pid` | Process records used by the startup script |
 
-| | mockd | WireMock | Mockoon | Prism | MockServer | Beeceptor | json-server |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Single binary, no runtime** | ✅ | ❌ JVM | ❌ Electron | ✅ | ❌ JVM | ❌ SaaS | ❌ Node |
-| **All 9 protocols built-in** | ✅ | 🔌 Ext | Partial | HTTP only | HTTP only | Partial | REST only |
-| **Chaos profiles + circuit breakers** | ✅ | ⚠️ Cloud | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **MCP server** | ✅ local | ⚠️ Cloud | ❌ | ❌ | ❌ | ⚠️ Cloud, Team+ | ❌ |
-| **Free + self-hostable, unlimited** | ✅ | ✅ | ✅ | ✅ | ✅ | 50 req/day | ✅ |
+`./stop.sh` currently stops only the main service listening on ports 4280 / 4290. Stop the MCP gateway separately. Web assets are read from `web/mocknetpack/` relative to the working directory. When starting the binary elsewhere, point `--web-dir` to that directory. Deploy the Web assets together with the binary.
 
-> 🔌 **Ext** = requires separate extension JAR • ⚠️ **Cloud** = only in paid/hosted tier
+## Authentication and API
 
-<details>
-<summary><strong>Full capability matrix</strong> (deployment, protocols, capabilities, imports/exports, pricing)</summary>
+Web management endpoints accept a sign-in session or an account's long-lived API key. Create a key in the Web console's account / API Keys panel; its plaintext is returned only once. CLI and MCP requests use `Authorization: Bearer <key>` and inherit the account's role and device ownership permissions.
 
-### Deployment
+SDK registration, heartbeat, upload, and incremental rule synchronization use a separate channel. Apps do not need an embedded Web account or API key. The initial pairing token establishes device ownership; registered devices can reconnect. `--no-auth` is for local testing; the normal startup script enables authentication. Native mockd admin API keys and platform `mnpk_` account keys belong to separate channels.
 
-| | mockd | WireMock | Mockoon | Prism | MockServer | Beeceptor | json-server |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Native single binary | ✅ Go | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
-| Runtime required | none | JVM | Electron/Node | optional Node | JVM | n/a (SaaS) | Node |
-| Docker image | ✅ | ✅ | ✅ CLI | ✅ | ✅ | ⚠️ Enterprise | ❌ |
-| Managed SaaS offering | roadmap | WireMock Cloud | Mockoon Cloud | Stoplight | ❌ | ✅ | ❌ |
+The following routes are prefixed with `/api/v1`:
 
-### Protocol support
+| Feature | Example routes |
+|---|---|
+| Sign-in and account keys | `POST /auth/login`, `POST /auth/keys` |
+| App catalog and pairing | `GET /apps`, `POST /pairing-tokens` |
+| SDK registration and heartbeat | `POST /devices/register`, `POST /devices/{app}/{did}/heartbeat` |
+| Devices and rules | `GET /devices`, `/devices/{app}/{did}/mock-rules` |
+| Sessions and observers | `POST /sessions`, `POST /sessions/{id}/viewers` |
+| Traffic upload and queries | `POST /traffic`, `GET /sessions/{id}/traffic`, `GET /traffic/{id}` |
+| Share snapshots | `POST /shares`, `GET /shares/{id}` |
 
-| | mockd | WireMock OSS | Mockoon | Prism | MockServer | Beeceptor | json-server |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| REST / HTTP | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| gRPC | ✅ | 🔌 Ext | ❌ | ❌ | ❌ | ✅ | ❌ |
-| GraphQL | ✅ | 🔌 Ext | ❌ | ❌ | ❌ | ✅ | ❌ |
-| WebSocket | ✅ | 🔌 Ext (beta) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| MQTT | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| SSE | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| SOAP (WSDL) | ✅ | ❌ | Partial | ❌ | Partial | ✅ | ❌ |
-| mTLS | ✅ | ✅ | Partial | ❌ | ✅ | ✅ | ❌ |
-| OAuth flows | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+See [openapi/mocknetpack.yaml](openapi/mocknetpack.yaml) for the API contract. Current routes and implementations define parameter and permission behavior.
 
-### Capabilities
+## CLI and remote MCP
 
-| | mockd | WireMock OSS | Mockoon | Prism | MockServer | Beeceptor | json-server |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Stateful CRUD | ✅ | ❌ | ✅ | Partial | ❌ | ✅ | ✅ |
-| Multi-step stateful flows | ✅ | ✅ Scenarios | Partial | ❌ | Partial | ✅ | ❌ |
-| Fault injection (delay, errors) | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ |
-| Chaos profiles | ✅ | ⚠️ Cloud | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Circuit breakers | ✅ | ⚠️ Cloud | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Bandwidth throttling | ✅ | ❌ | ❌ | ❌ | ❌ | roadmap | ❌ |
-| Admin REST API | ✅ | ✅ | CLI only | ❌ | ✅ | ✅ | Partial |
-| Built-in web dashboard | ✅ | ⚠️ Cloud | ⚠️ Cloud | ❌ | ✅ read-only | ✅ | ❌ |
-| Native desktop GUI | ❌ | ❌ | ✅ Electron | ❌ | ❌ | ❌ | ❌ |
-| MCP server | ✅ local | ⚠️ Cloud | ❌ | ❌ | ❌ | ⚠️ Cloud Team+ | ❌ |
-| Cloud tunnel sharing | ✅ | ❌ | ⚠️ Cloud | ❌ | ❌ | ✅ | ❌ |
-
-### Import / export
-
-| | mockd | WireMock OSS | Mockoon | Prism | MockServer | Beeceptor | json-server |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| OpenAPI import | ✅ | ⚠️ Cloud | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Postman import | ✅ | ⚠️ Cloud | ❌ | ✅ | ❌ | ❌ | ❌ |
-| HAR import | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| WSDL import | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| cURL import | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| WireMock format import | ✅ | native | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Mockoon format import | ✅ | ❌ | native | ❌ | ❌ | ❌ | ❌ |
-| HAR export | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
-
-### Free tier limits
-
-| | Requests | Mock rules | Cost |
-|---|---|---|---|
-| mockd | unlimited | unlimited | free (Apache 2.0) |
-| WireMock OSS | unlimited | unlimited | free (Apache 2.0) |
-| Mockoon desktop / CLI | unlimited | unlimited | free (MIT) |
-| Prism | unlimited | unlimited | free (Apache 2.0) |
-| MockServer | unlimited | unlimited | free (Apache 2.0) |
-| Beeceptor free tier | 50 / day / endpoint | 3 | $10/mo+ for more |
-| json-server | unlimited | unlimited | free (MIT) |
-
-**Legend**: ✅ built-in • 🔌 Ext = separate OSS extension • ⚠️ Cloud = only in paid / hosted tier • Partial = limited implementation • roadmap = on the project's stated roadmap, not yet shipped
-
-> **Note on WireMock imports.** The `⚠️ Cloud` marks on OpenAPI and Postman import reflect first-party WireMock features. Community converters exist (e.g. `openapi-to-wiremock`, OpenAPI Generator targets) but are not bundled with the OSS standalone JAR.
-
-</details>
-
-## Digital Twins
-
-Import a real API spec, bind it to stateful tables, and get a mock that passes the real SDK:
-
-```yaml
-# mockd.yaml — Stripe digital twin
-version: "1.0"
-imports:
-  - path: stripe-openapi.yaml
-    as: stripe
-tables:
-  - name: customers
-    idStrategy: prefix
-    idPrefix: "cus_"
-    seedData:
-      - { id: "cus_1", name: "Acme Corp", email: "billing@acme.com" }
-extend:
-  - { mock: stripe.GetCustomers, table: customers, action: list }
-  - { mock: stripe.PostCustomers, table: customers, action: create }
-  - { mock: stripe.GetCustomersCustomer, table: customers, action: get }
-  - { mock: stripe.PostCustomersCustomer, table: customers, action: update }
-  - { mock: stripe.DeleteCustomersCustomer, table: customers, action: delete }
-```
+The platform CLI is a separate executable from native `mockd`. Build it from this repository, then connect it to the deployed service:
 
 ```bash
-mockd start -c mockd.yaml --no-auth
-curl -X POST localhost:4280/v1/customers -d "name=Test&email=test@corp.com"
-# → {"id":"cus_a1b2c3","object":"customer","name":"Test","email":"test@corp.com"}
+go build -o bin/mocknetpack ./cmd/mocknetpack
+./bin/mocknetpack --help
+
+# Create the key in the Web console. Use the admin origin without /api/v1.
+export MOCKNETPACK_SERVER='http://server_address:4290'
+export MOCKNETPACK_API_KEY='<your-api-key>'
+./bin/mocknetpack --server "$MOCKNETPACK_SERVER" devices list
+./bin/mocknetpack --server "$MOCKNETPACK_SERVER" traffic list --app com.example.iosapp --did '<device-id>'
+./bin/mocknetpack --server "$MOCKNETPACK_SERVER" traffic export --app com.example.iosapp --did '<device-id>' -o traffic.json
 ```
 
-**Validated with real SDKs:**
-- Stripe: **49/49** `stripe-go` SDK tests pass
-- Twilio: **13/13** `twilio-go` SDK tests pass
-- OpenAI: `openai` Python SDK verified (models, assistants, chat completions)
+Pass the CLI server URL explicitly with `--server`; the key can be read from `MOCKNETPACK_API_KEY`. Commands cover device listing, traffic queries/export, rule creation/update/toggling, and shares. stdout contains JSON; logs and errors go to stderr. Exit codes are 0 (success), 1 (business error), and 2 (usage error).
 
-See [mockd-samples](https://github.com/getmockd/mockd-samples) for complete digital twin configs.
-
-## AI-Native (MCP)
-
-mockd includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server with **18 tools**. AI agents can create mocks, manage state, import specs, and verify contracts without touching the CLI:
-
-```json
-{
-  "mcpServers": {
-    "mockd": { "command": "mockd", "args": ["mcp"] }
-  }
-}
-```
-
-Works in Claude Desktop, Cursor, Windsurf, and any MCP-compatible editor. Tools cover mock CRUD, stateful resources, chaos injection, request logs, verification, workspaces, and import/export.
-
-## Features
-
-<details>
-<summary><strong>Multi-Protocol Mocking</strong> — 7 protocols, unified CLI</summary>
-
-| Protocol | Port | Example |
-|----------|------|---------|
-| HTTP/HTTPS | 4280 | `mockd add http --path /api/hello --body '{"msg":"hi"}'` |
-| gRPC | 50051 | `mockd add grpc --proto svc.proto --service Greeter --rpc-method Greet` |
-| GraphQL | 4280 | `mockd add graphql --path /graphql --operation hello` |
-| WebSocket | 4280 | `mockd add websocket --path /ws --echo` |
-| MQTT | 1883 | `mockd add mqtt --topic sensors/temp --payload '{"temp":72}'` |
-| SSE | 4280 | `mockd add http --path /events --sse --sse-event 'data: hello'` |
-| SOAP | 4280 | `mockd add soap --path /soap --operation GetWeather --response '<OK/>'` |
-</details>
-
-<details>
-<summary><strong>Import & Export</strong> — OpenAPI, Postman, HAR, WireMock, cURL, WSDL</summary>
+`start.sh` starts the MCP gateway on the deployment host. To run it separately:
 
 ```bash
-mockd import openapi.yaml           # OpenAPI 3.x / Swagger 2.0
-mockd import collection.json        # Postman collections
-mockd import recording.har          # HAR files
-mockd import wiremock-mapping.json  # WireMock stubs
-mockd import service.wsdl           # WSDL → SOAP mocks
-mockd import "curl -X GET https://api.example.com/users"  # cURL commands
-mockd export --format yaml > mocks.yaml
+go build -o bin/mocknetpack-mcp-bin ./cmd/mocknetpack-mcp
+MOCKNETPACK_SERVER=http://server_address:4290 \
+  ./bin/mocknetpack-mcp-bin --http-addr :4291
 ```
-</details>
 
-<details>
-<summary><strong>Chaos Engineering</strong> — latency, errors, circuit breakers</summary>
+Configure a Streamable HTTP MCP client with URL `http://server_address:4291/mcp` and header `Authorization: Bearer <your-api-key>`. The gateway forwards each caller's key to the platform for permission checks.
+
+The gateway currently provides 16 tools covering capture status/start/observer renewal/release, device listing, device traffic and individual traffic details, rule creation/editing/querying/deletion/toggling, and share creation/retrieval. Keep the same `observerId` throughout a capture workflow, renew according to the returned lease TTL, and call `release_capture_observer` when finished.
+
+## Retained capabilities and compatibility
+
+The native engine retains HTTP/HTTPS, gRPC, WebSocket, SSE/chunked streaming, stateful tables, Chaos, TLS/mTLS, audit logging, and OpenAPI validation. These engine capabilities are separate from SDK-side HTTP capture and mock execution.
+
+This fork has removed MQTT, GraphQL, SOAP, OAuth simulation, server-side HTTP Proxy/recording conversion, Tunnel, native `mockd mcp`, and `mockd init/import/export`. Upstream commands, installation scripts, and images for those features do not describe this platform. Platform `mocknetpack traffic export` and remote MCP remain available.
+
+## SDK repositories
+
+- [iOS: MockNetPackKit](https://github.com/cx-z/MockNetPackKit) — URLProtocol / URLSession integration through CocoaPods or Swift Package Manager.
+- [Android: MockNetPackAndroid](https://github.com/cx-z/MockNetPackAndroid) — JitPack integration with an OkHttp application interceptor.
+
+See each SDK's README for integration, permissions, and Release isolation.
+
+## Local development and testing
+
+Use the local checkout to develop and test changes. The deployment commands above are run on the server host; client examples point to `server_address`.
 
 ```bash
-mockd chaos apply flaky       # 30% error rate
-mockd chaos apply slow-api    # 200-800ms latency
-mockd chaos apply offline     # 100% 503 errors
-mockd chaos disable
-```
-</details>
+go build ./...
+go test ./...
+golangci-lint run --timeout=5m
+govulncheck ./...
 
-<details>
-<summary><strong>Cloud Tunnel</strong> — share local mocks instantly</summary>
-
-```bash
-mockd tunnel
-# → https://a1b2c3d4.tunnel.mockd.io → http://localhost:4280
+# Same parameters as the CI Test job.
+go test -race -coverprofile=coverage.out -covermode=atomic ./...
 ```
 
-All 7 protocols multiplexed through a single secure connection on port 443. Works behind NAT and firewalls.
-</details>
+Lint uses golangci-lint v2.11.2. Some E2E tests require Docker through testcontainers. Tests that start services also require available ports. Repository rules are in [AGENTS.md](AGENTS.md).
 
-<details>
-<summary><strong>Workspaces</strong> — isolated mock environments</summary>
+## Attribution and license
 
-```bash
-mockd workspace create -n "Payment API" --use
-mockd import stripe-openapi.yaml
-mockd workspace create -n "Comms API" --use
-mockd import twilio-openapi.yaml
-# Mocks, state, and logs are fully isolated per workspace
-```
-</details>
-
-<details>
-<summary><strong>Proxy Recording</strong> — record real traffic, replay as mocks</summary>
-
-```bash
-mockd proxy start --port 8888
-# Configure your app to use http://localhost:8888 as proxy
-# Traffic is recorded, then replay with:
-mockd import recordings/session.json
-```
-</details>
-
-<details>
-<summary><strong>Web Dashboard</strong> — manage mocks visually</summary>
-
-Release builds serve a web UI from the admin port (`http://localhost:4290`). VS Code-style editor, command palette, mock tree with folders, request log viewer, and near-miss debugging.
-</details>
-
-## Mockd Cloud
-
-mockd works fully offline with no account required. For teams that want shared environments:
-
-- **Persistent cloud mocks** — deploy mock environments your whole team can hit
-- **Team management** — shared workspaces with access controls
-- **Cloud tunnels** — authenticated tunnels with custom domains
-
-Coming soon. [Join the waitlist](https://mockd.io/pricing#waitlist-form).
-
-## Documentation
-
-Full guides, API reference, and config docs at **[docs.mockd.io](https://docs.mockd.io)**.
-
-## Contributing
-
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup.
-
-## License
-
-[Apache License 2.0](LICENSE) — free for commercial use.
+The upstream [Apache License 2.0](LICENSE) and [NOTICE](NOTICE) are retained. MockNetPack-specific functionality and fork behavior are defined by this repository, rather than upstream product comparisons, cloud-service plans, or protocol-count claims.
