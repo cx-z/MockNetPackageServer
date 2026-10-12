@@ -258,6 +258,14 @@ func TestHandlerE2E_MaxConnections(t *testing.T) {
 	// First connection should succeed
 	conn1, err := dialWSConn(t, ts, "/ws/limited")
 	require.NoError(t, err)
+	defer conn1.Close()
+
+	// Dial returns after the handshake, before HandleUpgrade necessarily
+	// registers the connection. Wait until the first connection occupies the
+	// slot before testing rejection at the HTTP upgrade boundary.
+	require.Eventually(t, func() bool {
+		return endpoint.ConnectionCount() == 1
+	}, 2*time.Second, 50*time.Millisecond, "expected first connection to occupy the slot")
 
 	// Second connection should be rejected
 	conn2, resp, err := dialWS(t, ts, "/ws/limited") //nolint:bodyclose // closed via t.Cleanup in dialWS
