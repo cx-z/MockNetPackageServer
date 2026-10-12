@@ -56,14 +56,18 @@ func resultText(res *mcp.CallToolResult) string {
 	return sb.String()
 }
 
-// TestMCPServer_RegistersTwelveTools asserts  : the 12 documented
+// TestMCPServer_RegistersSixteenTools asserts  : the 16 documented
 // tools are registered, each with a description and a JSON schema.
-func TestMCPServer_RegistersTwelveTools(t *testing.T) {
-	srv := server.NewMCPServer("mocknetpack", "0.12.0")
+func TestMCPServer_RegistersSixteenTools(t *testing.T) {
+	srv := server.NewMCPServer("mocknetpack", "0.13.0")
 	registerTools(srv, "http://127.0.0.1:1")
 
 	tools := srv.ListTools()
 	want := []string{
+		"get_capture_status",
+		"start_capture",
+		"renew_capture_observer",
+		"release_capture_observer",
 		"list_devices",
 		"get_device_traffic",
 		"get_traffic",

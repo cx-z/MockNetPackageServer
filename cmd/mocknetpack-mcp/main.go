@@ -1,7 +1,7 @@
 // mocknetpack-mcp is the MCP (Model Context Protocol) gateway for MockNetPack
-// : it wraps the admin API's high-frequency operations into 12 tools so an
-// Agent platform (Codex, Claude Desktop, IDE agents, etc.) can natively inspect
-// capture traffic and manage mock rules.
+// : it wraps the admin API's high-frequency operations into 16 tools so an
+// Agent platform (Codex, Claude Desktop, IDE agents, etc.) can natively manage
+// capture sessions, inspect capture traffic and manage mock rules.
 //
 // Transport: HTTP only (Streamable HTTP, endpoint /mcp). Business-side Agents
 // configure only a URL + Authorization header — no local binary. The gateway is
@@ -61,8 +61,8 @@ func main() {
 
 	srv := server.NewMCPServer(
 		"mocknetpack",
-		"0.12.0",
-		server.WithInstructions("MockNetPack 抓包/Mock 平台。可查设备与抓包流量、从真实流量构造 Mock 规则、建分享链接。认证失败（401）时请确认 Authorization 头已配置为有效的长期 API Key。"),
+		"0.13.0",
+		server.WithInstructions("MockNetPack 抓包/Mock 平台。可管理抓包会话（get_capture_status/start_capture/renew_capture_observer/release_capture_observer）、查设备与抓包流量、从真实流量构造 Mock 规则、建分享链接。完整闭环：start_capture → 配置规则 → get_device_traffic 查命中 → 周期 renew → release_capture_observer 恢复现场。认证失败（401）时请确认 Authorization 头已配置为有效的长期 API Key。"),
 	)
 	registerTools(srv, base)
 
@@ -79,7 +79,7 @@ func main() {
 	runHTTP(srv, *httpAddr, ctx)
 }
 
-// runHTTP serves the same 12 tools over Streamable HTTP at /mcp. It only
+// runHTTP serves the same 16 tools over Streamable HTTP at /mcp. It only
 // enforces the presence of a well-formed "Bearer <key>" header (no whitelist);
 // the caller's key is injected into the request context and validated by the
 // mockd admin API per account inside each tool handler.
@@ -129,11 +129,17 @@ func authGateway(next http.Handler) http.Handler {
 	})
 }
 
-// registerTools wires the 12 MCP tools. Handlers build a per-request admin
+// registerTools wires the 16 MCP tools. Handlers build a per-request admin
 // client from the caller's bearer key (base is the mockd API base URL). Every
 // tool's description documents WHEN to use it, key parameter meanings, and
 // error handling — the tool contract itself is the model-facing doc ( §三 E).
 func registerTools(srv *server.MCPServer, base string) {
+	// Capture session lifecycle (M12.8): status → start/reuse → renew → release.
+	srv.AddTool(toolGetCaptureStatus(), mcpGetCaptureStatus(base))
+	srv.AddTool(toolStartCapture(), mcpStartCapture(base))
+	srv.AddTool(toolRenewCaptureObserver(), mcpRenewCaptureObserver(base))
+	srv.AddTool(toolReleaseCaptureObserver(), mcpReleaseCaptureObserver(base))
+
 	srv.AddTool(toolListDevices(), mcpListDevices(base))
 	srv.AddTool(toolGetDeviceTraffic(), mcpGetDeviceTraffic(base))
 	srv.AddTool(toolGetTraffic(), mcpGetTraffic(base))

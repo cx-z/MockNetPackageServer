@@ -46,8 +46,10 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("MockNetPack API %d (%s)", e.Status, e.Code)
 }
 
-// Guide builds the AI-facing message for a status from the server's message
-// when available, else from the status semantics.
+// Guide builds the AI-facing message for a status from the server's error
+// code and message when available, else from the status semantics. The 409
+// and 404 branches are code-aware: session lifecycle conflicts must not be
+// reported to the model as mock-rule conflicts.
 func Guide(status int, code, serverMsg string) string {
 	switch status {
 	case http.StatusUnauthorized:
@@ -58,11 +60,24 @@ func Guide(status int, code, serverMsg string) string {
 		}
 		return "权限不足（403）：仅规则 owner 或 admin 可执行该操作。请确认 API Key 对应账号是规则创建者或管理员。"
 	case http.StatusNotFound:
+		switch code {
+		case "device_not_registered":
+			return "设备未注册（404）：该 app/did 尚未在平台注册。请先在 Web 管理台手动注册或让真机扫码接入，再用 list_devices / get_capture_status 确认后重试。"
+		case "session_not_found":
+			return "抓包会话不存在（404）：会话 id 拼写有误，或 ended 会话已过 48h 保留期。请用 get_capture_status 查询当前会话，或调用 start_capture 新建会话。"
+		}
 		if serverMsg != "" {
 			return serverMsg + "（资源不存在或已过期：分享 7 天过期、会话保留期 48h 已过、或 id 拼写有误。先查询确认 id 有效再重试）"
 		}
 		return "未找到（404）：资源不存在或已过期（分享 7 天过期 / 会话保留期已过 / id 错误）。请先查询确认 id 有效。"
 	case http.StatusConflict:
+		switch code {
+		case "device_offline":
+			return "设备离线（409，心跳超时）：设备最近一次心跳已超过服务端超时窗口（默认 60s），此时无法激活抓包会话。请在真机上让 App 回到前台或重新打开以恢复心跳，用 list_devices / get_capture_status 看到状态不再是 offline 后重试 start_capture。"
+		case "session_ended":
+			return "抓包会话已结束（409）：ended 会话不能登记或续租观察者、也不能再上传流量；其流量保留 48h 仍可查询。请重新调用 start_capture 创建新会话（旧会话流量不受影响）。"
+		}
+		// rule_conflict and any other 409 keep the mock-rule guidance.
 		return "互斥冲突（409）：同一接口（Method+Path）已存在启用中的 Mock 规则。" + serverMsg + " 请先停用现有规则（set_mock_rule_enabled / rule set-enabled --disable）或编辑该规则，再重试。"
 	default:
 		if serverMsg != "" {

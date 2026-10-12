@@ -50,6 +50,13 @@ func NewClient(baseURL, apiKey string) *Client {
 
 // do performs one authenticated request. body and out may be nil.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	return c.doStatus(ctx, method, path, query, body, out, nil)
+}
+
+// doStatus is do with an extra *int receiving the HTTP status code (set even
+// when out is decoded), so callers can distinguish "created" (201) from
+// "reused" (200) on idempotent activate endpoints.
+func (c *Client) doStatus(ctx context.Context, method, path string, query url.Values, body, out any, statusOut *int) error {
 	u := c.BaseURL + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -81,6 +88,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return fmt.Errorf("request %s %s: %w", method, u, err)
 	}
 	defer func() { _ = res.Body.Close() }()
+	if statusOut != nil {
+		*statusOut = res.StatusCode
+	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
@@ -123,6 +133,106 @@ func (c *Client) ListDevices(ctx context.Context) ([]capture.DeviceView, error) 
 		return nil, err
 	}
 	return out.Devices, nil
+}
+
+// GetDevice returns one device with its derived status (idle / capturing /
+// offline) and its current capturing session, if any.
+func (c *Client) GetDevice(ctx context.Context, app, did string) (*capture.DeviceView, error) {
+	var out capture.DeviceView
+	path := "/api/v1/devices/" + url.PathEscape(app) + "/" + url.PathEscape(did)
+	if err := c.do(ctx, http.MethodGet, path, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListSessions returns the sessions of one (app, did), newest first: the
+// capturing session plus ended sessions inside their retention window. The
+// server requires both query parameters (device isolation).
+func (c *Client) ListSessions(ctx context.Context, app, did string) ([]*capture.CaptureSession, error) {
+	q := url.Values{}
+	q.Set("app", app)
+	q.Set("did", did)
+	var out struct {
+		Sessions []*capture.CaptureSession `json:"sessions"`
+		Total    int                       `json:"total"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions", q, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Sessions, nil
+}
+
+// CurrentCapturingSession returns the device's capturing session, or nil when
+// none exists (ended sessions within retention are ignored), mirroring the
+// server's "at most one capturing session per device" rule.
+func (c *Client) CurrentCapturingSession(ctx context.Context, app, did string) (*capture.CaptureSession, error) {
+	sessions, err := c.ListSessions(ctx, app, did)
+	if err != nil {
+		return nil, err
+	}
+	// Newest first; a capturing session is normally sessions[0], but scan to
+	// be order-independent.
+	for _, s := range sessions {
+		if s != nil && s.Status == capture.SessionStatusCapturing {
+			return s, nil
+		}
+	}
+	return nil, nil
+}
+
+// GetSession returns one session by ID.
+func (c *Client) GetSession(ctx context.Context, sessionID string) (*capture.CaptureSession, error) {
+	var out capture.CaptureSession
+	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions/"+url.PathEscape(sessionID), nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ActivateSession activates (or reuses) the device's capture session. The
+// server is idempotent: an existing capturing session is returned untouched
+// with created=false (no traffic cleared, no rules changed, no session
+// ended); a fresh session yields created=true (HTTP 201). Activating an
+// unregistered device fails 404 device_not_registered; an offline device
+// fails 409 device_offline.
+func (c *Client) ActivateSession(ctx context.Context, app, did string) (*capture.CaptureSession, bool, error) {
+	var out capture.CaptureSession
+	var status int
+	err := c.doStatus(ctx, http.MethodPost, "/api/v1/sessions", nil,
+		map[string]string{"app": app, "did": did}, &out, &status)
+	if err != nil {
+		return nil, false, err
+	}
+	return &out, status == http.StatusCreated, nil
+}
+
+// RegisterViewer registers OR renews one observer lease on a capturing
+// session. Re-posting the same viewerID refreshes TTL without incrementing
+// the viewer count (idempotent keep-alive, same semantics as a Web page).
+// Registering on an ended session fails 409 session_ended; an unknown
+// session fails 404 session_not_found.
+func (c *Client) RegisterViewer(ctx context.Context, sessionID, viewerID, label string) (*capture.ViewerLease, error) {
+	var out capture.ViewerLease
+	body := map[string]string{"viewerId": viewerID}
+	if label != "" {
+		body["label"] = label
+	}
+	path := "/api/v1/sessions/" + url.PathEscape(sessionID) + "/viewers"
+	if err := c.do(ctx, http.MethodPost, path, nil, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ReleaseViewer releases one observer lease. It is idempotent: releasing an
+// unknown or already-released viewerID still returns nil. Server-side, when
+// the released lease was the last one on a capturing session the session
+// ends (and the device's enabled mock rules are disabled) — callers should
+// re-GetSession to observe and report that effect.
+func (c *Client) ReleaseViewer(ctx context.Context, sessionID, viewerID string) error {
+	path := "/api/v1/sessions/" + url.PathEscape(sessionID) + "/viewers/" + url.PathEscape(viewerID)
+	return c.do(ctx, http.MethodDelete, path, nil, nil, nil)
 }
 
 // TrafficQuery mirrors the  query parameters of the traffic list endpoint.

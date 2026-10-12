@@ -293,3 +293,194 @@ func TestClient_ShareRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "GET", snap.Entry.Method)
 }
+
+// ---- M12.8 session/viewer client methods -------------------------------------
+
+func TestClient_ActivateAndReuseSession(t *testing.T) {
+	var activations int
+	f := &fakeServer{handler: func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/sessions" && r.Method == http.MethodPost:
+			activations++
+			status := http.StatusOK
+			if activations == 1 {
+				status = http.StatusCreated
+			}
+			writeJSON(w, status, capture.CaptureSession{ID: "S1", App: "a", Did: "d", Status: capture.SessionStatusCapturing})
+		default:
+			writeErr(w, 404, "not_found", "unexpected "+r.URL.Path)
+		}
+	}}
+	f.ts = httptest.NewServer(f)
+	defer f.ts.Close()
+	c := newTestClient(t, f)
+
+	s1, created, err := c.ActivateSession(context.Background(), "a", "d")
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.Equal(t, "S1", s1.ID)
+
+	s2, created, err := c.ActivateSession(context.Background(), "a", "d")
+	require.NoError(t, err)
+	assert.False(t, created, "repeated activation must report created=false (reuse)")
+	assert.Equal(t, "S1", s2.ID)
+	assert.Contains(t, f.lastBody, `"app":"a"`)
+	assert.Contains(t, f.lastBody, `"did":"d"`)
+}
+
+func TestClient_ViewerRegisterRenewRelease(t *testing.T) {
+	var posts int
+	f := &fakeServer{handler: func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/sessions/S1/viewers" && r.Method == http.MethodPost:
+			posts++
+			writeJSON(w, http.StatusOK, capture.ViewerLease{
+				ViewerID: "V1", TTLSeconds: 120, ExpiresAt: time.Now().Add(120 * time.Second),
+			})
+		case r.URL.Path == "/api/v1/sessions/S1/viewers/V1" && r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			writeErr(w, 404, "not_found", "unexpected "+r.URL.Path)
+		}
+	}}
+	f.ts = httptest.NewServer(f)
+	defer f.ts.Close()
+	c := newTestClient(t, f)
+
+	lease, err := c.RegisterViewer(context.Background(), "S1", "V1", "mcp:default")
+	require.NoError(t, err)
+	assert.Equal(t, 120, lease.TTLSeconds)
+	assert.Contains(t, f.lastBody, `"viewerId":"V1"`)
+	assert.Contains(t, f.lastBody, `"label":"mcp:default"`)
+
+	// Re-posting the same viewer is the renew call (same endpoint/body).
+	_, err = c.RegisterViewer(context.Background(), "S1", "V1", "mcp:default")
+	require.NoError(t, err)
+	assert.Equal(t, 2, posts)
+
+	// Release hits the per-viewer DELETE path and 204 is a clean nil error.
+	require.NoError(t, c.ReleaseViewer(context.Background(), "S1", "V1"))
+	assert.Equal(t, "/api/v1/sessions/S1/viewers/V1", f.lastPath)
+}
+
+func TestClient_SessionReadsAndCurrentCapturing(t *testing.T) {
+	f := &fakeServer{handler: func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/devices/a/d" && r.Method == http.MethodGet:
+			writeJSON(w, 200, capture.DeviceView{
+				Device: &capture.Device{App: "a", Did: "d"},
+				Status: capture.DeviceStatusCapturing,
+			})
+		case r.URL.Path == "/api/v1/sessions" && r.Method == http.MethodGet:
+			assert.Equal(t, "a", r.URL.Query().Get("app"))
+			assert.Equal(t, "d", r.URL.Query().Get("did"))
+			// Newest first: an ended session precedes the capturing one.
+			writeJSON(w, 200, map[string]any{
+				"total": 2,
+				"sessions": []capture.CaptureSession{
+					{ID: "Sold", Status: capture.SessionStatusEnded},
+					{ID: "Snew", Status: capture.SessionStatusCapturing},
+				},
+			})
+		case r.URL.Path == "/api/v1/sessions/Snew" && r.Method == http.MethodGet:
+			writeJSON(w, 200, capture.CaptureSession{ID: "Snew", Status: capture.SessionStatusCapturing, ViewerCount: 1})
+		default:
+			writeErr(w, 404, "not_found", "unexpected "+r.URL.Path)
+		}
+	}}
+	f.ts = httptest.NewServer(f)
+	defer f.ts.Close()
+	c := newTestClient(t, f)
+
+	dv, err := c.GetDevice(context.Background(), "a", "d")
+	require.NoError(t, err)
+	assert.Equal(t, capture.DeviceStatusCapturing, dv.Status)
+
+	sessions, err := c.ListSessions(context.Background(), "a", "d")
+	require.NoError(t, err)
+	assert.Len(t, sessions, 2)
+
+	cur, err := c.CurrentCapturingSession(context.Background(), "a", "d")
+	require.NoError(t, err)
+	require.NotNil(t, cur)
+	assert.Equal(t, "Snew", cur.ID, "must pick the capturing session regardless of order")
+
+	one, err := c.GetSession(context.Background(), "Snew")
+	require.NoError(t, err)
+	assert.Equal(t, 1, one.ViewerCount)
+}
+
+func TestClient_CurrentCapturingSession_None(t *testing.T) {
+	f := &fakeServer{handler: func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"total": 1,
+			"sessions": []capture.CaptureSession{
+				{ID: "Sold", Status: capture.SessionStatusEnded},
+			},
+		})
+	}}
+	f.ts = httptest.NewServer(f)
+	defer f.ts.Close()
+	c := newTestClient(t, f)
+
+	cur, err := c.CurrentCapturingSession(context.Background(), "a", "d")
+	require.NoError(t, err)
+	assert.Nil(t, cur, "ended-only history must report no active session")
+}
+
+func TestClient_SessionErrorGuidance(t *testing.T) {
+	cases := []struct {
+		method, path string
+		call         func(c *Client) error
+		status       int
+		code         string
+		want         string
+	}{
+		{
+			call: func(c *Client) error {
+				_, _, err := c.ActivateSession(context.Background(), "a", "d")
+				return err
+			},
+			status: 404, code: "device_not_registered", want: "设备未注册",
+		},
+		{
+			call: func(c *Client) error {
+				_, _, err := c.ActivateSession(context.Background(), "a", "d")
+				return err
+			},
+			status: 409, code: "device_offline", want: "设备离线",
+		},
+		{
+			call: func(c *Client) error {
+				_, err := c.RegisterViewer(context.Background(), "S1", "V1", "")
+				return err
+			},
+			status: 409, code: "session_ended", want: "抓包会话已结束",
+		},
+		{
+			call: func(c *Client) error {
+				_, err := c.GetSession(context.Background(), "Sgone")
+				return err
+			},
+			status: 404, code: "session_not_found", want: "抓包会话不存在",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			f := &fakeServer{handler: func(w http.ResponseWriter, r *http.Request) {
+				writeErr(w, tc.status, tc.code, tc.code)
+			}}
+			f.ts = httptest.NewServer(f)
+			defer f.ts.Close()
+			c := newTestClient(t, f)
+
+			err := tc.call(c)
+			require.Error(t, err)
+			var ae *APIError
+			require.True(t, errors.As(err, &ae))
+			assert.Equal(t, tc.status, ae.Status)
+			assert.Equal(t, tc.code, ae.Code)
+			assert.Contains(t, ae.Message, tc.want)
+		})
+	}
+}
