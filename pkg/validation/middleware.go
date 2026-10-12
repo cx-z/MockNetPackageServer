@@ -46,6 +46,12 @@ func (r *responseRecorder) Header() http.Header {
 	return r.ResponseWriter.Header()
 }
 
+// Unwrap exposes the underlying ResponseWriter so WebSocket upgrades and
+// http.ResponseController can discover its optional interfaces.
+func (r *responseRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 // NewMiddleware creates a new validation middleware
 func NewMiddleware(handler http.Handler, validator *OpenAPIValidator, config *ValidationConfig) *Middleware {
 	if config == nil {

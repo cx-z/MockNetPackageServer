@@ -161,13 +161,14 @@ func TestAPIIntegration(t *testing.T) {
 		assert.Equal(t, 200, resp.StatusCode)
 	})
 
-	t.Run("Proxy Contexts", func(t *testing.T) {
+	// Proxy management was removed; these legacy routes must remain unavailable.
+	t.Run("Removed Proxy Endpoints", func(t *testing.T) {
 		resp := apiReq("GET", "/proxy/status", nil)
 		resp.Body.Close()
-		assert.Equal(t, 200, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 		resp = apiReq("GET", "/proxy/filters", nil)
 		resp.Body.Close()
-		assert.Equal(t, 200, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
 
 	t.Run("State Management", func(t *testing.T) {

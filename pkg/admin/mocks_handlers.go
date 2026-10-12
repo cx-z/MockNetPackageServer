@@ -150,11 +150,8 @@ func applyMockFilter(mocks []*mock.Mock, filter *MockFilter) []*mock.Mock {
 // getMockPort extracts the port from a mock if it uses a dedicated port (gRPC).
 // Returns 0 if the mock type doesn't use a dedicated port.
 func getMockPort(m *mock.Mock) int {
-	switch m.Type { //nolint:exhaustive // only gRPC uses a dedicated port
-	case mock.TypeGRPC:
-		if m.GRPC != nil {
-			return m.GRPC.Port
-		}
+	if m.Type == mock.TypeGRPC && m.GRPC != nil {
+		return m.GRPC.Port
 	}
 	return 0
 }
@@ -980,12 +977,7 @@ func (a *API) handleMergeMock(w http.ResponseWriter, r *http.Request, newMock *m
 
 	// Build response
 	port := getMockPort(target)
-	var message string
-	if newMock.Type == mock.TypeGRPC {
-		message = fmt.Sprintf("Merged into existing gRPC server on port %d", port)
-	} else {
-		message = fmt.Sprintf("Merged into existing gRPC server on port %d", port)
-	}
+	message := fmt.Sprintf("Merged into existing gRPC server on port %d", port)
 
 	response := map[string]interface{}{
 		"id":           target.ID,

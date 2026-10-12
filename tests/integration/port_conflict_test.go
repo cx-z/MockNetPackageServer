@@ -126,26 +126,6 @@ func createGRPCMock(t *testing.T, adminPort int, name string, grpcPort int, work
 	return resp.StatusCode, respData
 }
 
-// updateMock helper to update a mock via the admin API
-func updateMock(t *testing.T, adminPort int, mockID string, mockData map[string]interface{}) (int, map[string]interface{}) {
-	body, _ := json.Marshal(mockData)
-
-	req, err := http.NewRequest("PUT", fmt.Sprintf("http://localhost:%d/mocks/%s", adminPort, mockID), bytes.NewReader(body))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	var respData map[string]interface{}
-	json.Unmarshal(respBody, &respData)
-
-	return resp.StatusCode, respData
-}
-
 // ============================================================================
 // Port Conflict Tests
 // ============================================================================

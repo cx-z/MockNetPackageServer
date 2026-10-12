@@ -712,8 +712,7 @@ func outputResult(result *CreateMockResult, mockType mock.Type, jsonOutput bool)
 		fmt.Printf("Merged into mock: %s\n", created.ID)
 		fmt.Printf("  Type: %s\n", created.Type)
 
-		switch mockType { //nolint:exhaustive // only gRPC has merge output
-		case mock.TypeGRPC:
+		if mockType == mock.TypeGRPC {
 			if len(result.AddedServices) > 0 {
 				fmt.Printf("  Added:\n")
 				for _, svc := range result.AddedServices {
@@ -785,8 +784,7 @@ func outputJSONResult(result *CreateMockResult, mockType mock.Type) error { //no
 
 	// For merge results, include merge-specific information
 	if result.IsMerge() {
-		switch mockType { //nolint:exhaustive // only gRPC has merge JSON output
-		case mock.TypeGRPC:
+		if mockType == mock.TypeGRPC {
 			return output.JSON(struct {
 				ID            string   `json:"id"`
 				Type          string   `json:"type"`

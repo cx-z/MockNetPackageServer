@@ -129,6 +129,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { //nolint:g
 
 	// Check for WebSocket upgrade first
 	if websocket.IsWebSocketRequest(r) {
+		h.handleWebSocket(w, r)
 		return
 	}
 

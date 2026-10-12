@@ -1,10 +1,6 @@
 package cli
 
-import (
-	"strings"
-
-	"github.com/getmockd/mockd/pkg/cli/internal/output"
-)
+import "github.com/getmockd/mockd/pkg/cli/internal/output"
 
 // printResult outputs a single operation result.
 //
@@ -17,14 +13,6 @@ func printResult(data any, textFn func()) {
 		return
 	}
 	textFn()
-}
-
-// formatStringSlice joins strings for display.
-func formatStringSlice(items []string) string {
-	if len(items) == 0 {
-		return "(none)"
-	}
-	return strings.Join(items, ", ")
 }
 
 // printList outputs a collection of items.

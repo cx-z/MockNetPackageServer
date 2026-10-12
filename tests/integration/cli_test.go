@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -236,95 +234,6 @@ func TestCLIMockCRUDCommands(t *testing.T) {
 	})
 }
 
-// TestCLIImportExportCommands tests import and export commands.
-func TestCLIImportExportCommands(t *testing.T) {
-	// Find available ports
-	httpPort := findAvailablePort(t, 38080)
-	adminPort := findAvailablePort(t, 39090)
-
-	// Create isolated data directory for this test
-	dataDir := t.TempDir()
-
-	// Build the CLI binary
-	buildCmd := exec.Command("go", "build", "-o", "mockd_test", "./cmd/mockd")
-	buildCmd.Dir = "../.."
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to build CLI: %v\n%s", err, out)
-	}
-	defer exec.Command("rm", "-f", "../../mockd_test").Run()
-
-	// Start the server with isolated data directory
-	// Use 120s timeout to allow for slow CI environments (GitHub shared runners)
-	// where server startup with -race can take 30-40s.
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	serverCmd := exec.CommandContext(ctx, "./mockd_test", "start",
-		"--port", fmt.Sprintf("%d", httpPort),
-		"--admin-port", fmt.Sprintf("%d", adminPort),
-		"--no-auth",
-		"--data-dir", dataDir,
-	)
-	var stdout, stderr bytes.Buffer
-	serverCmd.Stdout = &stdout
-	serverCmd.Stderr = &stderr
-	serverCmd.Dir = "../.."
-	fmt.Println("Starting server...")
-	if err := serverCmd.Start(); err != nil {
-		t.Fatalf("Failed to start server: %v", err)
-	}
-	defer serverCmd.Process.Kill()
-
-	adminURL := fmt.Sprintf("http://localhost:%d", adminPort)
-	fmt.Println("Waiting for server ready...")
-	if !waitForServer(adminURL+"/health", 60*time.Second) {
-		t.Fatalf("Server did not become ready in time\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
-	}
-	fmt.Println("Server ready!")
-
-	fmt.Println("Adding mock...")
-	// Add a mock first
-	addCmd := exec.Command("./mockd_test", "add",
-		"--path", "/api/export-test",
-		"--status", "200",
-		"--admin-url", adminURL,
-	)
-	addCmd.Dir = "../.."
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Add command failed: %v\n%s", err, out)
-	}
-	fmt.Println("Mock added!")
-
-	// Test export command
-	t.Run("export", func(t *testing.T) {
-		// Export to JSON file (format inferred from extension)
-		exportFile := filepath.Join(t.TempDir(), "export.json")
-		exportCmd := exec.Command("./mockd_test", "export", "--admin-url", adminURL, "-o", exportFile)
-		exportCmd.Dir = "../.."
-		out, err := exportCmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("Export command failed: %v\n%s", err, out)
-		}
-
-		// Read the exported file
-		exportData, err := os.ReadFile(exportFile)
-		if err != nil {
-			t.Fatalf("Failed to read export file: %v", err)
-		}
-
-		var exported struct {
-			Version string        `json:"version"`
-			Mocks   []interface{} `json:"mocks"`
-		}
-		if err := json.Unmarshal(exportData, &exported); err != nil {
-			t.Fatalf("Failed to parse export output: %v\n%s", err, exportData)
-		}
-		if len(exported.Mocks) == 0 {
-			t.Fatal("Expected at least one mock in export")
-		}
-	})
-}
-
 // TestCLIVersionCommand tests the version command.
 func TestCLIVersionCommand(t *testing.T) {
 	// Build the CLI binary
@@ -368,162 +277,21 @@ func TestCLIVersionCommand(t *testing.T) {
 	})
 }
 
-// TestCLIInitCommand tests the mockd init command.
-func TestCLIInitCommand(t *testing.T) {
-	// Build the CLI binary
-	buildCmd := exec.Command("go", "build", "-o", "mockd_test", "./cmd/mockd")
-	buildCmd.Dir = "../.."
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to build CLI: %v\n%s", err, out)
+// TestCLIRemovedCommands verifies intentionally removed commands remain unavailable.
+func TestCLIRemovedCommands(t *testing.T) {
+	binaryPath := buildBinary(t)
+	for _, command := range []string{"init", "import", "export"} {
+		t.Run(command, func(t *testing.T) {
+			cmd := exec.Command(binaryPath, command, "--help")
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("Removed command %s unexpectedly succeeded", command)
+			}
+			if !strings.Contains(string(out), "unknown command \""+command+"\"") {
+				t.Fatalf("Expected unknown command error for %s, got: %s", command, out)
+			}
+		})
 	}
-	defer exec.Command("rm", "-f", "../../mockd_test").Run()
-
-	t.Run("create_default_yaml", func(t *testing.T) {
-		outputFile := filepath.Join(t.TempDir(), "mockd.yaml")
-
-		// Use --defaults to skip interactive prompts
-		cmd := exec.Command("./mockd_test", "init", "--defaults", "-o", outputFile)
-		cmd.Dir = "../.."
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("Init command failed: %v\n%s", err, out)
-		}
-
-		// Check success message
-		if !strings.Contains(string(out), "Done!") {
-			t.Errorf("Expected 'Done!' in output, got: %s", out)
-		}
-
-		// Check file exists and contains expected content
-		data, err := os.ReadFile(outputFile)
-		if err != nil {
-			t.Fatalf("Failed to read output file: %v", err)
-		}
-
-		content := string(data)
-		if !strings.Contains(content, "version:") {
-			t.Error("Expected version field")
-		}
-		if !strings.Contains(content, "admins:") {
-			t.Error("Expected admins section")
-		}
-		if !strings.Contains(content, "engines:") {
-			t.Error("Expected engines section")
-		}
-		if !strings.Contains(content, "/health") {
-			t.Error("Expected /health path in mocks")
-		}
-		if !strings.Contains(content, "type: http") {
-			t.Error("Expected type: http in mocks")
-		}
-	})
-
-	t.Run("create_json_format", func(t *testing.T) {
-		outputFile := filepath.Join(t.TempDir(), "mocks.json")
-
-		// Use --defaults to skip interactive prompts
-		cmd := exec.Command("./mockd_test", "init", "--defaults", "--format", "json", "-o", outputFile)
-		cmd.Dir = "../.."
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("Init command failed: %v\n%s", err, out)
-		}
-
-		// Check file exists and is valid JSON
-		data, err := os.ReadFile(outputFile)
-		if err != nil {
-			t.Fatalf("Failed to read output file: %v", err)
-		}
-
-		var config map[string]interface{}
-		if err := json.Unmarshal(data, &config); err != nil {
-			t.Fatalf("Invalid JSON output: %v", err)
-		}
-
-		// Check expected structure - ProjectConfig format
-		if _, ok := config["version"]; !ok {
-			t.Error("Expected 'version' key in JSON")
-		}
-		if _, ok := config["admins"]; !ok {
-			t.Error("Expected 'admins' key in JSON")
-		}
-		if _, ok := config["engines"]; !ok {
-			t.Error("Expected 'engines' key in JSON")
-		}
-		if _, ok := config["mocks"]; !ok {
-			t.Error("Expected 'mocks' key in JSON")
-		}
-	})
-
-	t.Run("error_file_exists", func(t *testing.T) {
-		outputFile := filepath.Join(t.TempDir(), "mockd.yaml")
-
-		// Create existing file
-		if err := os.WriteFile(outputFile, []byte("existing"), 0644); err != nil {
-			t.Fatalf("Failed to create existing file: %v", err)
-		}
-
-		cmd := exec.Command("./mockd_test", "init", "-o", outputFile)
-		cmd.Dir = "../.."
-		out, err := cmd.CombinedOutput()
-
-		// Should fail
-		if err == nil {
-			t.Fatal("Expected init to fail when file exists")
-		}
-		if !strings.Contains(string(out), "file already exists") {
-			t.Errorf("Expected 'file already exists' error, got: %s", out)
-		}
-	})
-
-	t.Run("force_overwrite", func(t *testing.T) {
-		outputFile := filepath.Join(t.TempDir(), "mockd.yaml")
-
-		// Create existing file
-		if err := os.WriteFile(outputFile, []byte("existing"), 0644); err != nil {
-			t.Fatalf("Failed to create existing file: %v", err)
-		}
-
-		// Use --defaults to skip interactive prompts
-		cmd := exec.Command("./mockd_test", "init", "--defaults", "--force", "-o", outputFile)
-		cmd.Dir = "../.."
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("Init --force command failed: %v\n%s", err, out)
-		}
-
-		// Check file was overwritten
-		data, err := os.ReadFile(outputFile)
-		if err != nil {
-			t.Fatalf("Failed to read output file: %v", err)
-		}
-		if !strings.Contains(string(data), "/health") {
-			t.Error("Expected file to be overwritten with new content")
-		}
-	})
-
-	t.Run("infer_json_from_extension", func(t *testing.T) {
-		outputFile := filepath.Join(t.TempDir(), "config.json")
-
-		// Use --defaults to skip interactive prompts
-		cmd := exec.Command("./mockd_test", "init", "--defaults", "-o", outputFile)
-		cmd.Dir = "../.."
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("Init command failed: %v\n%s", err, out)
-		}
-
-		// Check file is valid JSON
-		data, err := os.ReadFile(outputFile)
-		if err != nil {
-			t.Fatalf("Failed to read output file: %v", err)
-		}
-
-		var config map[string]interface{}
-		if err := json.Unmarshal(data, &config); err != nil {
-			t.Fatalf("Expected JSON format inferred from .json extension: %v", err)
-		}
-	})
 }
 
 // TestCLIHelpOutput tests that all commands have help.
@@ -536,7 +304,7 @@ func TestCLIHelpOutput(t *testing.T) {
 	}
 	defer exec.Command("rm", "-f", "../../mockd_test").Run()
 
-	commands := []string{"init", "start", "add", "list", "get", "delete", "import", "export", "logs", "config", "completion", "version"}
+	commands := []string{"start", "add", "list", "get", "delete", "logs", "config", "completion", "version"}
 
 	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {

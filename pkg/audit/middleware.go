@@ -197,6 +197,12 @@ type responseCapture struct {
 	maxCaptureSize int // limit for body capture
 }
 
+// Unwrap exposes the underlying ResponseWriter so WebSocket upgrades and
+// http.ResponseController can discover its optional interfaces.
+func (rc *responseCapture) Unwrap() http.ResponseWriter {
+	return rc.ResponseWriter
+}
+
 // WriteHeader captures the status code and delegates to the underlying ResponseWriter
 func (rc *responseCapture) WriteHeader(code int) {
 	rc.statusCode = code
