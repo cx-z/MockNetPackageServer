@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MockNetPack · 设备</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=4">
 <!--  编辑表单 JSON 折叠编辑器（vendored CodeMirror 5.65.18，同源加载，见 lib/codemirror/README.md） -->
 <link rel="stylesheet" href="lib/codemirror/lib/codemirror.min.css">
 <link rel="stylesheet" href="lib/codemirror/addon/fold/foldgutter.min.css">
@@ -135,24 +135,46 @@
           </div>
         </div>
 
+        <!-- 日志页签：HTTP 请求流 / 长连接日志（分页签承载，互不混入） -->
+        <div class="pane-tabs">
+          <button id="tabTraffic" class="tab active">请求流</button>
+          <button id="tabLongConn" class="tab">长连接</button>
+        </div>
+
+        <div id="rulesPane">
         <div class="section-title">Mock 规则 <span class="sub" id="rulesInfo"></span>
           <button id="ruleCreateBtn" class="small ghost" title="手填 Method/Path/回包，凭空创建一条 Mock 规则（无需先有抓包）">新建 Mock 规则</button>
         </div>
         <div id="rulesConflict" class="conflict hidden"></div>
         <div id="rulesList"><div class="empty">加载中…</div></div>
+        </div>
 
+        <div id="trafficPane">
         <div class="section-title">请求流 <span class="sub" id="trafficInfo"></span>
           <button id="historyBtn" class="small ghost" title="最近 48h 已结束会话的请求（服务端过滤 + 分页）">历史日志</button>
           <button id="trafficClearBtn" class="small ghost" title="清空本页历史日志（不影响已创建的 Mock 规则）">清空</button>
         </div>
         <input id="trafficFilter" class="filter-input" placeholder="过滤请求（URL/Method 关键字，仅当前页面，刷新即清空）" />
         <div id="trafficList"><div class="empty">请选择会话查看实时请求。</div></div>
+        </div>
+
+        <!-- 能力线 L1: 长连接日志（独立页签，与 HTTP 流量互不混入） -->
+        <div id="longconnPane" class="hidden">
+          <div class="section-title">长连接日志 <span class="sub" id="longconnInfo"></span>
+            <button id="longconnHistoryBtn" class="small ghost" title="最近 48h 已结束会话的长连接日志（服务端过滤 + 分页）">历史日志</button>
+            <button id="longconnClearBtn" class="small ghost" title="清空本页长连接日志（不影响服务端 48h 保留）">清空</button>
+          </div>
+          <div id="longconnSnapshot" class="snapshot-card hidden"></div>
+          <input id="longconnFilter" class="filter-input" placeholder="过滤长连接日志（eventType/bizType/msgId 关键字，仅当前页面）" />
+          <div id="longconnList"><div class="empty">暂无长连接日志。设备长连接事件会实时出现在这里。</div></div>
+        </div>
       </div>
 
       <div class="col-right">
         <div class="section-title">详情</div>
         <div id="ruleDetail" class="hidden"><div class="empty">点击左侧一条规则查看详情。</div></div>
         <div id="trafficDetail"><div class="empty">点击左侧请求或规则查看详情。</div></div>
+        <div id="longconnDetail" class="hidden"><div class="empty">点击左侧一条长连接日志查看详情。</div></div>
       </div>
     </div>
   </div>
@@ -191,18 +213,19 @@
 <script src="lib/codemirror/addon/edit/matchbrackets.min.js"></script>
 <script src="lib/codemirror/addon/edit/closebrackets.min.js"></script>
 <script src="lib/qrcode/qrcode.min.js"></script>
-<script src="json-lossless.js"></script>
-<script src="utils.js"></script>
-<script src="api.js"></script>
-<script src="json-tree.js"></script>
-<script src="devices.js"></script>
-<script src="scan-connect.js"></script>
-<script src="traffic.js"></script>
-<script src="rules.js"></script>
-<script src="viewer.js"></script>
-<script src="share.js"></script>
-<script src="history.js"></script>
-<script src="apikey.js"></script>
-<script src="app.js"></script>
+<script src="json-lossless.js?v=4"></script>
+<script src="utils.js?v=4"></script>
+<script src="api.js?v=4"></script>
+<script src="json-tree.js?v=4"></script>
+<script src="devices.js?v=4"></script>
+<script src="scan-connect.js?v=4"></script>
+<script src="traffic.js?v=4"></script>
+<script src="longconn.js?v=4"></script>
+<script src="rules.js?v=4"></script>
+<script src="viewer.js?v=4"></script>
+<script src="share.js?v=4"></script>
+<script src="history.js?v=4"></script>
+<script src="apikey.js?v=4"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

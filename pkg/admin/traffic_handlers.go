@@ -345,6 +345,29 @@ func (a *API) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_field", "request body must be JSON")
 		return
 	}
+	// F2: longConn share creation must verify device ownership, aligned with
+	// the trafficId branch below (authorizeDeviceAccess on the resolved owner).
+	if req.LongConnID != "" {
+		app, did, err := a.captureManager.GetLongConnWithOwner(r.Context(), req.LongConnID)
+		if err != nil {
+			writeCaptureError(w, err)
+			return
+		}
+		if !a.authorizeDeviceAccess(w, r, app, did) {
+			return
+		}
+		snap, err := a.captureManager.CreateLongConnShare(r.Context(), req.LongConnID)
+		if err != nil {
+			writeCaptureError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, shareResponse{
+			ShareID:   snap.ShareID,
+			URL:       "/mocknetpack/#/share/" + snap.ShareID,
+			ExpiresAt: snap.ExpiresAt.UTC().Format(time.RFC3339),
+		})
+		return
+	}
 	if req.TrafficID == "" {
 		writeError(w, http.StatusBadRequest, "missing_field", "trafficId is required")
 		return

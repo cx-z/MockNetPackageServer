@@ -255,6 +255,12 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/traffic/{id}", a.requireAuth(a.handleDeleteTraffic))
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/sessions/{id}/traffic", a.requireAuth(a.handleClearSessionTraffic))
 
+	//  (contract v0.14.0, 能力线 L1): long-connection logs — independent quota,
+	// 独立存档. POST is OPEN (SDK upload, aligned with /traffic); the list
+	// endpoint (GET) is requireAuth (Web tab data source, same as /traffic).
+	mux.HandleFunc("POST "+captureAPIPrefix+"/sessions/{id}/longconn", a.handleUploadLongConnection)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/sessions/{id}/longconn", a.requireAuth(a.handleListSessionLongConnections))
+
 	// Mock rules : Web CRUD/toggle + SDK incremental snapshot pull.
 	// GET is OPEN (SDK ?sinceVersion pull carries no token); the handler itself
 	// enforces auth on the Web full-list branch (no sinceVersion).

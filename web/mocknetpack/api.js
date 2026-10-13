@@ -94,6 +94,8 @@ async function doLogout() {
   authUser = null;
   // : 清详情页状态/轮询/会话，回到列表页，避免换账号后残留旧设备
   stopTrafficPoll();
+  stopLongConnPoll();
+  longConnLog = [];
   if (detail && detail.sessionId) stopViewer(detail.sessionId);
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   detail = null;

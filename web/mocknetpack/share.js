@@ -17,6 +17,37 @@ async function renderShareView(shareId) {
     }
     if (!res.ok) throw new Error("HTTP " + res.status);
     const snap = await res.json();
+
+    // 能力线 L1: 长连接日志分享（方案 A）——渲染只读快照。
+    if (snap.longConnEntry) {
+      const expDate = new Date(snap.expiresAt);
+      const e = snap.longConnEntry;
+      const row = (k, v) => (v === undefined || v === null || v === "")
+        ? ""
+        : '<div class="d-kv"><span class="d-k">' + esc(k) + '</span><span class="d-v">' + esc(String(v)) + "</span></div>";
+      let payloadBlock = "";
+      if (e.payloadText) {
+        payloadBlock = '<div class="d-block"><div class="d-title">payload（解析内容）</div><pre class="raw">' + esc(e.payloadText) + "</pre></div>";
+      } else if (e.payloadBase64) {
+        payloadBlock = '<div class="d-block"><div class="d-title">payload（base64 二进制）</div><pre class="raw">' + esc(e.payloadBase64) + "</pre></div>";
+      } else if (e.payloadPreview) {
+        payloadBlock = '<div class="d-block"><div class="d-title">payload（超限预览）</div><pre class="raw">' + esc(e.payloadPreview) + "</pre></div>";
+      }
+      box.innerHTML =
+        '<div class="detail-panel">' +
+          '<div style="margin-bottom:8px;color:var(--muted);font-size:12px">MockNetPack 长连接日志分享 · 有效期至 ' + esc(expDate.toLocaleString()) + "</div>" +
+          row("eventType", e.eventType) +
+          row("channelId", e.channelId) +
+          row("ts", e.ts) +
+          row("msgId", e.msgId) +
+          row("bizType", e.bizType) +
+          row("receiver", e.receiver) +
+          row("status", e.status) +
+          payloadBlock +
+        "</div>";
+      return;
+    }
+
     const e = snap.entry;
     const headRows = (h) => Object.entries(h || {})
       .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
@@ -62,12 +93,13 @@ async function renderShareView(shareId) {
   }
 }
 
-// : 创建分享链接
+// : 创建分享链接（traffic entry 或 longconn record）
 async function shareRequest(e) {
   try {
+    const body = e.longConnId ? { longConnId: e.longConnId } : { trafficId: e.id };
     const res = await apiFetch("/shares", {
       method: "POST",
-      body: JSON.stringify({ trafficId: e.id }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();

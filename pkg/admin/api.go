@@ -207,6 +207,8 @@ func NewAPI(port int, opts ...Option) *API {
 	//  跨重启保留请求存档：注入按会话分文件的流量存档存储。重启后
 	// RestoreTraffic 恢复明细；nil 则保持纯内存行为（不落盘）。
 	api.captureManager.SetTrafficStore(dataStore.Traffic())
+	//  能力线 L1: 长连接日志独立存档（mockd-data/longconn/<sid>.json）。
+	api.captureManager.SetLongConnStore(dataStore.LongConn())
 
 	// Initialize the MockNetPack account stores : users and session
 	// tokens share the same persistent FileStore. Long-lived API keys
@@ -527,6 +529,8 @@ func (a *API) Start() error {
 	// 检查——心跳超时清扫把"重启前仍在抓包"的会话标记结束时，其恢复
 	// 出来的明细保持完整可查（48h 窗口从新结束时间起算）。
 	a.captureManager.RestoreTraffic(a.ctx)
+	//  能力线 L1: 长连接日志独立存档同样跨重启恢复（48h 窗口语义同 traffic）。
+	a.captureManager.RestoreLongConn(a.ctx)
 
 	// Start the MockNetPack capture health check (device heartbeat timeout +
 	// viewer lease garbage collection)

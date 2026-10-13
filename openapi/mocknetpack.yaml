@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: MockNetPack API
-  version: 0.13.0
+  version: 0.14.0
   description: |
     MockNetPack 中央 Mock 服务器 API 契约。
     - AI 接入层：为 Agent 工具与脚本/CLI 提供机器原生通道——
@@ -68,6 +68,15 @@ info:
       GET /sessions 返回该设备会话列表（capturing + 保留期内 ended）。分享保留：ended
       会话流量保留期内仍可按 ID 解析创建分享链接。规则不受影响——保留并自动禁用（见 ）。
     - 规则备注与编辑语义：MockRule 新增 note（字符串，可空，单条覆盖式更新，不做编辑历史）。创建（POST）时 note 可空；编辑（PUT）时 note 必须非空——仅当请求体实际改动 response 内容（statusCode/headers/body 与现值不一致）时校验（空或纯空白返回 400）；纯开关操作（response 原样回传、仅 enabled 变化）note 可空，未编辑的"Mock 此请求"规则可直接启用。匹配键 method/path 不可改——PUT 请求体改用独立的 UpdateMockRuleInput（不含 method/path），编辑只允许改 response（statusCode/headers/body）与 note、enabled。编辑成功刷新 lastUsedAt（与  既有口径一致）。note 为纯管理面字段，不参与匹配、不下发给 SDK。
+    - 长连接日志（v0.14.0，能力线 L1）：新增 LongConnectionRecord（平台无关，不区分 iOS/Android 与具体
+      长连接框架；服务端生成 id/sessionId/seq——其中 seq 为每会话自增到达序号，仅服务端与查询方消费、
+      SDK 不感知）与 LongConnUploadRequest 契约，以及独立端点 POST /sessions/{id}/longconn（上传）与
+      GET /sessions/{id}/longconn（查询）。长连接日志不占用 HTTP 流量额度：独立存档
+      mockd-data/longconn/<sessionID>.json、独立上限（--capture-session-longconn-max-entries，默认 1000，
+      超限丢最旧）、48h 保留并入会话语义（ended 会话保留期内可查、期满 404）；payload 截断
+      （完整保留 ≤10KB，超限仅存预览 ≤1KB）；首期仅 in 方向 + 生命周期事件；snapshot 连接状态变化时
+      立即上报 + 30s 兜底；SDK 上传条目必填字段 ≤4（channelId/eventType/ts + payload 三选一），
+      其余全可选带默认。既有 /traffic 契约零改动。
 
 servers:
   - url: http://localhost:4290/api/v1
@@ -89,6 +98,8 @@ tags:
     description: 流量上传与查询
   - name: mock-rules
     description: Mock 回包规则（下发与 CRUD）
+  - name: longconn
+    description: 长连接日志上传与查询
 
 paths:
   # ==========================================================================
@@ -574,6 +585,124 @@ paths:
       responses:
         '204':
           description: 已清空
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------- 长连接日志（v0.14.0，能力线 L1）
+  /sessions/{id}/longconn:
+    post:
+      tags: [longconn]
+      summary: 批量上传长连接日志（SDK）
+      description: |
+        SDK 在抓包会话有效期间批量上传长连接业务级日志（解析后记录，非原始报文）。
+        与 /traffic 同攒批语义：单批 ≤ 500 条、部分接受（不合法的条目被丢弃、合法条目正常入库，
+        count = 实际接受数；全部条目不合法返回 400）；会话校验一致——sessionId 不存在 → 404
+        session_not_found，会话已结束 → 409 session_ended（保留期内不可再上传）。
+        长连接日志不占用 HTTP 流量额度：独立上限 MaxSessionLongConnEntries
+        （--capture-session-longconn-max-entries，默认 1000），超限丢最旧（rolling window）；
+        独立存档 mockd-data/longconn/<sessionID>.json，48h 保留并入会话语义。
+        payload 截断：完整保留 ≤10KB，超限仅存预览（≤1KB，payloadPreview）；
+        snapshot 连接状态变化时立即上报 + 30s 兜底；首期仅 in 方向 + 生命周期事件，out 不记录。
+      operationId: uploadLongConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LongConnUploadRequest'
+      responses:
+        '202':
+          description: 已接收（含部分接受；count 为实际接受条目数）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LongConnUploadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 会话已结束（session_ended）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [longconn]
+      summary: 会话内长连接日志列表（过滤 + 分页 + since 游标）
+      description: |
+        Web 长连接页签数据源（与 HTTP 流量分页签承载、互不混入）：
+        - capturing 会话实时查询；ended 会话在保留期（retainUntil 之前）内同样返回真实记录
+          （48h 历史日志），期满返回 404 session_not_found。
+        - 过滤：channelId / eventType / bizType（均精确匹配）与 from、to（RFC3339，含边界）
+          可任意组合（AND）；非法参数 400 invalid_field。
+        - 分页：先过滤后分页——total 为过滤后集合大小；Web「加载更多」用 offset 累加。
+        排序：按 seq 升序返回（到达顺序）；Web 展示可自行倒序。
+        - 增量：since 按 seq 增量拉取（since=0 缺省全量；与 offset 组合时先按 since 过滤再分页），
+          供轮询增量拉取使用。首期返回完整 LongConnectionRecord（不含 compact 投影）。
+      operationId: listSessionLongConnections
+      parameters:
+        - $ref: '#/components/parameters/SessionIdPath'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+          description: 返回条数上限
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+          description: 跳过条数（先过滤后分页）
+        - name: channelId
+          in: query
+          schema:
+            type: string
+          description: 通道标识精确过滤
+        - name: eventType
+          in: query
+          schema:
+            type: string
+            enum: [connect, disconnect, heartbeat, packet, ack, snapshot]
+          description: 事件类型精确过滤
+        - name: bizType
+          in: query
+          schema:
+            type: string
+          description: 业务语义精确过滤（如 chat）
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: 时间范围起点（RFC3339，含边界）
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: 时间范围终点（RFC3339，含边界）
+        - name: since
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: |
+            增量游标——只返回 seq > since 的条目（跨请求批次单调递增），
+            用于轮询增量拉取；since=0（缺省）返回全量。与 offset 组合时先按 since 过滤再分页。
+      responses:
+        '200':
+          description: 长连接记录列表（含过滤后 total）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LongConnListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1816,6 +1945,257 @@ components:
         count:
           type: integer
           description: 实际接受的条目数（部分接受：合法条目数；全部条目不合法时服务端返回 400 而非 202）
+
+    # ------------------------------------------------- 长连接日志（v0.14.0，能力线 L1）
+    LongConnectionRecordInput:
+      type: object
+      description: |
+        长连接日志上传条目（SDK/桥接层注入；平台无关，不区分 iOS/Android 与具体长连接框架）。
+        必填 ≤4：channelId / eventType / ts 必填；payload 三选一（payloadText/payloadBase64/payloadPreview）
+        对业务包事件（packet/ack）必填其一（服务端校验），生命周期事件（connect/disconnect/heartbeat/snapshot）
+        可省略；其余字段全可选带默认。不含 id/sessionId/seq（服务端生成，见 LongConnectionRecord）。
+        首期仅 in 方向 + 生命周期事件。
+      required: [channelId, eventType, ts]
+      properties:
+        channelId:
+          type: string
+          maxLength: 64
+          description: 业务方注册的通道标识（如 xcpush_tcp），多框架共存区分维度
+        direction:
+          type: string
+          enum: [in, out]
+          default: in
+          description: 方向；首期仅 in + 生命周期事件（out 预留，本期不采集）
+        eventType:
+          type: string
+          enum: [connect, disconnect, heartbeat, packet, ack, snapshot]
+          description: 通用事件类型，平台无关
+        ts:
+          type: string
+          format: date-time
+          description: 记录时间（RFC3339，业务侧打点时间）
+        msgId:
+          type: string
+          description: 消息 ID（字符串化，避免跨端 64 位溢出；可选）
+        bizType:
+          type: string
+          description: 业务语义（chat/push/feedback/logRetrieval/command/businessPush…；数字枚举由业务侧映射为字符串）
+        zipType:
+          type: string
+          description: 压缩类型（可选）
+        payloadText:
+          type: string
+          description: 可读 payload（UTF-8 或经业务侧解码；业务包事件 packet/ack 三选一必填其一，生命周期事件可省略）
+        payloadBase64:
+          type: string
+          description: 二进制 payload 的 base64（无法文本化时；三选一之一，规则同上）
+        payloadPreview:
+          type: string
+          maxLength: 1024
+          description: 截断预览（payload 超 10KB 时仅存预览，不保留完整内容；≤1KB；三选一之一，规则同上）
+        duplicate:
+          type: boolean
+          default: false
+          description: 是否重复包（对齐 KK 记录点语义）
+        empty:
+          type: boolean
+          default: false
+          description: 是否空包（业务数据为空）
+        ackSent:
+          type: boolean
+          default: false
+          description: 是否已发送 ACK
+        receiver:
+          type: string
+          description: 业务接收方标识（业务层分发细节；零侵入模式下留空，Web 如实标注）
+        receiverResult:
+          type: string
+          description: 业务接收方处理返回值（业务层分发细节；零侵入模式下留空）
+        status:
+          type: string
+          enum: [received, duplicate, emptyData, handled, ackSkipped]
+          default: received
+          description: 通用处理状态（对齐 KK 记录点语义）
+        snapshot:
+          $ref: '#/components/schemas/LongConnectionSnapshot'
+          description: 连接快照（仅 eventType=snapshot 时携带）
+
+    LongConnectionSnapshot:
+      type: object
+      description: 连接快照（eventType=snapshot 时随记录上报；连接状态变化立即上报 + 30s 兜底）
+      properties:
+        state:
+          type: string
+          description: 连接状态（业务侧语义，如 connected/connecting/disconnected 等）
+        isSocketConnected:
+          type: boolean
+          description: socket 是否已连接
+        routerHost:
+          type: string
+          description: 路由器地址（host）
+        routerPort:
+          type: integer
+          description: 路由器端口
+        heartbeatInterval:
+          type: integer
+          description: 心跳间隔（秒）
+        clientId:
+          type: string
+          description: 客户端 ID
+        accountMid:
+          type: string
+          description: 账号标识（mid；可选）
+        hasToken:
+          type: boolean
+          description: 是否持有连接令牌
+        receivedMessageCount:
+          type: integer
+          description: 累计收包数（消息数）
+        receiveServiceCount:
+          type: integer
+          description: 累计业务分发数
+        lastConnectAt:
+          type: string
+          format: date-time
+          description: 最近一次连接时间
+        lastDisconnectAt:
+          type: string
+          format: date-time
+          description: 最近一次断开时间
+        lastPacketAt:
+          type: string
+          format: date-time
+          description: 最近一次收包时间
+        lastAckMsgId:
+          type: string
+          description: 最后一条 ACK 的 msgId
+        lastError:
+          type: string
+          description: 最后一条错误信息
+
+    LongConnectionRecord:
+      type: object
+      description: |
+        长连接日志完整记录（服务端输出）= 上传条目 + 服务端生成字段（id/sessionId/seq）。
+        SDK 上传用 LongConnectionRecordInput，不携带服务端字段。
+        payload 三选一规则同 Input：业务包事件（packet/ack）必填其一（服务端校验），生命周期事件可省略。
+      required: [id, sessionId, seq, channelId, eventType, ts]
+      properties:
+        id:
+          type: string
+          description: 记录 ID（服务端生成，ULID）
+        sessionId:
+          type: string
+          description: 所属会话 ID（服务端写入）
+        seq:
+          type: integer
+          description: |
+            每会话自增的到达序号：服务端按上传到达顺序从 1 递增，供增量拉取（since）使用；
+            与 TrafficEntry.seq 同语义但独立计数（longconn 与 traffic 分开存储、互不跳号）。
+            仅服务端与查询方（Web/CLI/MCP）消费，SDK 不感知、不消费。
+        channelId:
+          type: string
+          maxLength: 64
+          description: 业务方注册的通道标识（如 xcpush_tcp），多框架共存区分维度
+        direction:
+          type: string
+          enum: [in, out]
+          default: in
+          description: 方向；首期仅 in + 生命周期事件（out 预留，本期不采集）
+        eventType:
+          type: string
+          enum: [connect, disconnect, heartbeat, packet, ack, snapshot]
+          description: 通用事件类型，平台无关
+        ts:
+          type: string
+          format: date-time
+          description: 记录时间（RFC3339，业务侧打点时间）
+        msgId:
+          type: string
+          description: 消息 ID（字符串化，避免跨端 64 位溢出；可选）
+        bizType:
+          type: string
+          description: 业务语义（chat/push/feedback/logRetrieval/command/businessPush…；数字枚举由业务侧映射为字符串）
+        zipType:
+          type: string
+          description: 压缩类型（可选）
+        payloadText:
+          type: string
+          description: 可读 payload（UTF-8 或经业务侧解码；业务包事件 packet/ack 三选一必填其一，生命周期事件可省略）
+        payloadBase64:
+          type: string
+          description: 二进制 payload 的 base64（无法文本化时；三选一之一，规则同上）
+        payloadPreview:
+          type: string
+          maxLength: 1024
+          description: 截断预览（payload 超 10KB 时仅存预览，不保留完整内容；≤1KB；三选一之一，规则同上）
+        duplicate:
+          type: boolean
+          default: false
+          description: 是否重复包（对齐 KK 记录点语义）
+        empty:
+          type: boolean
+          default: false
+          description: 是否空包（业务数据为空）
+        ackSent:
+          type: boolean
+          default: false
+          description: 是否已发送 ACK
+        receiver:
+          type: string
+          description: 业务接收方标识（业务层分发细节；零侵入模式下留空，Web 如实标注）
+        receiverResult:
+          type: string
+          description: 业务接收方处理返回值（业务层分发细节；零侵入模式下留空）
+        status:
+          type: string
+          enum: [received, duplicate, emptyData, handled, ackSkipped]
+          default: received
+          description: 通用处理状态（对齐 KK 记录点语义）
+        snapshot:
+          $ref: '#/components/schemas/LongConnectionSnapshot'
+          description: 连接快照（仅 eventType=snapshot 时携带）
+
+    LongConnUploadRequest:
+      type: object
+      required: [channelId, records]
+      description: 长连接日志批量上传请求（SDK；会话归属由路径 /sessions/{id} 决定，请求体不含 app/did）
+      properties:
+        channelId:
+          type: string
+          maxLength: 64
+          description: 通道标识（本次上传所属通道；与 records 内条目 channelId 一致）
+        records:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/LongConnectionRecordInput'
+          description: |
+            一次批量上传的长连接记录。SDK 攒批：按条目数或累计字节阈值触发上传，
+            单批 ≤ 500 条且控制总字节，避免超过服务端 10MB 请求体上限（对齐 /traffic 契约）。
+
+    LongConnUploadResponse:
+      type: object
+      required: [accepted, count]
+      properties:
+        accepted:
+          type: boolean
+          description: 是否已接收（202 隐含接收，恒为 true；false 仅作扩展预留）
+        count:
+          type: integer
+          description: 实际接受的条目数（部分接受：合法条目数；全部条目不合法时服务端返回 400 而非 202）
+
+    LongConnListResponse:
+      type: object
+      required: [entries, total]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/LongConnectionRecord'
+        total:
+          type: integer
+          description: 过滤后集合大小
 
     # ------------------------------------------------------------ Mock 规则
     MockResponse:

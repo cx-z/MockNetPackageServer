@@ -83,6 +83,7 @@ function bindSession(session) {
 
   if (!session || session.status !== "capturing") {
     // 断开/无会话：有页面日志则保留展示（诉求 2），否则空态。
+    stopLongConnPoll();   // 长连接轮询同停（记录保留不清空）
     if (pageLog.length) {
       renderTraffic(pageLog);
     } else {
@@ -98,6 +99,7 @@ function bindSession(session) {
   registerViewer(session, "设备详情页");
   trafficTimer = setInterval(pollTraffic, TRAFFIC_POLL_MS);
   pollTraffic();
+  bindLongConnSession(session);   // 能力线 L1: 长连接日志独立轮询
 }
 
 function stopTrafficPoll() {

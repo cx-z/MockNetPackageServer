@@ -349,6 +349,21 @@ type TrafficStore interface {
 	LoadAllSessionTraffic(ctx context.Context) (map[string][]*capture.TrafficEntry, error)
 }
 
+// LongConnStore persists per-session long-connection log archives as one
+// independent file per capture session under <dataDir>/longconn/<sessionID>.json
+// (能力线 L1: 数据与 HTTP 流量分开存储、独立额度). A nil LongConnStore keeps the
+// memory-only behavior (existing tests).
+type LongConnStore interface {
+	// SaveSessionLongConn atomically persists a session's full longconn slice.
+	// An empty slice removes the archive file (idempotent).
+	SaveSessionLongConn(ctx context.Context, sessionID string, entries []*capture.LongConnectionRecord) error
+	// DeleteSessionLongConn removes a session's longconn archive file (idempotent).
+	DeleteSessionLongConn(ctx context.Context, sessionID string) error
+	// LoadAllSessionLongConn returns every persisted per-session longconn archive
+	// (startup restore). Corrupt/unreadable files are skipped with a warning.
+	LoadAllSessionLongConn(ctx context.Context) (map[string][]*capture.LongConnectionRecord, error)
+}
+
 // MockRuleFilter filters mock rules by owning device.
 type MockRuleFilter struct {
 	// App filters by app dimension ("" = no filter).

@@ -84,6 +84,11 @@ type CaptureConfig struct {
 	// queryable before the janitor purges them (48h retention from session end).
 	// 0 means the server default (48h).
 	TrafficRetention time.Duration
+	// MaxSessionLongConnEntries caps the number of long-connection log entries
+	// kept per session (能力线 L1). Long-connection logs are an independent
+	// quota: they do NOT count against MaxSessionTrafficEntries. 0 means the
+	// server default (DefaultMaxSessionLongConnEntries = 1000).
+	MaxSessionLongConnEntries int
 }
 
 // DefaultCaptureConfig returns the default capture configuration
@@ -92,13 +97,14 @@ type CaptureConfig struct {
 // 2000 entries, ended-session traffic retention 48h).
 func DefaultCaptureConfig() CaptureConfig {
 	return CaptureConfig{
-		HeartbeatInterval:        20 * time.Second,
-		HeartbeatTimeout:         60 * time.Second,
-		ViewerTTL:                120 * time.Second,
-		MockRuleRetention:        7 * 24 * time.Hour,
-		RetainedTrafficTTL:       ShareTTL,
-		MaxSessionTrafficEntries: DefaultMaxSessionTrafficEntries,
-		TrafficRetention:         DefaultTrafficRetention,
+		HeartbeatInterval:         20 * time.Second,
+		HeartbeatTimeout:          60 * time.Second,
+		ViewerTTL:                 120 * time.Second,
+		MockRuleRetention:         7 * 24 * time.Hour,
+		RetainedTrafficTTL:        ShareTTL,
+		MaxSessionTrafficEntries:  DefaultMaxSessionTrafficEntries,
+		TrafficRetention:          DefaultTrafficRetention,
+		MaxSessionLongConnEntries: DefaultMaxSessionLongConnEntries,
 	}
 }
 
@@ -145,6 +151,17 @@ type CaptureManager struct {
 	// UploadTraffic assigns seq under the same lock. Keyed by session ID and
 	// cleaned up together with orphaned traffic keys.
 	trafficSeq map[string]int64
+
+	// longconnMu guards runtime long-connection log entries (能力线 L1,
+	// 业务级长连接日志), keyed by session ID. Independent quota: these records
+	// never touch trafficMu / traffic / trafficSeq and do not count against
+	// MaxSessionTrafficEntries. They are persisted under mockd-data/longconn.
+	longconnMu  sync.RWMutex
+	longconn    map[string][]*capture.LongConnectionRecord
+	longconnSeq map[string]int64
+	// longconnStore persists per-session longconn archives (one file per
+	// session, 跨重启保留). nil = memory-only behavior (existing tests).
+	longconnStore LongConnStore
 
 	// retainedMu guards retainedTraffic: the traffic of ended sessions, kept
 	// for RetainedTrafficTTL so records the user saw on the page can still be
@@ -197,6 +214,9 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules 
 	if cfg.TrafficRetention <= 0 {
 		cfg.TrafficRetention = DefaultCaptureConfig().TrafficRetention
 	}
+	if cfg.MaxSessionLongConnEntries <= 0 {
+		cfg.MaxSessionLongConnEntries = DefaultCaptureConfig().MaxSessionLongConnEntries
+	}
 	return &CaptureManager{
 		devices:       devices,
 		sessions:      sessions,
@@ -208,6 +228,8 @@ func NewCaptureManager(devices DeviceStore, sessions CaptureSessionStore, rules 
 		viewers:       make(map[string]map[string]capture.ViewerLease),
 		traffic:       make(map[string][]*capture.TrafficEntry),
 		trafficSeq:    make(map[string]int64),
+		longconn:      make(map[string][]*capture.LongConnectionRecord),
+		longconnSeq:   make(map[string]int64),
 		retained:      make(map[string]*retainedSession),
 		trafficIndex:  make(map[string]*trafficIndexEntry),
 		stopCh:        make(chan struct{}),
@@ -226,6 +248,12 @@ func (m *CaptureManager) SetLogger(log *slog.Logger) {
 // never written to disk and is lost on restart.
 func (m *CaptureManager) SetTrafficStore(ts TrafficStore) {
 	m.trafficStore = ts
+}
+
+// SetLongConnStore wires an optional persistent archive store for per-session
+// long-connection logs. Nil (default) keeps the memory-only behavior.
+func (m *CaptureManager) SetLongConnStore(ls LongConnStore) {
+	m.longconnStore = ls
 }
 
 // Config returns the runtime capture configuration.

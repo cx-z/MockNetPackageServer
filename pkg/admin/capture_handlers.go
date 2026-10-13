@@ -242,6 +242,8 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 // shareRequest is the POST /shares body: which traffic entry to snapshot.
 type shareRequest struct {
 	TrafficID string `json:"trafficId"`
+	// LongConnID 能力线 L1: 长连接日志单条分享（与 trafficId 二选一）。
+	LongConnID string `json:"longConnId"`
 }
 
 // shareResponse is the POST /shares reply: the opaque shareId and public URL.

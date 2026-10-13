@@ -324,6 +324,13 @@ func (m *CaptureManager) PurgeExpiredEndedSessions(ctx context.Context) {
 			// : drop the archive file together with the in-memory traffic —
 			// the 48h window is the only cleanup path for request archives.
 			m.deleteSessionTraffic(ctx, s.ID)
+			//  能力线 L1: longconn 随会话生命周期同语义清理——内存、
+			// seq 计数器与独立存档文件一起删（48h 窗口到期）。
+			m.longconnMu.Lock()
+			delete(m.longconn, s.ID)
+			delete(m.longconnSeq, s.ID)
+			m.longconnMu.Unlock()
+			m.deleteSessionLongConn(ctx, s.ID)
 			if err := m.sessions.Delete(ctx, s.ID); err != nil {
 				m.log.Warn("capture health check: purge expired ended session failed", "session", s.ID, "error", err)
 			}

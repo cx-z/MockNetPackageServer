@@ -12,12 +12,15 @@ let history = null;       // { sid, offset, total, entries }
 // 重建 detailPollTimer / bindSession 重启 trafficTimer」重新拉起，故 loadDetail
 // 与 bindSession 在 historyOpen 期间跳过计时器重建（traffic.js 引用）。
 let historyOpen = false;
+let historyMode = "traffic";   // "traffic" | "longconn"
 
 /** 打开历史日志：暂停实时/详情轮询，拉设备最近已结束会话列表，默认选中最新。 */
-async function openHistory() {
+async function openHistory(mode) {
   if (!detail) return;
+  historyMode = mode || "traffic";
   historyOpen = true;                      // 先置标志：在途 loadDetail 不得重建
   stopTrafficPoll();                       // 暂停 2s 请求流轮询
+  stopLongConnPoll();                      // 暂停长连接轮询
   if (detailPollTimer) {                   // 暂停 5s 详情轮询——否则 loadDetail→
     clearInterval(detailPollTimer);        // bindSession 会在 ≤5s 内重启请求轮询，
     detailPollTimer = null;                // 与「互不干扰」注释不符（已修复）
@@ -25,10 +28,14 @@ async function openHistory() {
   $("historyView").classList.remove("hidden");
   history = null;
   $("historySessions").innerHTML = '<div class="history-empty">加载中…</div>';
-  $("historyList").innerHTML = '<div class="history-empty">请选择左侧会话查看历史请求。</div>';
-  $("historyDetail").innerHTML = '<div class="empty">点击左侧请求查看详情。</div>';
+  $("historyList").innerHTML = '<div class="history-empty">请选择左侧会话查看历史记录。</div>';
+  $("historyDetail").innerHTML = '<div class="empty">点击左侧记录查看详情。</div>';
   $("historyInfo").textContent = "";
   $("historyMoreBtn").classList.add("hidden");
+  // 长连接模式隐藏 HTTP 专用过滤（statusCode），关键词 placeholder 通用化
+  const statusRow = $("hStatusCode").closest(".hf-row");
+  if (statusRow) statusRow.style.display = historyMode === "longconn" ? "none" : "";
+  $("hKeyword").placeholder = historyMode === "longconn" ? "eventType/bizType/msgId 关键词" : "URL 关键词";
   resetHistoryFilters();
   await loadHistorySessions();
 }
@@ -157,7 +164,10 @@ async function loadHistoryMore() {
 async function loadHistoryPage(replace) {
   const h = history;
   try {
-    const res = await apiFetch("/sessions/" + encodeURIComponent(h.sid) + "/traffic?" + historyQuery(h.offset));
+    const ep = historyMode === "longconn"
+      ? "/sessions/" + encodeURIComponent(h.sid) + "/longconn?" + historyQuery(h.offset)
+      : "/sessions/" + encodeURIComponent(h.sid) + "/traffic?" + historyQuery(h.offset);
+    const res = await apiFetch(ep);
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     h.total = data.total;
@@ -185,27 +195,42 @@ function renderHistoryList(replace) {
   }
   for (const e of history.entries) {
     const el = document.createElement("div");
-    el.className = "traffic-row";
-    const statusCls = e.statusCode == null ? "st-err"
-      : e.statusCode < 300 ? "st-2xx" : e.statusCode < 400 ? "st-3xx"
-      : e.statusCode < 500 ? "st-4xx" : "st-5xx";
-    el.innerHTML =
-      '<span class="method ' + methodCls(e.method) + '">' + esc(e.method || "?") + "</span>" +
-      '<span class="t-url">' + esc(e.path || e.url) + (e.query ? "?" + esc(e.query) : "") + "</span>" +
-      '<span class="t-status ' + statusCls + '">' + (e.statusCode ?? "ERR") + "</span>" +
-      '<span class="t-dur">' + e.durationMs + "ms</span>" +
-      '<span class="t-time">' + clockTime(e.timestamp) + "</span>";
+    if (historyMode === "longconn") {
+      el.className = "lc-row";
+      const meta = [];
+      if (e.bizType) meta.push("biz=" + e.bizType);
+      if (e.msgId) meta.push("msg=" + e.msgId);
+      el.innerHTML =
+        '<span class="lc-type ' + longConnTypeCls(e.eventType) + '">' + esc(e.eventType || "?") + "</span>" +
+        '<span class="lc-meta">' + esc(meta.join(" · ")) + "</span>" +
+        '<span class="t-time">' + clockTime(e.ts) + "</span>";
+    } else {
+      el.className = "traffic-row";
+      const statusCls = e.statusCode == null ? "st-err"
+        : e.statusCode < 300 ? "st-2xx" : e.statusCode < 400 ? "st-3xx"
+        : e.statusCode < 500 ? "st-4xx" : "st-5xx";
+      el.innerHTML =
+        '<span class="method ' + methodCls(e.method) + '">' + esc(e.method || "?") + "</span>" +
+        '<span class="t-url">' + esc(e.path || e.url) + (e.query ? "?" + esc(e.query) : "") + "</span>" +
+        '<span class="t-status ' + statusCls + '">' + (e.statusCode ?? "ERR") + "</span>" +
+        '<span class="t-dur">' + e.durationMs + "ms</span>" +
+        '<span class="t-time">' + clockTime(e.timestamp) + "</span>";
+    }
     el.onclick = () => {
-      detail._activeTraffic = e.id;
+      if (historyMode !== "longconn") detail._activeTraffic = e.id;
       renderHistoryDetail(e);
-      box.querySelectorAll(".traffic-row").forEach((r) =>
+      box.querySelectorAll(".traffic-row, .lc-row").forEach((r) =>
         r.classList.toggle("active", r === el));
     };
     box.appendChild(el);
   }
 }
 
-/** 渲染历史请求详情到浮层右侧（复用主详情渲染：页签/JSON 树/Mock/分享）。 */
+/** 渲染历史记录详情到浮层右侧（流量复用 trafficDetail；长连接复用 longconnDetail 渲染器）。 */
 function renderHistoryDetail(e) {
-  renderTrafficDetail(e, $("historyDetail"));
+  if (historyMode === "longconn") {
+    renderLongConnDetail(e, $("historyDetail"));
+  } else {
+    renderTrafficDetail(e, $("historyDetail"));
+  }
 }

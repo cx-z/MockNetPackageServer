@@ -266,7 +266,7 @@ button.mini.active { background: var(--primary); color: #fff; }
 .col-left > .section-title:first-child { margin-top: 0; }
 .col-right { display: flex; flex-direction: column; overflow: hidden; }
 .col-right > .section-title { margin-top: 0; flex: none; }
-#ruleDetail, #trafficDetail { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+#ruleDetail, #trafficDetail, #longconnDetail { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .detail-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .detail-panel .d-block { display: flex; flex-direction: column; min-height: 0; }
 .detail-panel .d-block:has(pre) { flex: 1; }
@@ -372,3 +372,24 @@ button.mini.active { background: var(--primary); color: #fff; }
 .key-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #eef1f4; }
 .key-row .sub { flex: 1; }
 .api-key-prefix { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: #eef2f5; padding: 2px 6px; border-radius: 4px; }
+
+/* ===== 能力线 L1: 长连接日志页签 ===== */
+.pane-tabs { display: flex; gap: 6px; margin: 8px 0; }
+.pane-tabs .tab { padding: 4px 14px; border: 1px solid #9ca3af; background: #fff; color: #1f2937; font-weight: 500; cursor: pointer; border-radius: 6px; }
+.pane-tabs .tab:hover { background: #f3f4f6; }
+.pane-tabs .tab.active { background: var(--accent, #2563eb); color: #fff; border-color: var(--accent, #2563eb); }
+.lc-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+.lc-row:hover { background: #f6f8fa; }
+.lc-row.active { background: #e8f0fe; }
+.lc-type { font-size: 11px; padding: 1px 6px; border-radius: 4px; color: #fff; white-space: nowrap; }
+.lc-packet { background: #2563eb; }
+.lc-ack { background: #0891b2; }
+.lc-connect { background: #16a34a; }
+.lc-disconnect { background: #dc2626; }
+.lc-heartbeat { background: #d97706; }
+.lc-snapshot { background: #7c3aed; }
+.lc-other { background: #6b7280; }
+.lc-meta { flex: 1; font-size: 12px; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snapshot-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; margin: 6px 0; background: #f9fafb; }
+pre.raw { white-space: pre-wrap; word-break: break-all; font-size: 12px; background: #f6f8fa; padding: 8px; border-radius: 6px; flex: 1; min-height: 120px; overflow: auto; }
+.d-toolbar { display: flex; gap: 6px; margin-bottom: 8px; }

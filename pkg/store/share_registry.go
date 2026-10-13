@@ -24,11 +24,14 @@ const ShareTTL = 7 * 24 * time.Hour
 // — clearing or deleting the session does not affect the share. The shareId
 // is an unguessable UUID; no signature is needed because the link contains
 // only the opaque ID and all data lives server-side.
+// 能力线 L1: LongConn 可选承载一条长连接日志快照（与 Entry 二选一；长连接
+// 分享复用同一 share 通道与 7 天 TTL）。
 type ShareSnapshot struct {
-	ShareID   string                `json:"shareId"`
-	CreatedAt time.Time             `json:"createdAt"`
-	ExpiresAt time.Time             `json:"expiresAt"`
-	Entry     *capture.TrafficEntry `json:"entry"`
+	ShareID   string                     `json:"shareId"`
+	CreatedAt time.Time                  `json:"createdAt"`
+	ExpiresAt time.Time                  `json:"expiresAt"`
+	Entry     *capture.TrafficEntry      `json:"entry,omitempty"`
+	LongConn  *capture.LongConnectionRecord `json:"longConnEntry,omitempty"`
 }
 
 // CreateShare copies the traffic entry identified by trafficID into a new
@@ -73,6 +76,56 @@ func (m *CaptureManager) CreateShare(ctx context.Context, trafficID string) (*Sh
 	return snap, nil
 }
 
+// CreateLongConnShare copies the long-connection record identified by
+// longConnID into a new independent share snapshot (能力线 L1, 方案 A: 单条
+// 分享). No longconn ID index exists (per-session cap 1000), so the lookup
+// scans the in-memory slices — bounded and acceptable at this scale.
+// Returns ErrNotFound if the record is gone (e.g. rolling-window trimmed or
+// session purged).
+func (m *CaptureManager) CreateLongConnShare(ctx context.Context, longConnID string) (*ShareSnapshot, error) {
+	m.longconnMu.RLock()
+	var found *capture.LongConnectionRecord
+	for _, list := range m.longconn {
+		for _, rec := range list {
+			if rec.ID == longConnID {
+				found = rec
+				break
+			}
+		}
+		if found != nil {
+			break
+		}
+	}
+	m.longconnMu.RUnlock()
+	if found == nil {
+		return nil, ErrNotFound
+	}
+	// Deep-copy (JSON round-trip) so later mutations never leak into the share.
+	data, err := json.Marshal(found)
+	if err != nil {
+		return nil, fmt.Errorf("marshal longconn share snapshot: %w", err)
+	}
+	var copy capture.LongConnectionRecord
+	if err := json.Unmarshal(data, &copy); err != nil {
+		return nil, fmt.Errorf("unmarshal longconn share snapshot: %w", err)
+	}
+	copy.SessionID = "" // share must not expose internal session linkage
+
+	now := time.Now()
+	snap := &ShareSnapshot{
+		ShareID:   id.UUID(),
+		CreatedAt: now,
+		ExpiresAt: now.Add(ShareTTL),
+		LongConn:  &copy,
+	}
+	m.sharesMu.Lock()
+	defer m.sharesMu.Unlock()
+	if err := m.sharesStore.Create(ctx, snap); err != nil {
+		return nil, err
+	}
+	return snap, nil
+}
+
 // GetShare returns a share snapshot by ID, or ErrNotFound if it does not
 // exist or has expired. Expired shares are lazily purged on access (and
 // periodically by the hourly janitor).
@@ -98,8 +151,6 @@ func (m *CaptureManager) GetShare(ctx context.Context, shareID string) (*ShareSn
 	}
 	return nil, ErrNotFound
 }
-
-// PurgeExpiredShares deletes every share snapshot expired before now (hourly
 // janitor; expired shares are also rejected lazily on GetShare, so this is
 // housekeeping that keeps the persisted file bounded).
 func (m *CaptureManager) PurgeExpiredShares(ctx context.Context) {

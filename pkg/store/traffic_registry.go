@@ -605,4 +605,15 @@ func (m *CaptureManager) purgeRetainedBefore(ctx context.Context, cutoff time.Ti
 			m.deleteSessionTraffic(ctx, sid)
 		}
 	}
+	//  能力线 L1: sweep orphaned longconn keys the same way (session record
+	//  gone => drop memory, seq counter and the independent archive file).
+	m.longconnMu.Lock()
+	for sid := range m.longconn {
+		if _, err := m.sessions.Get(ctx, sid); err != nil {
+			delete(m.longconn, sid)
+			delete(m.longconnSeq, sid)
+			m.deleteSessionLongConn(ctx, sid)
+		}
+	}
+	m.longconnMu.Unlock()
 }
