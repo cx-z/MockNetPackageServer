@@ -174,7 +174,9 @@ async function loadHistoryPage(replace) {
     if (replace) h.entries = data.entries || [];
     else h.entries = h.entries.concat(data.entries || []);
     h.offset += (data.entries || []).length;
-    $("historyInfo").textContent = "共 " + h.total + " 条（已加载 " + h.entries.length + "）";
+    $("historyInfo").textContent = historyMode === "longconn"
+      ? "共 " + h.total + " 条（仅业务包 packet 可见，已加载 " + h.entries.length + "）"
+      : "共 " + h.total + " 条（已加载 " + h.entries.length + "）";
     renderHistoryList(replace);
     const hasMore = h.entries.length < h.total;
     $("historyMoreBtn").classList.toggle("hidden", !hasMore);
@@ -193,7 +195,12 @@ function renderHistoryList(replace) {
     box.innerHTML = '<div class="history-empty">该会话暂无匹配请求（调整过滤条件重试）。</div>';
     return;
   }
+  let rendered = 0;
   for (const e of history.entries) {
+    // longconn 模式：生命周期事件（connect/disconnect/heartbeat/timeout/snapshot）
+    // 不进列表（状态卡已承载），只渲染业务包 packet——与主列表一致。
+    if (historyMode === "longconn" && e.eventType !== "packet") continue;
+    rendered++;
     const el = document.createElement("div");
     if (historyMode === "longconn") {
       el.className = "lc-row";
@@ -223,6 +230,9 @@ function renderHistoryList(replace) {
         r.classList.toggle("active", r === el));
     };
     box.appendChild(el);
+  }
+  if (historyMode === "longconn" && !rendered && history.entries.length) {
+    box.innerHTML = '<div class="history-empty">已加载记录中暂无业务包（仅有连接状态事件）。</div>';
   }
 }
 

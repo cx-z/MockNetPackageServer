@@ -95,8 +95,9 @@ function renderLongConn() {
   renderSnapshotCard(snapshots[snapshots.length - 1]);
 
   const q = longConnFilter.trim().toLowerCase();
-  // snapshot 是连接状态（顶部状态卡片已展示），不进日志列表、不占计数。
-  let entries = longConnLog.filter((e) => e.eventType !== "snapshot");
+  // 列表只显示业务包（packet）；snapshot 进状态卡，connect/disconnect/heartbeat/
+  // timeout 等生命周期事件仅驱动状态卡、不占列表（用户反馈 2026-10-14）。
+  let entries = longConnLog.filter((e) => e.eventType === "packet");
   const total = entries.length;
   if (q) {
     entries = entries.filter((e) =>
