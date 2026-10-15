@@ -56,9 +56,9 @@ func resultText(res *mcp.CallToolResult) string {
 	return sb.String()
 }
 
-// TestMCPServer_RegistersSixteenTools asserts  : the 16 documented
-// tools are registered, each with a description and a JSON schema.
-func TestMCPServer_RegistersSixteenTools(t *testing.T) {
+// TestMCPServer_RegistersAllTools asserts : the 22 documented tools are
+// registered, each with a description and a JSON schema.
+func TestMCPServer_RegistersAllTools(t *testing.T) {
 	srv := server.NewMCPServer("mocknetpack", "0.13.0")
 	registerTools(srv, "http://127.0.0.1:1")
 
@@ -80,6 +80,12 @@ func TestMCPServer_RegistersSixteenTools(t *testing.T) {
 		"list_mock_rules",
 		"get_mock_rule",
 		"delete_mock_rule",
+		"list_push_mock_rules",
+		"create_push_mock_rule",
+		"update_push_mock_rule",
+		"delete_push_mock_rule",
+		"send_push_mock_rule",
+		"get_longconn_packet_samples",
 	}
 	require.Len(t, tools, len(want))
 	for _, name := range want {

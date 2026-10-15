@@ -62,7 +62,7 @@ func main() {
 	srv := server.NewMCPServer(
 		"mocknetpack",
 		"0.13.0",
-		server.WithInstructions("MockNetPack 抓包/Mock 平台。可管理抓包会话（get_capture_status/start_capture/renew_capture_observer/release_capture_observer）、查设备与抓包流量、从真实流量构造 Mock 规则、建分享链接。完整闭环：start_capture → 配置规则 → get_device_traffic 查命中 → 周期 renew → release_capture_observer 恢复现场。认证失败（401）时请确认 Authorization 头已配置为有效的长期 API Key。"),
+		server.WithInstructions("MockNetPack 抓包/Mock 平台。可管理抓包会话（get_capture_status/start_capture/renew_capture_observer/release_capture_observer）、查设备与抓包流量、从真实流量构造 Mock 规则、建分享链接。完整闭环：start_capture → 配置规则 → get_device_traffic 查命中 → 周期 renew → release_capture_observer 恢复现场。长连接 push mock 闭环：get_longconn_packet_samples 拉真实骨架 → create_push_mock_rule 建模板 → send_push_mock_rule 模拟推送（入队≠已到达，SDK 约 3s 心跳注入）→ 稍后日志 mocked=true 确认。认证失败（401）时请确认 Authorization 头已配置为有效的长期 API Key。"),
 	)
 	registerTools(srv, base)
 
@@ -152,4 +152,12 @@ func registerTools(srv *server.MCPServer, base string) {
 	srv.AddTool(toolListMockRules(), mcpListMockRules(base))
 	srv.AddTool(toolGetMockRule(), mcpGetMockRule(base))
 	srv.AddTool(toolDeleteMockRule(), mcpDeleteMockRule(base))
+
+	// push mock（长连接模拟推送，L7）：模板 CRUD + 一次性下发 + 日志骨架参考。
+	srv.AddTool(toolListPushMockRules(), mcpListPushMockRules(base))
+	srv.AddTool(toolCreatePushMockRule(), mcpCreatePushMockRule(base))
+	srv.AddTool(toolUpdatePushMockRule(), mcpUpdatePushMockRule(base))
+	srv.AddTool(toolDeletePushMockRule(), mcpDeletePushMockRule(base))
+	srv.AddTool(toolSendPushMockRule(), mcpSendPushMockRule(base))
+	srv.AddTool(toolGetLongConnPacketSamples(), mcpGetLongConnPacketSamples(base))
 }

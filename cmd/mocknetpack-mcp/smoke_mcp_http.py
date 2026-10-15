@@ -34,6 +34,10 @@ SESSION_TOOLS = [
     "get_capture_status", "start_capture",
     "renew_capture_observer", "release_capture_observer",
 ]
+PUSH_TOOLS = [
+    "list_push_mock_rules", "create_push_mock_rule", "update_push_mock_rule",
+    "delete_push_mock_rule", "send_push_mock_rule", "get_longconn_packet_samples",
+]
 
 
 def post(payload, session=None):
@@ -290,10 +294,15 @@ def main():
     post({"jsonrpc": "2.0", "method": "notifications/initialized"}, sid)
     res, _ = post({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, sid)
     tools = [t["name"] for t in res["result"]["tools"]]
-    require(len(tools) == 16 and all(n in tools for n in SESSION_TOOLS), "expected 16 tools including session tools")
+    require(len(tools) == 22 and all(n in tools for n in SESSION_TOOLS + PUSH_TOOLS),
+            "expected 22 tools including session + push mock tools")
     print("tools/list:", len(tools), "tools")
     traffic_id = sys.argv[1] if len(sys.argv) > 1 else ""
     with nullcontext(None) if SKIP_SESSION else capture_session(sid) as capture:
+        # push mock 只读冒烟：模板列表可查（环境可能无模板，只断言调用成功）。
+        push_page = tool_call(sid, "list_push_mock_rules", {"app": APP, "did": DID})
+        require(isinstance(push_page, dict) and "rules" in push_page, "list_push_mock_rules malformed response")
+        print("push templates listed:", len(push_page.get("rules") or []))
         rule_section(sid, capture, traffic_id)
     print("OK smoke passed")
 

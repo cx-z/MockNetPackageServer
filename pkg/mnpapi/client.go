@@ -443,6 +443,165 @@ func (c *Client) DeleteMockRule(ctx context.Context, app, did, ruleID string) er
 	return c.do(ctx, http.MethodDelete, "/api/v1/devices/"+url.PathEscape(app)+"/"+url.PathEscape(did)+"/mock-rules/"+url.PathEscape(ruleID), nil, nil, nil)
 }
 
+// ============================================================================
+// push mock 规则（能力线 L7 模拟推送形态；MCP push_tools 的薄封装基座）
+// ============================================================================
+
+// PushMockRuleList mirrors the Web full-list contract PushMockRuleList:
+// version (SDK 增量比对用)、规则全量视图（含 source 快照/命中统计）、异常 conflicts。
+// SDK 增量拉取分支（?sinceVersion）是 SDK 内部通道，MCP 永不使用。
+type PushMockRuleList struct {
+	Version   int                            `json:"version"`
+	Rules     []*capture.PushMockRuleView    `json:"rules"`
+	Conflicts []capture.PushMockRuleConflict `json:"conflicts,omitempty"`
+}
+
+// ListPushMockRules returns every push template of a device (Web full list, no
+// sinceVersion): rules carry the full replacePayload plus source snapshots and
+// hit counts. The SDK incremental-pull branch is intentionally not surfaced —
+// MCP callers always read the Web full list.
+func (c *Client) ListPushMockRules(ctx context.Context, app, did string) (*PushMockRuleList, error) {
+	var out PushMockRuleList
+	if err := c.do(ctx, http.MethodGet, "/api/v1/devices/"+url.PathEscape(app)+"/"+url.PathEscape(did)+"/push-mock-rules", nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetPushMockRule returns a single push template by ID. The contract exposes
+// templates only through the device list, so this scans that list (rule counts
+// are small) — the same pattern as GetMockRule.
+func (c *Client) GetPushMockRule(ctx context.Context, app, did, ruleID string) (*capture.PushMockRuleView, error) {
+	l, err := c.ListPushMockRules(ctx, app, did)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range l.Rules {
+		if r != nil && r.ID == ruleID {
+			return r, nil
+		}
+	}
+	return nil, &APIError{Status: http.StatusNotFound, Code: "not_found",
+		Message: "未找到（404）：推送模板 " + ruleID + " 不存在（或不属于该设备）。请先 list_push_mock_rules 确认模板 ID。"}
+}
+
+// CreatePushMockRule creates a push template (channelId required server-side).
+// The caller decides Enabled; MCP create_push_mock_rule always sends true so a
+// freshly created template can be sent immediately ( 一键建模板语义).
+func (c *Client) CreatePushMockRule(ctx context.Context, app, did string, in *capture.PushMockRuleInput) (*capture.PushMockRuleView, error) {
+	var out capture.PushMockRuleView
+	if err := c.do(ctx, http.MethodPost, "/api/v1/devices/"+url.PathEscape(app)+"/"+url.PathEscape(did)+"/push-mock-rules", nil, in, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdatePushMockRule edits a push template (replacePayload/note/enabled; the
+// channelId+bizType domain is immutable). The server PUT is full-replace:
+// callers must re-send match/note, or the content change fails with
+// ErrNoteRequired — MCP update_push_mock_rule does the read-modify-write.
+func (c *Client) UpdatePushMockRule(ctx context.Context, app, did, ruleID string, in *capture.UpdatePushMockRuleInput) (*capture.PushMockRuleView, error) {
+	var out capture.PushMockRuleView
+	if err := c.do(ctx, http.MethodPut, "/api/v1/devices/"+url.PathEscape(app)+"/"+url.PathEscape(did)+"/push-mock-rules/"+url.PathEscape(ruleID), nil, in, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeletePushMockRule removes a push template (server returns 204). Already
+// enqueued pending commands survive deletion and are still consumed by the SDK.
+func (c *Client) DeletePushMockRule(ctx context.Context, app, did, ruleID string) error {
+	return c.do(ctx, http.MethodDelete, "/api/v1/devices/"+url.PathEscape(app)+"/"+url.PathEscape(did)+"/push-mock-rules/"+url.PathEscape(ruleID), nil, nil, nil)
+}
+
+// SendPushMockRule enqueues one pending push command ( 模拟推送): the SDK pulls
+// it on its next heartbeat (≈3s) and injects a fake packet through the real
+// delegate path. The returned view is the command snapshot (payload included on
+// the wire) — enqueue success, NOT delivery proof.
+func (c *Client) SendPushMockRule(ctx context.Context, app, did, ruleID string) (*capture.PushRuleCommandView, error) {
+	var out capture.PushRuleCommandView
+	if err := c.do(ctx, http.MethodPost, "/api/v1/devices/"+url.PathEscape(app)+"/"+url.PathEscape(did)+"/push-mock-rules/"+url.PathEscape(ruleID)+"/send", nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// LongConnResult is the long-connection log slice of the device's most recent
+// session, mirroring TrafficResult (traffic-list pattern: capturing sessions
+// first, ended sessions inside their retention window still readable).
+type LongConnResult struct {
+	// SessionID is the session the entries were read from.
+	SessionID string
+	// Entries is the full LongConnectionRecord projection, seq ascending.
+	Entries []capture.LongConnectionRecord
+	// Total is the filtered count before paging.
+	Total int
+}
+
+// GetDeviceLongConn implements the two-step orchestration
+// GET /sessions?app&did → GET /sessions/{id}/longconn?<query>, reusing the
+// exact session resolution of GetDeviceTraffic (capturing first). A device
+// with no session yields an empty result rather than an error.
+func (c *Client) GetDeviceLongConn(ctx context.Context, app, did string, q capture.LongConnectionQuery) (*LongConnResult, error) {
+	query := url.Values{}
+	query.Set("app", app)
+	query.Set("did", did)
+	var sessions struct {
+		Sessions []capture.CaptureSession `json:"sessions"`
+		Total    int                      `json:"total"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions", query, nil, &sessions); err != nil {
+		return nil, err
+	}
+	if len(sessions.Sessions) == 0 {
+		return &LongConnResult{}, nil
+	}
+	sid := sessions.Sessions[0].ID
+	for _, s := range sessions.Sessions {
+		if s.Status == capture.SessionStatusCapturing {
+			sid = s.ID
+			break
+		}
+	}
+
+	p := url.Values{}
+	if q.ChannelID != "" {
+		p.Set("channelId", q.ChannelID)
+	}
+	if q.EventType != "" {
+		p.Set("eventType", string(q.EventType))
+	}
+	if q.BizType != "" {
+		p.Set("bizType", q.BizType)
+	}
+	if q.Keyword != "" {
+		p.Set("keyword", q.Keyword)
+	}
+	if q.From != nil {
+		p.Set("from", q.From.Format(time.RFC3339))
+	}
+	if q.To != nil {
+		p.Set("to", q.To.Format(time.RFC3339))
+	}
+	if q.Since > 0 {
+		p.Set("since", strconv.FormatInt(q.Since, 10))
+	}
+	if q.Limit > 0 {
+		p.Set("limit", strconv.Itoa(q.Limit))
+	}
+	if q.Offset > 0 {
+		p.Set("offset", strconv.Itoa(q.Offset))
+	}
+	var out struct {
+		Entries []capture.LongConnectionRecord `json:"entries"`
+		Total   int                            `json:"total"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions/"+sid+"/longconn", p, nil, &out); err != nil {
+		return nil, err
+	}
+	return &LongConnResult{SessionID: sid, Entries: out.Entries, Total: out.Total}, nil
+}
+
 // CreateShare snapshots a traffic entry into an independent share link.
 func (c *Client) CreateShare(ctx context.Context, trafficID string) (*ShareCreated, error) {
 	var out ShareCreated
