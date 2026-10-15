@@ -151,6 +151,10 @@ type LongConnectionRecordInput struct {
 	// MockRuleID is the push mock rule ID that replaced this packet (SDK 上报；
 	// 服务端据此 RecordPushMockHit 递增 hitCount/lastHitAt，Web 可溯源)。
 	MockRuleID string `json:"mockRuleId,omitempty"`
+	// Adapter identifies which adapter collected this record (L6.2 采集方式
+	// 如实标注：适配器标识如 "xcpush" / 业务 API 注入 "unknown-inject"；
+	// SDK 填充、服务端透传；老 SDK 不携带 → 空)。
+	Adapter string `json:"adapter,omitempty"`
 	// Receiver is the business receiver identifier (business-layer dispatch
 	// detail; empty in zero-intrusion mode, Web labels the capture method
 	// truthfully).

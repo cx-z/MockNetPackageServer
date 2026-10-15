@@ -25,6 +25,33 @@ func TestLongConnectionRecordInput_Normalize(t *testing.T) {
 	}
 }
 
+func TestLongConnectionRecordInput_AdapterRoundTrip(t *testing.T) {
+	// L6.2：adapter 标识随记录 JSON 往返（SDK 填充、服务端透传、Web 读取）。
+	raw := `{"channelId":"xcpush_tcp","eventType":"packet","ts":"2026-10-15T10:00:00Z","payloadText":"x","adapter":"xcpush"}`
+	var r LongConnectionRecordInput
+	if err := json.Unmarshal([]byte(raw), &r); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if r.Adapter != "xcpush" {
+		t.Errorf("Adapter = %q, want %q", r.Adapter, "xcpush")
+	}
+	out, err := json.Marshal(r)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(out), `"adapter":"xcpush"`) {
+		t.Errorf("Marshal missing adapter field: %s", out)
+	}
+	// 未携带（老 SDK）→ 空，零副作用。
+	var legacy LongConnectionRecordInput
+	if err := json.Unmarshal([]byte(`{"channelId":"x","eventType":"connect","ts":"2026-10-15T10:00:00Z"}`), &legacy); err != nil {
+		t.Fatalf("Unmarshal legacy: %v", err)
+	}
+	if legacy.Adapter != "" {
+		t.Errorf("legacy Adapter = %q, want empty", legacy.Adapter)
+	}
+}
+
 func TestLongConnectionRecordInput_Validate(t *testing.T) {
 	ts := time.Date(2026, 10, 13, 10, 0, 0, 0, time.UTC)
 	base := func() *LongConnectionRecordInput {

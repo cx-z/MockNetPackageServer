@@ -2236,6 +2236,11 @@ components:
           description: |
             替换该包的 push mock 规则 ID（SDK 上报；服务端据此递增规则
             hitCount/lastHitAt 命中统计，Web 可溯源）。
+        adapter:
+          type: string
+          description: |
+            采集方式标识（L6.2 采集方式如实标注）：哪条适配器采的（如 xcpush）；
+            业务侧 API 注入未标来源 → unknown-inject；老 SDK 不携带 → 空（Web 缺省展示）。
         receiver:
           type: string
           description: 业务接收方标识（业务层分发细节；零侵入模式下留空，Web 如实标注）
@@ -2383,6 +2388,11 @@ components:
           description: |
             替换该包的 push mock 规则 ID（SDK 上报；服务端据此递增规则
             hitCount/lastHitAt 命中统计，Web 可溯源）。
+        adapter:
+          type: string
+          description: |
+            采集方式标识（L6.2 采集方式如实标注）：哪条适配器采的（如 xcpush）；
+            业务侧 API 注入未标来源 → unknown-inject；老 SDK 不携带 → 空（Web 缺省展示）。
         receiver:
           type: string
           description: 业务接收方标识（业务层分发细节；零侵入模式下留空，Web 如实标注）

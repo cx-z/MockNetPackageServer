@@ -231,11 +231,22 @@ function renderLongConnDetail(e, target) {
     payloadBlock = '<div class="d-block"><div class="d-title">payload（超限预览，≤1KB）</div><pre class="raw">' + esc(e.payloadPreview) + "</pre></div>";
   }
 
+  // L6.2 采集方式如实标注：哪条适配器采的（xcpush）/ API 注入（unknown-inject）/
+  // 老 SDK 无字段 → 缺省展示 "—"（零副作用）。
+  const adapterLabel = e.adapter === "xcpush"
+    ? '<span class="lc-type lc-adapter">xcpush 适配器</span>'
+    : e.adapter === "unknown-inject"
+      ? '<span class="lc-type lc-inject">注入 API</span>'
+      : e.adapter
+        ? '<span class="lc-type">' + esc(e.adapter) + "</span>"
+        : "—";
+
   box.innerHTML =
     '<div class="detail-panel">' + toolbar +
       '<div class="d-kv"><span class="d-k">eventType</span><span class="d-v">' + esc(e.eventType || "?") + "</span></div>" +
       '<div class="d-kv"><span class="d-k">来源</span><span class="d-v">' +
         (e.mocked ? '<span class="lc-type lc-fake">fake 模拟推送</span>' : '<span class="lc-type lc-real">real 真实推送</span>') + "</span></div>" +
+      '<div class="d-kv"><span class="d-k">采集方式</span><span class="d-v">' + adapterLabel + "</span></div>" +
       '<div class="d-kv"><span class="d-k">channelId</span><span class="d-v">' + esc(e.channelId || "?") + "</span></div>" +
       row("seq", e.seq) +
       row("ts", e.ts) +
@@ -259,6 +270,7 @@ function renderLongConnDetail(e, target) {
     let text =
       "=== MockNetPack 长连接记录 ===\n" +
       kv("eventType", e.eventType) + kv("channelId", e.channelId) +
+      kv("采集方式", e.adapter) +
       kv("seq", e.seq) + kv("ts", e.ts) + kv("msgId", e.msgId) +
       kv("bizType", e.bizType) + kv("zipType", e.zipType) + kv("status", e.status) +
       kv("receiver", e.receiver) + kv("ackSent", e.ackSent ? "true" : "");
