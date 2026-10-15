@@ -45,6 +45,12 @@ var (
 	// ErrPushRuleDisabled means a "模拟推送" was requested for a disabled push
 	// mock rule (能力线 L7 模拟推送形态; maps to HTTP 409).
 	ErrPushRuleDisabled = errors.New("push mock rule is disabled")
+	// ErrPushRuleEmptyPayload means a "模拟推送" was requested for a push mock
+	// rule whose template payload is empty (replacePayload 与 replacePayloadBase64
+	// 均缺；能力线 L7 修复 2026-10-15：PUT 整体覆盖曾把模板 payload 清空，空指令
+	// 在 SDK 侧 makePacket 失败且永不 ack → 永久「待下发」；此处提前 409 拦截；
+	// maps to HTTP 409 push_rule_empty_payload).
+	ErrPushRuleEmptyPayload = errors.New("push mock rule has no payload to send; edit the template first")
 	// ErrPairingTokenInvalid means the presented QR pairing token does not
 	// exist, has expired, or is bound to a different app (; maps to HTTP 403
 	// pairing_token_invalid — the SDK surfaces "二维码已过期，请刷新").

@@ -110,6 +110,11 @@ func (m *CaptureManager) EnqueuePushRuleCommand(ctx context.Context, app, did, r
 	if !rule.Enabled {
 		return nil, ErrPushRuleDisabled
 	}
+	// 空 payload 模板拒绝入队：空指令在 SDK 侧 makePacket 失败且永不 ack，
+	// 会卡成永久「待下发」（修复 2026-10-15：PUT 整体覆盖曾把模板 payload 清空）。
+	if rule.ReplacePayload == "" && rule.ReplacePayloadBase64 == "" {
+		return nil, ErrPushRuleEmptyPayload
+	}
 	cmd := &capture.PushRuleCommand{
 		ID:            id.ULID(),
 		RuleID:        rule.ID,

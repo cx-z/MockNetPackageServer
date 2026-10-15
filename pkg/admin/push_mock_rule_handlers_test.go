@@ -259,3 +259,30 @@ func TestPushMockRuleAPI_SendDisabledAndUnknown(t *testing.T) {
 	resp = doJSON(t, http.MethodPost, base+"/no-such-rule/send", nil, nil)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
+
+func TestPushMockRuleAPI_SendEmptyPayloadRejected(t *testing.T) {
+	// 空 payload 模板（replacePayload 与 replacePayloadBase64 均缺）send → 409
+	// push_rule_empty_payload：空指令在 SDK 侧 makePacket 失败且永不 ack，会卡成
+	// 永久「待下发」（修复 2026-10-15：PUT 整体覆盖曾把模板 payload 清空）。
+	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/push-mock-rules"
+
+	body := pushRuleBody("xcpush_tcp", "1", true)
+	body["replacePayload"] = ""
+	body["replacePayloadBase64"] = ""
+	var created capture.PushMockRuleView
+	resp := doJSON(t, http.MethodPost, base, body, &created)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	resp = doJSON(t, http.MethodPost, base+"/"+created.ID+"/send", nil, nil)
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+
+	// 回填 payload 后 send → 200（模板即 payload，match 关键字不参与模拟推送形态）。
+	update := pushUpdateBody("tip", `{"type":"chat","data":{"tip":"mocked"}}`, "回填 payload", nil)
+	var view capture.PushMockRuleView
+	resp = doJSON(t, http.MethodPut, base+"/"+created.ID, update, &view)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp = doJSON(t, http.MethodPost, base+"/"+created.ID+"/send", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}

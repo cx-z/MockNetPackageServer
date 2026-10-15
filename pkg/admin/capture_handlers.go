@@ -235,6 +235,8 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_field", "push mock rule requires channelId")
 	case errors.Is(err, store.ErrPushRuleDisabled):
 		writeError(w, http.StatusConflict, "push_rule_disabled", "push mock rule is disabled")
+	case errors.Is(err, store.ErrPushRuleEmptyPayload):
+		writeError(w, http.StatusConflict, "push_rule_empty_payload", "push mock rule has no payload; edit the template first")
 	case errors.Is(err, store.ErrPairingTokenInvalid):
 		writeError(w, http.StatusForbidden, "pairing_token_invalid", "Pairing token is invalid or expired")
 	case errors.Is(err, store.ErrAlreadyExists):
