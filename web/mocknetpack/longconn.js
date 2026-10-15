@@ -428,6 +428,94 @@ function clearLongConnLog() {
 }
 $("longconnClearBtn").onclick = clearLongConnLog;
 $("longconnHistoryBtn").onclick = () => openHistory("longconn");
+$("pushRuleCreateBtn").onclick = openBlankPushMockRuleForm;
+
+/** 凭空新建推送模板（无日志来源）：右栏 CodeMirror 编辑表单，保存走 POST。
+ *  场景：某些 push 线上难触发，测试/AI 直接根据客户端协议手写
+ *  channelId+bizType+payload；后端仅校验 channelId 必填（见服务端 validatePushMockRuleInput）。 */
+function openBlankPushMockRuleForm() {
+  detail._activeLongConn = null;
+  document.querySelectorAll(".lc-row").forEach((el) => el.classList.remove("active"));
+  $("longconnDetail").classList.add("hidden");
+  $("ruleDetail").classList.remove("hidden");
+  const box = $("ruleDetail");
+  pushBodyEditor = null;
+
+  box.innerHTML =
+    '<div class="detail-panel editing">' +
+      '<div class="d-actions">' +
+        '<button class="small ghost" id="lcBlankCancelBtn">取消</button>' +
+        '<button class="small" id="lcBlankSaveBtn">创建模板</button>' +
+      "</div>" +
+      '<div class="d-block"><div class="d-title">channelId（必填；本设备当前通道为 xcpush_tcp）</div>' +
+        '<input class="lc-mock-input" id="lcBlankChannelId" value="xcpush_tcp" /></div>' +
+      '<div class="d-block"><div class="d-title">bizType（可选，留空=任意；参照客户端 proto 枚举）</div>' +
+        '<input class="lc-mock-input" id="lcBlankBizType" placeholder="如 1 / 2，可留空" /></div>' +
+      '<div class="d-block"><div class="d-title">payload（完整 push 体 JSON；[mock] 标记自动注入 say_content.content 文本前）</div>' +
+        '<div class="edit-body-wrap"><textarea id="lcBlankPayload">{\n\n}</textarea></div></div>' +
+    "</div>";
+
+  pushBodyEditor = CodeMirror.fromTextArea($("lcBlankPayload"), {
+    mode: { name: "javascript", json: true },
+    lineNumbers: true,
+    lineWrapping: true,
+    indentUnit: 2,
+    tabSize: 2,
+    foldGutter: true,
+    gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"],
+    matchBrackets: true,
+    autoCloseBrackets: true,
+    extraKeys: { "Ctrl-Q": (cm) => cm.foldCode(cm.getCursor()) },
+  });
+  pushBodyEditor.refresh();
+
+  const cancel = () => {
+    detail._activePushRule = null;
+    $("ruleDetail").classList.add("hidden");
+    $("longconnDetail").classList.remove("hidden");
+  };
+  box.querySelector("#lcBlankCancelBtn").onclick = cancel;
+
+  box.querySelector("#lcBlankSaveBtn").onclick = async () => {
+    pushBodyEditor.save();
+    const channelId = $("lcBlankChannelId").value.trim();
+    const bizType = $("lcBlankBizType").value.trim();
+    const payload = $("lcBlankPayload").value;
+    if (!channelId) { alert("channelId 必填"); return; }
+    const btn = box.querySelector("#lcBlankSaveBtn");
+    btn.disabled = true;
+    btn.textContent = "创建中…";
+    try {
+      const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
+        encodeURIComponent(detail.did) + "/push-mock-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channelId,
+          bizType,
+          enabled: true,
+          match: {},
+          replacePayload: payload,
+          source: { channelId, bizType, msgId: "" },
+          note: "凭空创建（无日志来源）",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        btn.disabled = false;
+        btn.textContent = "创建模板";
+        alert("创建失败：" + (data.message || "HTTP " + res.status));
+        return;
+      }
+      refreshPushMockRules();
+      renderPushRuleDetail(data.rule || { id: data.id, channelId, bizType, replacePayload: payload }, false);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "创建模板";
+      alert("创建失败：" + err.message);
+    }
+  };
+}
 
 // ============================================================================
 // 能力线 L7（L7.3b）：push mock 规则列表与启停（决策 D2：长连接页签内嵌区块）
@@ -630,7 +718,11 @@ function renderPushRuleDetail(rule, editing) {
         return;
       }
       alert("模拟推送已下发（指令 " + data.id + "）。SDK 下轮心跳（约 3s）拉取注入，长连接日志会出现 fake 标记。");
-      refreshPushMockRules();
+      btn.disabled = false;
+      btn.textContent = "模拟推送";
+      // 延迟 4s 再刷列表：此刻 SDK 尚未心跳拉走指令，pending 计数仍为 1，
+      // 立即刷新会误显「待下发」；等 SDK 消费后 pending 归零，徽标自然消失。
+      setTimeout(refreshPushMockRules, 4000);
     } catch (err) {
       btn.disabled = false;
       btn.textContent = "模拟推送";

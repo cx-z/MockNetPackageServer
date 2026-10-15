@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MockNetPack · 设备</title>
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=8">
 <!--  编辑表单 JSON 折叠编辑器（vendored CodeMirror 5.65.18，同源加载，见 lib/codemirror/README.md） -->
 <link rel="stylesheet" href="lib/codemirror/lib/codemirror.min.css">
 <link rel="stylesheet" href="lib/codemirror/addon/fold/foldgutter.min.css">
@@ -164,6 +164,7 @@
           <!-- 能力线 L7（L7.3b）：推送模板区块——置于日志上方（同请求流布局：操作区在上、日志流在下） -->
           <div class="section-title lc-push-rule-title">推送模板（模拟 push）
             <span class="sub" id="pushRuleInfo"></span>
+            <button id="pushRuleCreateBtn" class="small" title="不基于任何日志，直接手写 channelId/bizType/payload 创建模板">＋ 新建空白模板</button>
             <button id="pushRuleRefreshBtn" class="small ghost" title="重新拉取该设备的推送模板与指令状态">刷新</button>
           </div>
           <div id="pushRuleList"><div class="empty">暂无推送模板。点击下方一条长连接日志的「一键建推送模板」创建。</div></div>
@@ -219,19 +220,19 @@
 <script src="lib/codemirror/addon/edit/matchbrackets.min.js"></script>
 <script src="lib/codemirror/addon/edit/closebrackets.min.js"></script>
 <script src="lib/qrcode/qrcode.min.js"></script>
-<script src="json-lossless.js?v=5"></script>
-<script src="utils.js?v=5"></script>
-<script src="api.js?v=5"></script>
-<script src="json-tree.js?v=5"></script>
-<script src="devices.js?v=5"></script>
-<script src="scan-connect.js?v=5"></script>
-<script src="traffic.js?v=5"></script>
-<script src="longconn.js?v=5"></script>
-<script src="rules.js?v=5"></script>
-<script src="viewer.js?v=5"></script>
-<script src="share.js?v=5"></script>
-<script src="history.js?v=5"></script>
-<script src="apikey.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="json-lossless.js?v=8"></script>
+<script src="utils.js?v=8"></script>
+<script src="api.js?v=8"></script>
+<script src="json-tree.js?v=8"></script>
+<script src="devices.js?v=8"></script>
+<script src="scan-connect.js?v=8"></script>
+<script src="traffic.js?v=8"></script>
+<script src="longconn.js?v=8"></script>
+<script src="rules.js?v=8"></script>
+<script src="viewer.js?v=8"></script>
+<script src="share.js?v=8"></script>
+<script src="history.js?v=8"></script>
+<script src="apikey.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
