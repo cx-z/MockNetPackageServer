@@ -14,7 +14,7 @@ import (
 // Mock rules: CRUD, Effective/conflict evaluation, version, retention janitor,
 // disable-on-session-end (pure move from capture_registry.go).
 // ============================================================================
-// Mock rules 
+// Mock rules
 // ============================================================================
 
 // interfaceKey identifies a mockable endpoint by Method + URL path (Query/Body
@@ -74,7 +74,8 @@ func (m *CaptureManager) evaluateRules(ctx context.Context, app, did string) ([]
 // Owner empty, which  treats as a legacy rule (admin-manageable only).
 // Every developer may create rules; ownership is established by this stamp.
 //
-//  Step1 : a hand-authored rule (Source == nil, created from the Web
+//	Step1 : a hand-authored rule (Source == nil, created from the Web
+//
 // blank form rather than captured traffic) must carry a non-blank note — with
 // no source snapshot the note is the only semantic anchor ("what does this rule
 // test?"). Capture-originated creates (Source != nil) are exempt. The guard
@@ -131,18 +132,24 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 	return &capture.MockRuleView{MockRule: created, Effective: in.Enabled}, version, nil
 }
 
-// canManageRule reports whether caller may mutate rule r (/). nil
-// caller (--no-auth smoke mode) always passes, mirroring the requireAuth
-// bypass; admins pass; otherwise only the rule's owner passes. A rule with an
-// empty owner is a legacy rule (pre-) — admin-manageable only .
-func canManageRule(caller *RuleCaller, r *capture.MockRule) bool {
+// canManageOwner reports whether caller may manage a rule owned by owner (/).
+// nil caller (--no-auth smoke mode) always passes, mirroring the requireAuth
+// bypass; admins pass; otherwise only the owner passes. An empty owner is a
+// legacy rule (pre-) — admin-manageable only . Shared by HTTP mock rules
+// (canManageRule) and push mock rules (L7, push_rule_registry.go).
+func canManageOwner(caller *RuleCaller, owner string) bool {
 	if caller == nil {
 		return true
 	}
 	if caller.IsAdmin {
 		return true
 	}
-	return r.Owner != "" && r.Owner == caller.Username
+	return owner != "" && owner == caller.Username
+}
+
+// canManageRule reports whether caller may mutate rule r (/).
+func canManageRule(caller *RuleCaller, r *capture.MockRule) bool {
+	return canManageOwner(caller, r.Owner)
 }
 
 // UpdateMockRule edits a rule's canned response, note, and/or enabled switch
@@ -296,12 +303,13 @@ func (m *CaptureManager) RuleVersion(ctx context.Context, app, did string) (int,
 }
 
 // ============================================================================
-// Rule retention janitor 
+// Rule retention janitor
 // ============================================================================
 
 // ruleUsageTime picks the sliding-window baseline for a rule: LastUsedAt,
 // falling back to UpdatedAt (and then CreatedAt) for legacy rows that predate
-//  and have no LastUsedAt persisted yet.
+//
+//	and have no LastUsedAt persisted yet.
 func ruleUsageTime(r *capture.MockRule) time.Time {
 	if !r.LastUsedAt.IsZero() {
 		return r.LastUsedAt

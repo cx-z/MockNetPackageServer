@@ -39,6 +39,12 @@ var (
 	// created from a capture ("Mock 此请求") have no note and must be enableable
 	// without forcing an edit .
 	ErrNoteRequired = errors.New("mock rule note is required when editing the canned response")
+	// ErrPushRuleInvalidChannel means a push mock rule was created without the
+	// required ChannelId match key (能力线 L7; maps to HTTP 400).
+	ErrPushRuleInvalidChannel = errors.New("push mock rule requires channelId")
+	// ErrPushRuleDisabled means a "模拟推送" was requested for a disabled push
+	// mock rule (能力线 L7 模拟推送形态; maps to HTTP 409).
+	ErrPushRuleDisabled = errors.New("push mock rule is disabled")
 	// ErrPairingTokenInvalid means the presented QR pairing token does not
 	// exist, has expired, or is bound to a different app (; maps to HTTP 403
 	// pairing_token_invalid — the SDK surfaces "二维码已过期，请刷新").
@@ -118,6 +124,13 @@ type CaptureManager struct {
 	devices  DeviceStore
 	sessions CaptureSessionStore
 	rules    MockRuleStore
+	// pushRules persists push mock rules (能力线 L7, PushMockRuleStore)。
+	// nil = push mock 未启用（注入前/旧测试），push 规则方法返回空集。
+	// 注入沿用 SetLongConnStore 模式：SetPushMockRules(dataStore.PushMockRules())。
+	pushRules PushMockRuleStore
+	// pushRuleCommands persists pending push mock commands (能力线 L7 模拟推送
+	// 形态, PushRuleCommandStore)。nil = 未启用，指令方法返回空集。
+	pushRuleCommands PushRuleCommandStore
 	// pairingTokens persists QR pairing tokens : short-lived credentials
 	// that let a scanned SDK register a device under the issuing user.
 	pairingTokens PairingTokenStore

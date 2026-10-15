@@ -182,6 +182,212 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /devices/{app}/{did}/push-mock-rules:
+    get:
+      tags: [push-mock]
+      summary: push mock 规则列表（Web 全量 / SDK 增量）
+      description: |
+        Web 全量（无 sinceVersion，requireAuth）：返回设备全部 push mock 规则
+        （含 disabled、source 快照、命中统计）与异常 conflicts。
+        SDK 增量（?sinceVersion=N，open 无鉴权）：版本未变化时 rules 为空；
+        变化时仅返回 effective 规则（剥离 Web-only 字段）。
+      operationId: listPushMockRules
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+        - name: sinceVersion
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: SDK 增量拉取版本号（Web 全量列表不传）
+      responses:
+        '200':
+          description: 规则列表
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PushMockRuleList'
+                  - $ref: '#/components/schemas/SdkPushRuleList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [push-mock]
+      summary: 创建 push mock 规则（requireAuth）
+      operationId: createPushMockRule
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushMockRuleInput'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushMockRule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{app}/{did}/push-mock-rules/{ruleId}:
+    put:
+      tags: [push-mock]
+      summary: 编辑 push mock 规则（requireAuth；匹配键不可改）
+      operationId: updatePushMockRule
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+        - name: ruleId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePushMockRuleInput'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushMockRule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [push-mock]
+      summary: 删除 push mock 规则（requireAuth）
+      operationId: deletePushMockRule
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+        - name: ruleId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: 删除成功
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{app}/{did}/push-mock-rules/{ruleId}/send:
+    post:
+      tags: [push-mock]
+      summary: 模拟推送（requireAuth）
+      description: |
+        Web 点「模拟推送」：规则必须存在且 enabled（停用 409 push_rule_disabled）。
+        服务端为设备入队一条 pending 指令（快照规则 payload，同一规则重复触发
+        每次追加）→ SDK 下次心跳携带 → 构造注入 → ack 消费。
+      operationId: sendPushMockRule
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+        - name: ruleId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 指令已入队
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushRuleCommand'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 规则已停用（push_rule_disabled）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{app}/{did}/push-rule-commands:
+    get:
+      tags: [push-mock]
+      summary: 待下发指令状态（Web，requireAuth）
+      description: |
+        Web 展示「模拟推送」指令状态（待下发）：返回 pending 指令的 id/ruleId/createdAt；
+        不含 payload（敏感内容不下发到浏览器）。SDK 消费后（ack）不再出现。
+      operationId: listPushRuleCommands
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+      responses:
+        '200':
+          description: 待下发指令列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushRuleCommandList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /devices/{app}/{did}/push-rule-commands/ack:
+    post:
+      tags: [push-mock]
+      summary: 指令消费回报（SDK open 无鉴权）
+      description: |
+        SDK 构造注入完成后回报指令 ID；服务端标记消费，后续心跳不再携带。
+        幂等：未知 id 忽略。
+      operationId: ackPushRuleCommands
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushRuleCommandAckRequest'
+      responses:
+        '204':
+          description: 消费成功
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   # ==========================================================================
   # 2. 会话生命周期（Web 侧）
   # ==========================================================================
@@ -1638,6 +1844,20 @@ components:
           type: integer
           default: 0
           description: 当前规则版本号（ 启用：SDK 比对后决定是否拉取增量）
+        pushRulesVersion:
+          type: integer
+          default: 0
+          description: |
+            当前 push mock 规则版本号（能力线 L7：SDK 心跳后按此增量拉取
+            push mock 规则快照；与 rulesVersion 同模式、独立版本号）。
+        pushCommands:
+          type: array
+          items:
+            $ref: '#/components/schemas/PushRuleCommand'
+          description: |
+            pending「模拟推送」指令（能力线 L7 模拟推送形态）：SDK 心跳即拉取
+            未消费指令，构造注入完成后经 push-rule-commands/ack 回报消费；
+            无指令时省略。
 
     # ---------------------------------------------------------------- 会话
     SessionStatus:
@@ -2005,6 +2225,17 @@ components:
           type: boolean
           default: false
           description: 是否已发送 ACK
+        mocked:
+          type: boolean
+          default: false
+          description: |
+            是否被 push mock 规则替换（能力线 L7：SDK 旁路采集时标记命中包，
+            Web 显示 "Mock 命中"，对齐 HTTP mocked 标识）。
+        mockRuleId:
+          type: string
+          description: |
+            替换该包的 push mock 规则 ID（SDK 上报；服务端据此递增规则
+            hitCount/lastHitAt 命中统计，Web 可溯源）。
         receiver:
           type: string
           description: 业务接收方标识（业务层分发细节；零侵入模式下留空，Web 如实标注）
@@ -2141,6 +2372,17 @@ components:
           type: boolean
           default: false
           description: 是否已发送 ACK
+        mocked:
+          type: boolean
+          default: false
+          description: |
+            是否被 push mock 规则替换（能力线 L7：SDK 旁路采集时标记命中包，
+            Web 显示 "Mock 命中"，对齐 HTTP mocked 标识）。
+        mockRuleId:
+          type: string
+          description: |
+            替换该包的 push mock 规则 ID（SDK 上报；服务端据此递增规则
+            hitCount/lastHitAt 命中统计，Web 可溯源）。
         receiver:
           type: string
           description: 业务接收方标识（业务层分发细节；零侵入模式下留空，Web 如实标注）
@@ -2413,6 +2655,298 @@ components:
               message:
                 type: string
                 example: "不允许同一个接口同时开启多个 Mock 规则"
+
+    # ------------------------------------------------------- push mock 规则（L7）
+    PushMockMatch:
+      type: object
+      description: |
+        push mock 规则的 payload 匹配条件（能力线 L7，决策 D1 定稿）：
+        每规则最多 1 条 JSONPath + 1 个子串条件。全部为空 = 仅按匹配键
+        （channelId+bizType）匹配。实时拦截由 SDK 本地执行（Swift 轻量子集）。
+      properties:
+        jsonPath:
+          type: string
+          description: payload 为 JSON 时的路径表达式（如 $.data.tip）；空 = 不使用 JSONPath
+        jsonPathOp:
+          type: string
+          enum: [equals, contains]
+          description: JSONPath 提取值与期望值的比较操作符；缺省按 contains 处理
+        jsonPathValue:
+          type: string
+          description: JSONPath 提取值的期望值
+        keyword:
+          type: string
+          description: 子串退化条件——payload 非 JSON（或无 JSONPath）时，解压后 payload 原始字节包含该关键字即匹配
+    PushMockSource:
+      type: object
+      description: |
+        规则所依据的原 push 日志快照（Web "一键建 Mock 规则"时从一条
+        LongConnectionRecord 固化）。临时长连接日志随会话结束清空，此快照
+        随规则持久化保留，供后续查看原始值（Decoded Payload）与 Mock 值对照；
+        只读展示，不参与匹配。手动创建规则为 null。
+      required: [channelId, capturedAt]
+      properties:
+        channelId:
+          type: string
+        bizType:
+          type: string
+        msgId:
+          type: string
+        payloadText:
+          type: string
+          description: 原 push 的 Decoded Payload（可读 UTF-8 文本）
+        payloadBase64:
+          type: string
+          description: 原 push 的原始 payload（base64）
+        capturedAt:
+          type: string
+          format: date-time
+    PushMockRule:
+      type: object
+      description: |
+        持久化的、按设备隔离的 push mock 规则（能力线 L7）。匹配键 = channelId
+        （必选）+ bizType（可选，空 = 不限定）；payload 匹配条件与替换 payload
+        可编辑。SDK 在业务分发前于代理层拦截：命中则替换 Packet.bizData（必要时
+        新 msgId 规避判重），未命中原样放行。owner/updatedBy/hitCount/lastHitAt/
+        source/note 为纯服务端/Web-only 字段，SDK 增量拉取绝不携带。
+      required: [id, app, did, channelId, enabled, effective, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        app:
+          type: string
+        did:
+          type: string
+        channelId:
+          type: string
+          description: 通道标识（必选，参与匹配）
+        bizType:
+          type: string
+          description: 业务类型（可选，空 = 不限定 bizType；参与匹配）
+        match:
+          $ref: '#/components/schemas/PushMockMatch'
+        replacePayload:
+          type: string
+          description: 替换 payload 的 UTF-8 文本；replacePayloadBase64 存在时仅作展示（对齐 MockResponse.body/bodyBase64 语义）
+        replacePayloadBase64:
+          type: string
+          description: 替换 payload 的原始字节（base64）——二进制/压缩包时使用；SDK 解码后写 Packet.bizData
+        enabled:
+          type: boolean
+          description: 用户开关（持久化；前端互斥：同 channelId+bizType 域同时仅一个开）
+        effective:
+          type: boolean
+          default: true
+          description: |
+            服务端计算的运行时生效态。SDK 仅对 effective=true 的规则替换。
+            正常态 enabled==effective；当同匹配键域存在多条 enabled（异常态）时，
+            该域全部规则 effective=false（不替换、走真实通道），并在
+            PushMockRuleList.conflicts 报告。
+        source:
+          $ref: '#/components/schemas/PushMockSource'
+          nullable: true
+          description: 规则所依据的原 push 日志快照（只读；"一键建 Mock 规则"时固化，手动创建为 null）
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+          description: 上一次"被使用"时间（命中替换、Web 编辑保存、Web toggle 启停刷新；早于 retention 的规则连同 source 快照自动删除）
+        hitCount:
+          type: integer
+          description: 命中次数累计（SDK 旁路采集上报 marked=true 时服务端 +1；纯服务端字段，不下发给 SDK）
+        lastHitAt:
+          type: string
+          format: date-time
+          description: 最近命中时间（marked 上报刷新；纯服务端字段，不下发给 SDK）
+        note:
+          type: string
+          nullable: true
+          description: 规则备注（纯管理面字段，不参与匹配、不下发给 SDK；创建时可空，编辑保存时覆盖式更新）
+        owner:
+          type: string
+          nullable: true
+          description: 规则创建者用户名（服务端写入；空 = 存量/无鉴权创建，仅 admin 可管理；纯服务端字段，SDK 增量拉取不下发）
+        updatedBy:
+          type: string
+          nullable: true
+          description: 最后修改者用户名（每次更新由服务端写入；纯服务端字段，SDK 增量拉取不下发）
+    PushMockRuleInput:
+      type: object
+      required: [channelId]
+      description: |
+        创建 push mock 规则请求体。创建定义匹配键（channelId 必选 + bizType
+        可选）；编辑用 UpdatePushMockRuleInput，匹配键不可改（对齐
+        UpdateMockRuleInput 语义）。
+      properties:
+        channelId:
+          type: string
+        bizType:
+          type: string
+        match:
+          $ref: '#/components/schemas/PushMockMatch'
+        replacePayload:
+          type: string
+        replacePayloadBase64:
+          type: string
+        enabled:
+          type: boolean
+          default: false
+        note:
+          type: string
+          nullable: true
+          description: 规则备注；手动创建（无 source）时必填非空，一键建规则（带 source）可省略
+        source:
+          $ref: '#/components/schemas/PushMockSource'
+          nullable: true
+    UpdatePushMockRuleInput:
+      type: object
+      required: [match]
+      description: |
+        编辑 push mock 规则请求体。与创建用 PushMockRuleInput 分离：不含
+        channelId/bizType（匹配键不可改）、不含 source（快照只读）。编辑只允许
+        改 match、replacePayload、replacePayloadBase64、note、enabled。
+      properties:
+        match:
+          $ref: '#/components/schemas/PushMockMatch'
+        replacePayload:
+          type: string
+        replacePayloadBase64:
+          type: string
+        note:
+          type: string
+          description: |
+            规则备注，单条覆盖式更新。仅当请求体实际改动规则内容（match/
+            replacePayload 变化）时必填且非空；纯开关操作可省略或留空。
+        enabled:
+          type: boolean
+          description: 用户开关。若与现值不同则切换，并触发同域互斥校验（已有 409 语义）；省略则保持现值不变
+    PushMockRuleList:
+      type: object
+      required: [version, rules]
+      properties:
+        version:
+          type: integer
+          description: push mock 规则集版本号（单调递增、与 HTTP MockRule 版本独立；SDK 用于增量比对）
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/PushMockRule'
+        conflicts:
+          type: array
+          description: |
+            异常态报告（仅 Web 全量列表返回）：当前存在"同一 channelId+bizType
+            域多条规则同时 enabled"的域列表。Web 拉到非空即按 message 弹窗提示；
+            这些域的规则 effective=false，SDK 不替换。
+          items:
+            type: object
+            required: [channelId, bizType, message]
+            properties:
+              channelId:
+                type: string
+              bizType:
+                type: string
+              message:
+                type: string
+                example: "不允许同一 channelId+bizType 同时开启多个 push Mock 规则"
+
+    SdkPushRuleList:
+      type: object
+      required: [version, rules]
+      description: |
+        SDK 增量拉取响应（?sinceVersion）：仅 effective 规则、剥离 Web-only 字段
+        （owner/updatedBy/hitCount/lastHitAt/source/note/conflicts）。
+      properties:
+        version:
+          type: integer
+          description: 当前 push mock 规则集版本号（SDK 保存，下次增量比对）
+        rules:
+          type: array
+          items:
+            type: object
+            required: [id, channelId, enabled, effective]
+            properties:
+              id:
+                type: string
+              channelId:
+                type: string
+              bizType:
+                type: string
+              match:
+                $ref: '#/components/schemas/PushMockMatch'
+              replacePayload:
+                type: string
+              replacePayloadBase64:
+                type: string
+              enabled:
+                type: boolean
+              effective:
+                type: boolean
+
+    PushRuleCommand:
+      type: object
+      required: [id, ruleId, channelId]
+      description: |
+        「模拟推送」pending 指令（能力线 L7 模拟推送形态）：Web 点「模拟推送」→
+        服务端按设备入队 → SDK 心跳响应携带 → SDK 构造 Packet 注入（消费前）→
+        SDK 经 push-rule-commands/ack 回报后标记消费。指令快照规则 payload
+        （规则可能在下发前被编辑）；同一规则重复触发每次追加新指令。
+      properties:
+        id:
+          type: string
+          description: 指令 ID（ULID；SDK 本地按此去重，服务端 ack 幂等）
+        ruleId:
+          type: string
+          description: 触发它的 push mock 规则 ID
+        channelId:
+          type: string
+          description: 规则快照：channelId（SDK 构造 Packet 的 channel 键）
+        bizType:
+          type: string
+          description: 规则快照：bizType（可选）
+        payload:
+          type: string
+          description: 规则快照：替换 payload UTF-8 文本（与 payloadBase64 二选一）
+        payloadBase64:
+          type: string
+          description: 规则快照：替换 payload 原始字节（base64；二进制/压缩包使用）
+
+    PushRuleCommandList:
+      type: object
+      required: [commands]
+      description: Web 待下发指令状态列表（不含 payload）。
+      properties:
+        commands:
+          type: array
+          items:
+            $ref: '#/components/schemas/PushRuleCommandStatus'
+
+    PushRuleCommandStatus:
+      type: object
+      required: [id, ruleId, createdAt]
+      description: 一条待下发指令的 Web 状态视图（不含 payload）。
+      properties:
+        id:
+          type: string
+        ruleId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    PushRuleCommandAckRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          description: 已构造注入完成的指令 ID 列表（未知 id 幂等忽略）
+          items:
+            type: string
 
     # ---------------------------------------------------------------- 分享
     CreateShareRequest:

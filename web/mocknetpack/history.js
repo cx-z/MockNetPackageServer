@@ -208,7 +208,7 @@ function renderHistoryList(replace) {
       if (e.bizType) meta.push("biz=" + e.bizType);
       if (e.msgId) meta.push("msg=" + e.msgId);
       el.innerHTML =
-        '<span class="lc-type ' + longConnTypeCls(e.eventType) + '">' + esc(e.eventType || "?") + "</span>" +
+        longConnFakeBadge(e) +
         '<span class="lc-meta">' + esc(meta.join(" · ")) + "</span>" +
         '<span class="t-time">' + clockTime(e.ts) + "</span>";
     } else {

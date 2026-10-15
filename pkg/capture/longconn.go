@@ -145,6 +145,12 @@ type LongConnectionRecordInput struct {
 	Empty bool `json:"empty,omitempty"`
 	// AckSent marks whether the ACK was sent.
 	AckSent bool `json:"ackSent,omitempty"`
+	// Mocked marks a packet that was replaced by a push mock rule (能力线 L7:
+	// SDK 旁路采集时标记；Web 显示 "Mock 命中"，对齐 HTTP mocked 标识)。
+	Mocked bool `json:"mocked,omitempty"`
+	// MockRuleID is the push mock rule ID that replaced this packet (SDK 上报；
+	// 服务端据此 RecordPushMockHit 递增 hitCount/lastHitAt，Web 可溯源)。
+	MockRuleID string `json:"mockRuleId,omitempty"`
 	// Receiver is the business receiver identifier (business-layer dispatch
 	// detail; empty in zero-intrusion mode, Web labels the capture method
 	// truthfully).

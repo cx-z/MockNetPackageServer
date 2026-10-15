@@ -209,6 +209,10 @@ func NewAPI(port int, opts ...Option) *API {
 	api.captureManager.SetTrafficStore(dataStore.Traffic())
 	//  能力线 L1: 长连接日志独立存档（mockd-data/longconn/<sid>.json）。
 	api.captureManager.SetLongConnStore(dataStore.LongConn())
+	//  能力线 L7: push mock 规则独立存储（独立版本号，与 HTTP MockRule 互不干扰）。
+	api.captureManager.SetPushMockRules(dataStore.PushMockRules())
+	//  能力线 L7 模拟推送形态: pending 指令队列独立存储（随 SDK ack 消费）。
+	api.captureManager.SetPushRuleCommands(dataStore.PushRuleCommands())
 
 	// Initialize the MockNetPack account stores : users and session
 	// tokens share the same persistent FileStore. Long-lived API keys

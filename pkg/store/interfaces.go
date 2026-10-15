@@ -403,6 +403,55 @@ type MockRuleStore interface {
 }
 
 // ============================================================================
+// MockNetPack push mock rules (能力线 L7)
+// ============================================================================
+
+// PushMockRuleStore handles persistence for MockNetPack push mock rules and the
+// per-device monotonic push rule-set version (L7 决策 D3：独立存储/独立版本号，
+// 不污染 HTTP MockRule)。规则跨重启持久化；运行时 Effective 标志由 manager
+// 计算，不在此存储。版本 key 与 HTTP 规则版本相互独立——同 (app,did) 两类规则
+// 各自维护单调版本，SDK 分别增量拉取。
+type PushMockRuleStore interface {
+	// List returns all push mock rules matching the filter (device-scoped).
+	List(ctx context.Context, filter *MockRuleFilter) ([]*capture.PushMockRule, error)
+	// Get returns a single push rule by ID.
+	Get(ctx context.Context, id string) (*capture.PushMockRule, error)
+	// Create adds a new push rule. Returns store.ErrAlreadyExists if the ID exists.
+	Create(ctx context.Context, r *capture.PushMockRule) error
+	// Update replaces an existing push rule. Returns store.ErrNotFound if missing.
+	Update(ctx context.Context, r *capture.PushMockRule) error
+	// Delete removes a push rule by ID.
+	Delete(ctx context.Context, id string) error
+	// Mutate applies fn to the device's push rule set and bumps the push rule-set
+	// version atomically — one store lock for both, so no reader ever observes the
+	// push rule set and its version in a half-updated state. fn receives the
+	// device's current push rules and returns the new set; changed=false skips the
+	// bump and returns the current version; any error aborts with the store
+	// untouched. The returned int is the push rule-set version after the call.
+	Mutate(ctx context.Context, app, did string, fn func(rules []*capture.PushMockRule) ([]*capture.PushMockRule, bool, error)) (int, error)
+	// GetRuleVersion returns the current push rule-set version for (app, did)
+	// (0 when no push rules have ever been written).
+	GetRuleVersion(ctx context.Context, app, did string) (int, error)
+	// BumpRuleVersion increments and returns the new push rule-set version.
+	BumpRuleVersion(ctx context.Context, app, did string) (int, error)
+}
+
+// PushRuleCommandStore 是「模拟推送」pending 指令的持久化（能力线 L7 模拟推送
+// 形态，D0/D3）：独立于 push 规则集与版本号（指令是临时队列，入队/消费不 bump
+// PushRuleVersions）。按设备（app+did）组织；指令随 SDK ack 消费，过期清理。
+type PushRuleCommandStore interface {
+	// Append 追加一条指令到设备队列尾部（同一规则重复触发 = 追加，支持连续
+	// 模拟推送多条）。
+	Append(ctx context.Context, app, did string, cmd *capture.PushRuleCommand) error
+	// ListPending 返回设备全部未消费指令（按入队顺序）。
+	ListPending(ctx context.Context, app, did string) ([]*capture.PushRuleCommand, error)
+	// MarkConsumed 将指定指令标记为已消费（幂等：未知 id 忽略）。
+	MarkConsumed(ctx context.Context, app, did string, ids []string) error
+	// PurgeExpired 删除超过保留窗口的指令（无论消费与否），返回删除条数。
+	PurgeExpired(ctx context.Context, retention time.Duration) (int, error)
+}
+
+// ============================================================================
 // MockNetPack account entities (User / AuthSession)
 // ============================================================================
 

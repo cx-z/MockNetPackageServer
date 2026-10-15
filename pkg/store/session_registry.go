@@ -280,6 +280,8 @@ func (m *CaptureManager) StartHealthCheck(ctx context.Context) {
 				m.LogDataFileSize()   //  存储水位：每小时一行 data.json 体积
 				m.LogTrafficDirSize() //  存储水位：每小时一行 traffic 存档目录体积
 				m.PurgeExpiredRules(ctx)
+				m.PurgeExpiredPushRules(ctx)
+				m.PurgeExpiredPushRuleCommands(ctx)
 				m.PurgeExpiredEndedSessions(ctx)
 				m.PurgeExpiredRetainedTraffic(ctx)
 				m.PurgeExpiredPairingTokens(ctx)

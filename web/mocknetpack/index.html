@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MockNetPack · 设备</title>
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 <!--  编辑表单 JSON 折叠编辑器（vendored CodeMirror 5.65.18，同源加载，见 lib/codemirror/README.md） -->
 <link rel="stylesheet" href="lib/codemirror/lib/codemirror.min.css">
 <link rel="stylesheet" href="lib/codemirror/addon/fold/foldgutter.min.css">
@@ -160,12 +160,18 @@
 
         <!-- 能力线 L1: 长连接日志（独立页签，与 HTTP 流量互不混入） -->
         <div id="longconnPane" class="hidden">
+          <div id="longconnSnapshot" class="snapshot-card hidden"></div>
+          <!-- 能力线 L7（L7.3b）：推送模板区块——置于日志上方（同请求流布局：操作区在上、日志流在下） -->
+          <div class="section-title lc-push-rule-title">推送模板（模拟 push）
+            <span class="sub" id="pushRuleInfo"></span>
+            <button id="pushRuleRefreshBtn" class="small ghost" title="重新拉取该设备的推送模板与指令状态">刷新</button>
+          </div>
+          <div id="pushRuleList"><div class="empty">暂无推送模板。点击下方一条长连接日志的「一键建推送模板」创建。</div></div>
           <div class="section-title">长连接日志 <span class="sub" id="longconnInfo"></span>
             <button id="longconnHistoryBtn" class="small ghost" title="最近 48h 已结束会话的长连接日志（服务端过滤 + 分页）">历史日志</button>
             <button id="longconnClearBtn" class="small ghost" title="清空本页长连接日志（不影响服务端 48h 保留）">清空</button>
           </div>
-          <div id="longconnSnapshot" class="snapshot-card hidden"></div>
-          <input id="longconnFilter" class="filter-input" placeholder="过滤长连接日志（eventType/bizType/msgId 关键字，仅当前页面）" />
+          <input id="longconnFilter" class="filter-input" placeholder="过滤日志（fake=模拟/real=真实 push，bizType/msgId/channelId 关键字）" />
           <div id="longconnList"><div class="empty">暂无长连接日志。设备长连接事件会实时出现在这里。</div></div>
         </div>
       </div>
@@ -213,19 +219,19 @@
 <script src="lib/codemirror/addon/edit/matchbrackets.min.js"></script>
 <script src="lib/codemirror/addon/edit/closebrackets.min.js"></script>
 <script src="lib/qrcode/qrcode.min.js"></script>
-<script src="json-lossless.js?v=4"></script>
-<script src="utils.js?v=4"></script>
-<script src="api.js?v=4"></script>
-<script src="json-tree.js?v=4"></script>
-<script src="devices.js?v=4"></script>
-<script src="scan-connect.js?v=4"></script>
-<script src="traffic.js?v=4"></script>
-<script src="longconn.js?v=4"></script>
-<script src="rules.js?v=4"></script>
-<script src="viewer.js?v=4"></script>
-<script src="share.js?v=4"></script>
-<script src="history.js?v=4"></script>
-<script src="apikey.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="json-lossless.js?v=5"></script>
+<script src="utils.js?v=5"></script>
+<script src="api.js?v=5"></script>
+<script src="json-tree.js?v=5"></script>
+<script src="devices.js?v=5"></script>
+<script src="scan-connect.js?v=5"></script>
+<script src="traffic.js?v=5"></script>
+<script src="longconn.js?v=5"></script>
+<script src="rules.js?v=5"></script>
+<script src="viewer.js?v=5"></script>
+<script src="share.js?v=5"></script>
+<script src="history.js?v=5"></script>
+<script src="apikey.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

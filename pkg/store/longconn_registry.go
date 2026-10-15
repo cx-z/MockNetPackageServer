@@ -94,6 +94,13 @@ func (m *CaptureManager) UploadLongConn(ctx context.Context, sessionID string, r
 	// Best-effort persist (errors logged, upload unaffected) — inside the lock
 	// so the file always matches the in-memory slice.
 	m.persistLongConn(ctx, sessionID)
+	// 能力线 L7: mocked 命中记录 → 命中统计（hitCount/lastHitAt 递增，不 bump
+	// push 规则版本——规则内容未变，SDK 不应因命中重拉）。Best-effort，日志记录。
+	for _, rec := range stored {
+		if rec.Mocked && rec.MockRuleID != "" {
+			m.RecordPushMockHit(ctx, s.App, s.Did, rec.MockRuleID)
+		}
+	}
 	m.longconnMu.Unlock()
 	return len(stored), nil
 }

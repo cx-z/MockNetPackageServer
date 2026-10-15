@@ -111,6 +111,13 @@ type HeartbeatResponse struct {
 	ServerConfig capture.ServerConfig    `json:"serverConfig"`
 	Session      *capture.CaptureSession `json:"session"`
 	RulesVersion int                     `json:"rulesVersion"`
+	// PushRulesVersion 是 push mock 规则版本（能力线 L7）：SDK 心跳后按此
+	// 增量拉取 push mock 规则快照；与 RulesVersion 同模式、独立版本号。
+	PushRulesVersion int `json:"pushRulesVersion"`
+	// PushCommands 是 pending「模拟推送」指令（能力线 L7 模拟推送形态 D0）：
+	// SDK 心跳即拉取未消费指令，构造注入完成后经 push-rule-commands/ack 回报
+	// 消费。无指令时为空数组（nil 序列化为 null，SDK 端容错）。
+	PushCommands []capture.PushRuleCommandView `json:"pushCommands,omitempty"`
 }
 
 // ActivateSessionRequest activates a capture session from the Web UI.
@@ -224,6 +231,10 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "rule_conflict", store.MockRuleConflictMessage)
 	case errors.Is(err, store.ErrNoteRequired):
 		writeError(w, http.StatusBadRequest, "missing_field", "note is required")
+	case errors.Is(err, store.ErrPushRuleInvalidChannel):
+		writeError(w, http.StatusBadRequest, "invalid_field", "push mock rule requires channelId")
+	case errors.Is(err, store.ErrPushRuleDisabled):
+		writeError(w, http.StatusConflict, "push_rule_disabled", "push mock rule is disabled")
 	case errors.Is(err, store.ErrPairingTokenInvalid):
 		writeError(w, http.StatusForbidden, "pairing_token_invalid", "Pairing token is invalid or expired")
 	case errors.Is(err, store.ErrAlreadyExists):

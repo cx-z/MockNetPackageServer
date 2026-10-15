@@ -74,6 +74,17 @@ type storeData struct {
 	MockRules    []*capture.MockRule `json:"mockRules,omitempty"`
 	RuleVersions map[string]int      `json:"ruleVersions,omitempty"`
 
+	// MockNetPack push mock rules  (能力线 L7) and the per-device push
+	// rule-set version counter (keyed by app + "\x00" + did, independent of
+	// RuleVersions — HTTP 与 push 两类规则各自维护单调版本，SDK 分别增量拉取).
+	PushMockRules    []*capture.PushMockRule `json:"pushMockRules,omitempty"`
+	PushRuleVersions map[string]int          `json:"pushRuleVersions,omitempty"`
+
+	// MockNetPack pending push mock commands (能力线 L7 模拟推送形态)：按设备
+	// 组织的「模拟推送」指令队列（key = app + "\x00" + did），随 SDK ack 消费；
+	// 独立于 PushRuleVersions（临时队列，不参与规则版本）。
+	PushRuleCommands map[string][]*capture.PushRuleCommand `json:"pushRuleCommands,omitempty"`
+
 	// MockNetPack accounts : users and server-issued session tokens.
 	// Sessions persist so a logged-in Web page survives a server restart until
 	// the token expires or is revoked.
@@ -382,6 +393,17 @@ func (fs *FileStore) CaptureSessions() store.CaptureSessionStore {
 // MockRules returns the mock rule store (MockNetPack ).
 func (fs *FileStore) MockRules() store.MockRuleStore {
 	return &mockRuleStore{fs: fs}
+}
+
+// PushMockRules returns the push mock rule store (MockNetPack 能力线 L7).
+func (fs *FileStore) PushMockRules() store.PushMockRuleStore {
+	return &pushMockRuleStore{fs: fs}
+}
+
+// PushRuleCommands returns the pending push mock command store
+// (MockNetPack 能力线 L7 模拟推送形态).
+func (fs *FileStore) PushRuleCommands() store.PushRuleCommandStore {
+	return &pushRuleCommandStore{fs: fs}
 }
 
 // Users returns the account store (MockNetPack ).

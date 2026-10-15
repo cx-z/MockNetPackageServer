@@ -16,6 +16,7 @@ async function enterDetail(app, did) {
   if (detail && detail.sessionId) stopViewer(detail.sessionId);
   detail = { app, did, sessionId: null };
   pageLog = [];   // ：进入设备详情（含跨设备跳转）即重新开始页面日志
+  if (typeof resetLongConnSession === "function") resetLongConnSession();   // P1：A 设备日志不混入 B
   $("listView").classList.add("hidden");
   $("detailView").classList.remove("hidden");
   $("dDid").textContent = did;

@@ -269,6 +269,20 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.requireAuth(a.handleUpdateMockRule))
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.requireAuth(a.handleDeleteMockRule))
 
+	// Push mock rules  (能力线 L7): Web CRUD/toggle + SDK incremental snapshot
+	// pull。与 HTTP mock-rules 并列的独立资源（独立模型/独立版本号）。
+	// GET is OPEN (SDK ?sinceVersion pull carries no token); the handler itself
+	// enforces auth on the Web full-list branch (no sinceVersion).
+	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}/push-mock-rules", a.handleListPushMockRules)
+	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/push-mock-rules", a.requireAuth(a.handleCreatePushMockRule))
+	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}/push-mock-rules/{ruleId}", a.requireAuth(a.handleUpdatePushMockRule))
+	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}/push-mock-rules/{ruleId}", a.requireAuth(a.handleDeletePushMockRule))
+	// 模拟推送（能力线 L7 模拟推送形态 D0）：Web 触发入队 pending 指令；
+	// ack 为 SDK 回报（open 无鉴权，对齐 SDK 增量拉取分支）。
+	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/push-mock-rules/{ruleId}/send", a.handleSendPushMockRule)
+	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/push-rule-commands/ack", a.handleAckPushRuleCommands)
+	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}/push-rule-commands", a.handleListPushRuleCommands)
+
 	// Account system : open registration (dev only),
 	// login (server-issued token), logout (server-side revocation), me.
 	mux.HandleFunc("POST "+captureAPIPrefix+"/auth/register", a.handleAuthRegister)

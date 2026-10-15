@@ -188,14 +188,37 @@ func (a *API) handleDeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeCaptureError(w, err)
 		return
 	}
+	pushRulesVersion, err := a.captureManager.PushRuleVersion(r.Context(), app, did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	pushCommands, err := a.captureManager.ListPendingPushRuleCommands(r.Context(), app, did)
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	sdkCommands := make([]capture.PushRuleCommandView, 0, len(pushCommands))
+	for _, c := range pushCommands {
+		sdkCommands = append(sdkCommands, capture.PushRuleCommandView{
+			ID:            c.ID,
+			RuleID:        c.RuleID,
+			ChannelId:     c.ChannelId,
+			BizType:       c.BizType,
+			Payload:       c.Payload,
+			PayloadBase64: c.PayloadBase64,
+		})
+	}
 	writeJSON(w, http.StatusOK, HeartbeatResponse{
 		OK:         true,
 		ServerTime: time.Now(),
 		// /：心跳间隔按会话状态动态下发——capturing 3s（快速感知规则变更）、
 		// idle 5s（快速感知会话激活）；SDK 按响应间隔调度下一次心跳。
-		ServerConfig: heartbeatConfigForSession(a.captureManager.ServerConfig(), session),
-		Session:      session,
-		RulesVersion: rulesVersion,
+		ServerConfig:      heartbeatConfigForSession(a.captureManager.ServerConfig(), session),
+		Session:           session,
+		RulesVersion:      rulesVersion,
+		PushRulesVersion:  pushRulesVersion,
+		PushCommands:      sdkCommands,
 	})
 }
 
