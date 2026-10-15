@@ -137,6 +137,7 @@ func registerTools(srv *server.MCPServer, base string) {
 	// Capture session lifecycle (M12.8): status → start/reuse → renew → release.
 	srv.AddTool(toolGetCaptureStatus(), mcpGetCaptureStatus(base))
 	srv.AddTool(toolStartCapture(), mcpStartCapture(base))
+	srv.AddTool(toolListSessions(), mcpListSessions(base))
 	srv.AddTool(toolRenewCaptureObserver(), mcpRenewCaptureObserver(base))
 	srv.AddTool(toolReleaseCaptureObserver(), mcpReleaseCaptureObserver(base))
 
@@ -160,4 +161,9 @@ func registerTools(srv *server.MCPServer, base string) {
 	srv.AddTool(toolDeletePushMockRule(), mcpDeletePushMockRule(base))
 	srv.AddTool(toolSendPushMockRule(), mcpSendPushMockRule(base))
 	srv.AddTool(toolGetLongConnPacketSamples(), mcpGetLongConnPacketSamples(base))
+
+	// 长连接日志 + 一键建模板 + 模板详情（push mock 闭环补充）。
+	srv.AddTool(toolListLongConnLogs(), mcpListLongConnLogs(base))
+	srv.AddTool(toolCreatePushMockRuleFromLog(), mcpCreatePushMockRuleFromLog(base))
+	srv.AddTool(toolGetPushMockRule(), mcpGetPushMockRule(base))
 }

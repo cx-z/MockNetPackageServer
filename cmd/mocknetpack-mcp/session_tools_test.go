@@ -555,3 +555,35 @@ func TestSessionTools_MissingAppDid(t *testing.T) {
 		assert.Contains(t, resultText(res), "app 与 did")
 	}
 }
+
+// ---- list_sessions（会话历史，供 sessionId 参数查询 ended 会话数据）-------------
+
+func TestSessionTools_ListSessionsHistory(t *testing.T) {
+	base := standardBackend(t)
+	seedOnlineDevice(t, base)
+	srv := newMCPServer(base)
+
+	// 无会话 → 空列表 + 提示（非错误）。
+	out := mustResultJSON(t, callSessionTool(t, srv, "list_sessions", nil))
+	assert.Equal(t, float64(0), out["total"])
+	assert.Contains(t, out["hint"].(string), "没有任何可见会话")
+
+	// start_capture → capturing 会话可见。
+	mustResultJSON(t, callSessionTool(t, srv, "start_capture", nil))
+	out = mustResultJSON(t, callSessionTool(t, srv, "list_sessions", nil))
+	assert.Equal(t, float64(1), out["total"])
+	sess := out["sessions"].([]any)[0].(map[string]any)
+	assert.Equal(t, "capturing", sess["status"])
+	require.NotEmpty(t, sess["sessionId"])
+	require.NotEmpty(t, sess["startedAt"])
+	assert.Equal(t, float64(1), sess["viewerCount"])
+
+	// release → ended 会话仍在 48h 保留期内，列表可见并带 retainUntil
+	// （list_sessions 的出参 sessionId 可直接喂给 list_longconn_logs）。
+	mustResultJSON(t, callSessionTool(t, srv, "release_capture_observer", nil))
+	out = mustResultJSON(t, callSessionTool(t, srv, "list_sessions", nil))
+	assert.Equal(t, float64(1), out["total"])
+	sess = out["sessions"].([]any)[0].(map[string]any)
+	assert.Equal(t, "ended", sess["status"])
+	require.NotNil(t, sess["retainUntil"])
+}

@@ -66,6 +66,7 @@ func TestMCPServer_RegistersAllTools(t *testing.T) {
 	want := []string{
 		"get_capture_status",
 		"start_capture",
+		"list_sessions",
 		"renew_capture_observer",
 		"release_capture_observer",
 		"list_devices",
@@ -86,6 +87,9 @@ func TestMCPServer_RegistersAllTools(t *testing.T) {
 		"delete_push_mock_rule",
 		"send_push_mock_rule",
 		"get_longconn_packet_samples",
+		"list_longconn_logs",
+		"create_push_mock_rule_from_log",
+		"get_push_mock_rule",
 	}
 	require.Len(t, tools, len(want))
 	for _, name := range want {

@@ -31,12 +31,13 @@ NOTE = "m12.8 http-mcp smoke"
 SKIP_SESSION = os.environ.get("MNP_SKIP_SESSION", "") == "1"
 HIT_TIMEOUT = float(os.environ.get("MNP_HIT_TIMEOUT", "30"))
 SESSION_TOOLS = [
-    "get_capture_status", "start_capture",
+    "get_capture_status", "start_capture", "list_sessions",
     "renew_capture_observer", "release_capture_observer",
 ]
 PUSH_TOOLS = [
     "list_push_mock_rules", "create_push_mock_rule", "update_push_mock_rule",
     "delete_push_mock_rule", "send_push_mock_rule", "get_longconn_packet_samples",
+    "list_longconn_logs", "create_push_mock_rule_from_log", "get_push_mock_rule",
 ]
 
 
@@ -294,8 +295,8 @@ def main():
     post({"jsonrpc": "2.0", "method": "notifications/initialized"}, sid)
     res, _ = post({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, sid)
     tools = [t["name"] for t in res["result"]["tools"]]
-    require(len(tools) == 22 and all(n in tools for n in SESSION_TOOLS + PUSH_TOOLS),
-            "expected 22 tools including session + push mock tools")
+    require(len(tools) == 26 and all(n in tools for n in SESSION_TOOLS + PUSH_TOOLS),
+            "expected 26 tools including session + push mock tools")
     print("tools/list:", len(tools), "tools")
     traffic_id = sys.argv[1] if len(sys.argv) > 1 else ""
     with nullcontext(None) if SKIP_SESSION else capture_session(sid) as capture:

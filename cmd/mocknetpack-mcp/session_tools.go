@@ -516,3 +516,53 @@ func resolveSessionForRelease(ctx context.Context, c *mnpapi.Client, app, did, e
 	}
 	return c.CurrentCapturingSession(ctx, app, did)
 }
+
+// ---- list_sessions -----------------------------------------------------------
+
+func toolListSessions() mcp.Tool {
+	return mcp.NewTool("list_sessions",
+		mcp.WithDescription("列该设备抓包会话历史（capturing 优先；ended 会话 48h 保留期内可查，服务端已过滤过期会话），返回 sessionId/status/startedAt/endedAt/retainUntil/requestCount/viewerCount。"+
+			"何时用：①查历史会话的 sessionId——配合 list_longconn_logs / get_device_traffic 的 sessionId 参数，读取 ended 会话保留期内的长连接日志与流量；②start_capture 之前确认当前抓包状态。"+
+			"注意：sessionId 参数缺省时工具按「capturing 优先 → 最近 ended」自动解析；要查历史会话必须先本工具拿 sessionId 再显式传入。错误处理：403 仅 owner/admin 可见。"),
+		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
+		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
+	)
+}
+
+func mcpListSessions(base string) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := clientFromContext(ctx, base)
+		if err != nil {
+			return toolErr(err), nil
+		}
+		p := req.GetArguments()
+		app, did, argErr := requireAppDid(p)
+		if argErr != nil {
+			return argErr, nil
+		}
+		sessions, err := c.ListSessions(ctx, app, did)
+		if err != nil {
+			return toolErr(err), nil
+		}
+		views := make([]map[string]any, 0, len(sessions))
+		for _, s := range sessions {
+			if s == nil {
+				continue
+			}
+			views = append(views, map[string]any{
+				"sessionId":    s.ID,
+				"status":       s.Status,
+				"startedAt":    s.StartedAt,
+				"endedAt":      s.EndedAt,
+				"retainUntil":  s.RetainUntil,
+				"requestCount": s.RequestCount,
+				"viewerCount":  s.ViewerCount,
+			})
+		}
+		out := map[string]any{"sessions": views, "total": len(views)}
+		if len(views) == 0 {
+			out["hint"] = "该设备没有任何可见会话（未抓包，或 ended 会话已过 48h 保留期）。"
+		}
+		return jsonText(out), nil
+	}
+}

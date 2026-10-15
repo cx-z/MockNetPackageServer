@@ -538,32 +538,9 @@ type LongConnResult struct {
 	Total int
 }
 
-// GetDeviceLongConn implements the two-step orchestration
-// GET /sessions?app&did → GET /sessions/{id}/longconn?<query>, reusing the
-// exact session resolution of GetDeviceTraffic (capturing first). A device
-// with no session yields an empty result rather than an error.
-func (c *Client) GetDeviceLongConn(ctx context.Context, app, did string, q capture.LongConnectionQuery) (*LongConnResult, error) {
-	query := url.Values{}
-	query.Set("app", app)
-	query.Set("did", did)
-	var sessions struct {
-		Sessions []capture.CaptureSession `json:"sessions"`
-		Total    int                      `json:"total"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions", query, nil, &sessions); err != nil {
-		return nil, err
-	}
-	if len(sessions.Sessions) == 0 {
-		return &LongConnResult{}, nil
-	}
-	sid := sessions.Sessions[0].ID
-	for _, s := range sessions.Sessions {
-		if s.Status == capture.SessionStatusCapturing {
-			sid = s.ID
-			break
-		}
-	}
-
+// buildLongConnQuery renders the long-connection log query parameters
+// (mirrors handleListSessionLongConnections parsing).
+func buildLongConnQuery(q capture.LongConnectionQuery) url.Values {
 	p := url.Values{}
 	if q.ChannelID != "" {
 		p.Set("channelId", q.ChannelID)
@@ -592,14 +569,50 @@ func (c *Client) GetDeviceLongConn(ctx context.Context, app, did string, q captu
 	if q.Offset > 0 {
 		p.Set("offset", strconv.Itoa(q.Offset))
 	}
+	return p
+}
+
+// ListSessionLongConn reads one explicit session's long-connection log (no
+// session resolution) — the raw GET /sessions/{sid}/longconn. Used when the
+// caller already knows the session, e.g. create_push_mock_rule_from_log paging
+// by record ID.
+func (c *Client) ListSessionLongConn(ctx context.Context, sessionID string, q capture.LongConnectionQuery) (*LongConnResult, error) {
 	var out struct {
 		Entries []capture.LongConnectionRecord `json:"entries"`
 		Total   int                            `json:"total"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions/"+sid+"/longconn", p, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions/"+sessionID+"/longconn", buildLongConnQuery(q), nil, &out); err != nil {
 		return nil, err
 	}
-	return &LongConnResult{SessionID: sid, Entries: out.Entries, Total: out.Total}, nil
+	return &LongConnResult{SessionID: sessionID, Entries: out.Entries, Total: out.Total}, nil
+}
+
+// GetDeviceLongConn implements the two-step orchestration
+// GET /sessions?app&did → GET /sessions/{id}/longconn?<query>, reusing the
+// exact session resolution of GetDeviceTraffic (capturing first). A device
+// with no session yields an empty result rather than an error.
+func (c *Client) GetDeviceLongConn(ctx context.Context, app, did string, q capture.LongConnectionQuery) (*LongConnResult, error) {
+	query := url.Values{}
+	query.Set("app", app)
+	query.Set("did", did)
+	var sessions struct {
+		Sessions []capture.CaptureSession `json:"sessions"`
+		Total    int                      `json:"total"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions", query, nil, &sessions); err != nil {
+		return nil, err
+	}
+	if len(sessions.Sessions) == 0 {
+		return &LongConnResult{}, nil
+	}
+	sid := sessions.Sessions[0].ID
+	for _, s := range sessions.Sessions {
+		if s.Status == capture.SessionStatusCapturing {
+			sid = s.ID
+			break
+		}
+	}
+	return c.ListSessionLongConn(ctx, sid, q)
 }
 
 // CreateShare snapshots a traffic entry into an independent share link.

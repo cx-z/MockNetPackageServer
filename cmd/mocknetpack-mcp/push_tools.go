@@ -23,11 +23,13 @@ package main
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/getmockd/mockd/pkg/capture"
+	"github.com/getmockd/mockd/pkg/mnpapi"
 )
 
 // pushPayloadPreview 把模板 payload 截断成 AI 可读的摘要（列表投影用，完整
@@ -55,15 +57,16 @@ func toolListPushMockRules() mcp.Tool {
 
 func toolCreatePushMockRule() mcp.Tool {
 	return mcp.NewTool("create_push_mock_rule",
-		mcp.WithDescription("凭空创建推送模板：channelId 必填 + replacePayload 必填（payload 模板快照，SDK 构造假 Packet 时写入 bizData）。创建即启用（enabled=true），可直接 send_push_mock_rule。"+
+		mcp.WithDescription("凭空创建推送模板（无日志来源）：channelId 必填 + replacePayload 必填（payload 模板快照，SDK 构造假 Packet 时写入 bizData）+ note 必填（服务端要求无 source 快照的规则必须带备注）。创建即启用（enabled=true），可直接 send_push_mock_rule。"+
 			"何时用：模拟一条未抓包过的推送。"+
 			"重要——payload 不要凭字段名从零编：先调 get_longconn_packet_samples 拉同 bizType 的真实日志作骨架，只改内层展示文本；"+
-			"msgid/session_id/time 每次下发前换成全新随机大整数（否则客户端按 id 判重，假 push 被静默丢弃）；touser/fromuser/name 必须继承当前设备登录账号的真实会话骨架，不能跨账号抄。错误处理：400 channelId 缺失；403 仅 owner/admin。"),
+			"msgid/session_id/time 每次下发前换成全新随机大整数（否则客户端按 id 判重，假 push 被静默丢弃）；touser/fromuser/name 必须继承当前设备登录账号的真实会话骨架，不能跨账号抄。错误处理：400 channelId/note 缺失；409 同 channelId+bizType 域已有启用模板；403 仅 owner/admin。"),
 		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
 		mcp.WithString("channelId", mcp.Required(), mcp.Description("通道标识（必填，如 xcpush_tcp）")),
 		mcp.WithString("bizType", mcp.Description("业务类型（可选，如 1=IM 聊天；空=不限定）")),
 		mcp.WithString("replacePayload", mcp.Required(), mcp.Description("推送 payload 模板（必填；建议来自 get_longconn_packet_samples 的真实骨架，仅改内层展示文本）")),
+		mcp.WithString("note", mcp.Required(), mcp.Description("规则备注（必填且非空白——服务端要求无 source 快照的手动模板必须带备注，如\"复现压测\"）")),
 	)
 }
 
@@ -93,7 +96,7 @@ func toolSendPushMockRule() mcp.Tool {
 		mcp.WithDescription("模拟推送：为设备入队一条 pending 指令（快照模板 payload），SDK 约 3s 心跳拉取后构造假 Packet 走真实 delegate 回调注入业务。"+
 			"**入队成功 ≠ 已到达设备**——本工具返回的是指令已入队；到达证据是稍后长连接日志出现 mocked=true 的 packet（get_longconn_packet_samples 或 Web 长连接页签）。"+
 			"同一模板可重复 send 连续下发多条；不影响任何真实 push。"+
-			"何时用：让业务收到一条 mock push。错误处理：409 push_rule_disabled 模板停用（先 update_push_mock_rule 恢复）；403 仅规则 owner/admin；404 模板不存在。"),
+			"何时用：让业务收到一条 mock push。错误处理：409 push_rule_disabled 模板停用（MCP 无启停开关：可 delete 后重建，或在 Web 端启用）；403 仅规则 owner/admin；404 模板不存在。"),
 		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
 		mcp.WithString("ruleId", mcp.Required(), mcp.Description("模板 ID（来自 list_push_mock_rules）")),
@@ -184,6 +187,7 @@ func mcpCreatePushMockRule(base string) server.ToolHandlerFunc {
 			ChannelId:      mustString(p, "channelId"),
 			BizType:        mustString(p, "bizType"),
 			ReplacePayload: mustString(p, "replacePayload"),
+			Note:           mustString(p, "note"),
 			Enabled:        true, // 一键建模板语义：创建即启用，可直接 send
 		}
 		if in.ChannelId == "" {
@@ -191,6 +195,9 @@ func mcpCreatePushMockRule(base string) server.ToolHandlerFunc {
 		}
 		if strings.TrimSpace(in.ReplacePayload) == "" {
 			return mcp.NewToolResultError("replacePayload 必填（推送 payload 模板）。建议先用 get_longconn_packet_samples 拉真实骨架再改内层文本。"), nil
+		}
+		if strings.TrimSpace(in.Note) == "" {
+			return mcp.NewToolResultError("note 必填且非空白（服务端要求无 source 快照的手动模板必须带备注）。"), nil
 		}
 		rule, err := c.CreatePushMockRule(ctx, app, did, in)
 		if err != nil {
@@ -388,4 +395,312 @@ func pushPayloadMode(r *capture.PushMockRuleView) string {
 		return "binary"
 	}
 	return "text"
+}
+
+// parseLongConnQuery 解析 list_longconn_logs 的过滤参数：校验 eventType 枚举与
+// RFC3339 时间窗；limit 默认 100 上限 500；非法值返回带指引的错误结果。
+func parseLongConnQuery(p map[string]any) (capture.LongConnectionQuery, *mcp.CallToolResult) {
+	var q capture.LongConnectionQuery
+	q.ChannelID = mustString(p, "channelId")
+	q.BizType = mustString(p, "bizType")
+	q.Keyword = mustString(p, "keyword")
+	if v, ok := p["eventType"].(string); ok && v != "" {
+		switch capture.LongConnectionEventType(v) {
+		case capture.LongConnectionEventConnect, capture.LongConnectionEventDisconnect,
+			capture.LongConnectionEventHeartbeat, capture.LongConnectionEventPacket,
+			capture.LongConnectionEventAck, capture.LongConnectionEventSnapshot:
+			q.EventType = capture.LongConnectionEventType(v)
+		default:
+			return q, mcp.NewToolResultError("eventType 取值无效：" + v + "（合法值 connect|disconnect|heartbeat|packet|ack|snapshot）。")
+		}
+	}
+	if v, ok := p["from"].(string); ok && v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return q, mcp.NewToolResultError("from 不是合法 RFC3339 时间（如 2026-10-15T10:00:00+08:00）：" + v)
+		}
+		q.From = &t
+	}
+	if v, ok := p["to"].(string); ok && v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return q, mcp.NewToolResultError("to 不是合法 RFC3339 时间（如 2026-10-15T10:00:00+08:00）：" + v)
+		}
+		q.To = &t
+	}
+	if v, ok := p["since"].(float64); ok && v > 0 {
+		q.Since = int64(v)
+	}
+	q.Limit = 100
+	if v, ok := p["limit"].(float64); ok && v > 0 {
+		q.Limit = int(v)
+	}
+	if q.Limit < 1 {
+		q.Limit = 1
+	}
+	if q.Limit > 500 {
+		q.Limit = 500
+	}
+	if v, ok := p["offset"].(float64); ok && v > 0 {
+		q.Offset = int(v)
+	}
+	return q, nil
+}
+
+// ---- list_longconn_logs ------------------------------------------------------
+
+func toolListLongConnLogs() mcp.Tool {
+	return mcp.NewTool("list_longconn_logs",
+		mcp.WithDescription("查该设备长连接日志（全部事件类型：connect/disconnect/heartbeat/packet/ack/snapshot）。默认摘要投影（id/seq/ts/eventType/channelId/bizType/msgId/mocked/ackSent/duplicate/status/payload 截断预览）；includePayload=true 时每条带完整 payloadText/payloadBase64。支持事件类型/通道/业务/关键字/时间窗/seq 增量（since）过滤；出参附 latestSnapshot（最近一条连接快照，含连接状态）。"+
+			"何时用：①查长连接收包；②send_push_mock_rule 之后确认模拟推送结果（过滤/扫描 mocked=true 的新 packet）；③找目标日志后接 create_push_mock_rule_from_log 复现。"+
+			"注意：Web 列表只展示 packet；要看业务包传 eventType=packet。模拟推送产生的 fake 包带 mocked=true，可在结果中筛选。错误处理：401 配置 API Key；403 仅会话 owner/admin（显式传跨设备 sessionId 时）；404 会话不存在或 48h 保留期已过。"),
+		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
+		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
+		mcp.WithString("sessionId", mcp.Description("会话 ID（可选；缺省自动解析：capturing 优先 → 最近 ended 保留期内）")),
+		mcp.WithString("eventType", mcp.Description("事件类型精确过滤：connect|disconnect|heartbeat|packet|ack|snapshot")),
+		mcp.WithString("channelId", mcp.Description("按通道标识精确过滤（如 xcpush_tcp）")),
+		mcp.WithString("bizType", mcp.Description("按业务类型精确过滤（如 1=IM 聊天）")),
+		mcp.WithString("keyword", mcp.Description("payload/字段子串过滤（大小写不敏感）")),
+		mcp.WithString("from", mcp.Description("起始时间（RFC3339，含边界）")),
+		mcp.WithString("to", mcp.Description("结束时间（RFC3339，含边界）")),
+		mcp.WithNumber("since", mcp.Description("seq 增量游标：只返回 seq>since 的日志（增量拉取）")),
+		mcp.WithNumber("limit", mcp.Description("返回条数（默认 100，最大 500）")),
+		mcp.WithNumber("offset", mcp.Description("分页偏移（先过滤后分页）")),
+		mcp.WithBoolean("includePayload", mcp.Description("是否带完整 payload（默认 false；true 时每条含 payloadText/payloadBase64，注意上下文体积，建议配合小 limit）")),
+	)
+}
+
+func mcpListLongConnLogs(base string) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := clientFromContext(ctx, base)
+		if err != nil {
+			return toolErr(err), nil
+		}
+		p := req.GetArguments()
+		app, did, argErr := requireAppDid(p)
+		if argErr != nil {
+			return argErr, nil
+		}
+		q, usageErr := parseLongConnQuery(p)
+		if usageErr != nil {
+			return usageErr, nil
+		}
+		var res *mnpapi.LongConnResult
+		if sid := mustString(p, "sessionId"); sid != "" {
+			res, err = c.ListSessionLongConn(ctx, sid, q)
+		} else {
+			res, err = c.GetDeviceLongConn(ctx, app, did, q)
+		}
+		if err != nil {
+			return toolErr(err), nil
+		}
+		if res.SessionID == "" {
+			return mcp.NewToolResultText("该设备没有任何长连接日志会话（可能未在抓包或 48h 保留期已过）。请先在真机激活长连接抓包，或确认 app/did 正确。"), nil
+		}
+		includePayload := false
+		if v, ok := p["includePayload"].(bool); ok {
+			includePayload = v
+		}
+		entries := make([]map[string]any, 0, len(res.Entries))
+		var latestSnapshot map[string]any
+		for _, e := range res.Entries {
+			entry := map[string]any{
+				"id":             e.ID,
+				"seq":            e.Seq,
+				"ts":             e.TS,
+				"eventType":      e.EventType,
+				"channelId":      e.ChannelID,
+				"bizType":        e.BizType,
+				"msgId":          e.MsgID,
+				"mocked":         e.Mocked,
+				"mockRuleId":     e.MockRuleID,
+				"ackSent":        e.AckSent,
+				"duplicate":      e.Duplicate,
+				"status":         e.Status,
+				"payloadPreview": pushPayloadPreview(e.PayloadText),
+			}
+			if includePayload {
+				entry["payloadText"] = e.PayloadText
+				entry["payloadBase64"] = e.PayloadBase64
+			}
+			entries = append(entries, entry)
+			if e.EventType == capture.LongConnectionEventSnapshot {
+				// entries 按 seq 升序，最后一次赋值即最新快照。
+				latestSnapshot = map[string]any{"seq": e.Seq, "ts": e.TS, "status": e.Status}
+			}
+		}
+		out := map[string]any{
+			"sessionId": res.SessionID,
+			"entries":   entries,
+			"total":     res.Total,
+		}
+		if latestSnapshot != nil {
+			out["latestSnapshot"] = latestSnapshot
+		}
+		return jsonText(out), nil
+	}
+}
+
+// ---- create_push_mock_rule_from_log ------------------------------------------
+
+func toolCreatePushMockRuleFromLog() mcp.Tool {
+	return mcp.NewTool("create_push_mock_rule_from_log",
+		mcp.WithDescription("从一条长连接日志一键创建推送模板：以日志的 channelId/bizType 为模板域、payload 为模板 payload 原样固化，并把原日志快照（source：channelId/bizType/msgId/payloadText/capturedAt）随规则持久化。创建即启用（enabled=true），可直接 send_push_mock_rule。"+
+			"何时用：把某条真实 push「复现成假推送」——先 list_longconn_logs 找到目标记录拿 logId，再本工具建模板，再 send。可选 replacePayload 覆盖默认 payload（缺省=原日志 payloadText）。"+
+			"⚠️ 默认 payload 与真实包相同（msgid/session_id/time 都是真实值），send 前必须先 update_push_mock_rule 把 msgid/session_id/time 换成全新随机大整数——否则 IM 客户端按 id 判重，假 push 被静默丢弃、UI 无变化；注意协议层 ACK 正常回传，日志里仍会显示 mocked=true+ackSent=true，不要据此误判为送达。touser/fromuser/name 保持当前设备登录账号骨架，勿跨账号抄。"+
+			"注意：不做 Web 前端的 [mock] 标记注入——需要业务 UI 显示 mock 标识时请用 replacePayload 自行改 payload 文本。错误处理：404 logId 不在该设备日志中（48h 保留期内）或无会话；403 仅 owner/admin 可创建；409 同域冲突（该 channelId+bizType 已有启用模板）。"),
+		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
+		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
+		mcp.WithString("sessionId", mcp.Description("会话 ID（可选；缺省自动解析，同 list_longconn_logs）")),
+		mcp.WithString("logId", mcp.Required(), mcp.Description("日志记录 ID（来自 list_longconn_logs entries[].id）")),
+		mcp.WithString("replacePayload", mcp.Description("覆盖模板 payload（可选；缺省=原日志 payloadText，无文本时用 payloadBase64）")),
+		mcp.WithString("note", mcp.Description("规则备注（可选；缺省自动填 'from log <logId>'，避免后续 update 被'改内容必带 note'约束卡住）")),
+	)
+}
+
+func mcpCreatePushMockRuleFromLog(base string) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := clientFromContext(ctx, base)
+		if err != nil {
+			return toolErr(err), nil
+		}
+		p := req.GetArguments()
+		app, did, argErr := requireAppDid(p)
+		if argErr != nil {
+			return argErr, nil
+		}
+		logID := mustString(p, "logId")
+		if logID == "" {
+			return mcp.NewToolResultError("logId 必填（来自 list_longconn_logs entries[].id）。"), nil
+		}
+
+		// 定位记录：sessionId 缺省时自动解析（capturing 优先），然后按 logId
+		// 分页扫描（48h 窗口上限 1000 条，扫描预算 3 页 × 500 = 1500，覆盖上限）。
+		sessionID := mustString(p, "sessionId")
+		if sessionID == "" {
+			probe, err := c.GetDeviceLongConn(ctx, app, did, capture.LongConnectionQuery{Limit: 1})
+			if err != nil {
+				return toolErr(err), nil
+			}
+			sessionID = probe.SessionID
+			if sessionID == "" {
+				return mcp.NewToolResultText("该设备没有任何长连接日志会话（可能未在抓包或 48h 保留期已过），无法定位 logId。"), nil
+			}
+		}
+		var rec *capture.LongConnectionRecord
+		for offset := 0; offset < 1500 && rec == nil; offset += 500 {
+			page, err := c.ListSessionLongConn(ctx, sessionID, capture.LongConnectionQuery{Limit: 500, Offset: offset})
+			if err != nil {
+				return toolErr(err), nil
+			}
+			for i := range page.Entries {
+				if page.Entries[i].ID == logID {
+					rec = &page.Entries[i]
+					break
+				}
+			}
+			if len(page.Entries) < 500 {
+				break
+			}
+		}
+		if rec == nil {
+			return mcp.NewToolResultText("未找到日志记录 logId=" + logID + "（不在该设备/会话的 48h 保留期内）。请重新 list_longconn_logs 确认 logId。"), nil
+		}
+
+		// 组装模板（对齐 Web 一键建：channelId/bizType 带出 + source 快照 + enabled）。
+		note := mustString(p, "note")
+		if strings.TrimSpace(note) == "" {
+			// 自动填默认 note：避免后续 update 改 payload 时被服务端"改内容必带 note"约束 400。
+			note = "from log " + logID
+		}
+		in := &capture.PushMockRuleInput{
+			ChannelId: rec.ChannelID,
+			BizType:   rec.BizType,
+			Enabled:   true,
+			Note:      note,
+			Source: &capture.PushMockSource{
+				ChannelId:     rec.ChannelID,
+				BizType:       rec.BizType,
+				MsgId:         rec.MsgID,
+				PayloadText:   rec.PayloadText,
+				PayloadBase64: rec.PayloadBase64,
+				CapturedAt:    rec.TS,
+			},
+		}
+		if payload := mustString(p, "replacePayload"); payload != "" {
+			in.ReplacePayload = payload
+		} else if rec.PayloadText != "" {
+			in.ReplacePayload = rec.PayloadText
+		} else {
+			in.ReplacePayloadBase64 = rec.PayloadBase64
+		}
+		if strings.TrimSpace(in.ReplacePayload) == "" && in.ReplacePayloadBase64 == "" {
+			return mcp.NewToolResultText("该日志无 payload 文本/base64，无法用作模板；请换一条 packet 日志或用 create_push_mock_rule 手写。"), nil
+		}
+		rule, err := c.CreatePushMockRule(ctx, app, did, in)
+		if err != nil {
+			return toolErr(err), nil
+		}
+		return jsonText(map[string]any{
+			"rule": pushRuleSummary(rule),
+			"hint": "已从日志一键建模板并启用（enabled=true）。模拟推送请调用 send_push_mock_rule(ruleId)。",
+		}), nil
+	}
+}
+
+// ---- get_push_mock_rule -------------------------------------------------------
+
+func toolGetPushMockRule() mcp.Tool {
+	return mcp.NewTool("get_push_mock_rule",
+		mcp.WithDescription("读取单条推送模板完整配置：channelId/bizType/match/replacePayload（完整文本，不截断）/replacePayloadBase64/enabled/effective/命中统计/note/source 原日志快照/owner。"+
+			"何时用：编辑模板前核对当前 payload 与来源日志（source 快照）；确认某 ruleId 的命中次数与生效状态。错误处理：403 非 owner/admin；404 模板不存在（或不属于该设备）。"),
+		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
+		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
+		mcp.WithString("ruleId", mcp.Required(), mcp.Description("模板 ID（来自 list_push_mock_rules）")),
+	)
+}
+
+func mcpGetPushMockRule(base string) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := clientFromContext(ctx, base)
+		if err != nil {
+			return toolErr(err), nil
+		}
+		p := req.GetArguments()
+		app, did, argErr := requireAppDid(p)
+		if argErr != nil {
+			return argErr, nil
+		}
+		r, err := c.GetPushMockRule(ctx, app, did, mustString(p, "ruleId"))
+		if err != nil {
+			return toolErr(err), nil
+		}
+		view := map[string]any{
+			"ruleId":               r.ID,
+			"channelId":            r.ChannelId,
+			"bizType":              r.BizType,
+			"match":                r.Match,
+			"replacePayload":       r.ReplacePayload,
+			"replacePayloadBase64": r.ReplacePayloadBase64,
+			"enabled":              r.Enabled,
+			"effective":            r.Effective,
+			"hitCount":             r.HitCount,
+			"lastHitAt":            r.LastHitAt,
+			"createdAt":            r.CreatedAt,
+			"updatedAt":            r.UpdatedAt,
+			"note":                 r.Note,
+			"owner":                r.Owner,
+		}
+		if r.Source != nil {
+			view["source"] = map[string]any{
+				"channelId":     r.Source.ChannelId,
+				"bizType":       r.Source.BizType,
+				"msgId":         r.Source.MsgId,
+				"payloadText":   r.Source.PayloadText,
+				"payloadBase64": r.Source.PayloadBase64,
+				"capturedAt":    r.Source.CapturedAt,
+			}
+		}
+		return jsonText(map[string]any{"rule": view}), nil
+	}
 }
