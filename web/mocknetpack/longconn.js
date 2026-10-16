@@ -133,8 +133,14 @@ function renderLongConn() {
     const el = document.createElement("div");
     el.className = "lc-row" + (detail._activeLongConn === e.id ? " active" : "");
     const meta = [];
+    if (e.channelId) meta.push(e.channelId);
     if (e.bizType) meta.push("biz=" + e.bizType);
+    // msgId：独立字段优先；否则从 SDK 摘要文本（"msgId=123"）提取。
     if (e.msgId) meta.push("msg=" + e.msgId);
+    else {
+      const m = (e.payloadText || "").match(/msgId=(\d+)/);
+      if (m) meta.push("msg=" + m[1]);
+    }
     if (e.duplicate) meta.push("dup");
     if (e.empty) meta.push("empty");
     el.innerHTML =
@@ -183,6 +189,29 @@ function renderSnapshotCard(s) {
   box.classList.remove("hidden");
 }
 
+/** payload 文本美化：SDK 摘要形态（"type=... msgId=... payload={json}"）或纯 JSON
+ *  都尝试美化为缩进多行；解析失败原样返回。返回 { display, json }——json=true
+ *  时给 pre 加 lc-payload-json 类（语义标记，全展开无折叠）。注意：64 位
+ *  msgid/session_id 等数字字段在 JSON.parse 时已丢精度（仅展示美化，不回写
+ *  服务端/不做模板替换，无副作用）。 */
+function formatPayloadText(text) {
+  if (!text) return { display: text, json: false };
+  // SDK 摘要：头部 "type=... msgId=... bizType=... " + "payload=" + JSON。
+  const idx = text.indexOf("payload=");
+  if (idx >= 0) {
+    const head = text.slice(0, idx + "payload=".length);
+    const jsonPart = text.slice(idx + "payload=".length);
+    try {
+      return { display: head + "\n" + JSON.stringify(JSON.parse(jsonPart), null, 2), json: true };
+    } catch (e) { /* 非 JSON，落到下面 */ }
+  }
+  try {
+    return { display: JSON.stringify(JSON.parse(text), null, 2), json: true };
+  } catch (e) {
+    return { display: text, json: false };
+  }
+}
+
 /** 详情面板：Overview 字段 + snapshot + payload（Raw，esc 防 XSS）。
  *  target 默认为主详情区 longconnDetail；history.js 可传 historyDetail 浮层。 */
 function renderLongConnDetail(e, target) {
@@ -222,9 +251,14 @@ function renderLongConnDetail(e, target) {
     : "";
 
   // payload：三选一（完整 text / base64 二进制 / 截断 preview）。全部 esc。
+  // text 路径：JSON 美化，默认全展开（不再有展开/收起切换）。
   let payloadBlock = "";
   if (e.payloadText) {
-    payloadBlock = '<div class="d-block"><div class="d-title">payload（解析内容）</div><pre class="raw">' + esc(e.payloadText) + "</pre></div>";
+    const fmt = formatPayloadText(e.payloadText);
+    payloadBlock =
+      '<div class="d-block"><div class="d-title">payload（解析内容）</div>' +
+      '<pre class="raw' + (fmt.json ? " lc-payload-json" : "") + '">' +
+      esc(fmt.display) + "</pre></div>";
   } else if (e.payloadBase64) {
     payloadBlock = '<div class="d-block"><div class="d-title">payload（base64 二进制）</div><pre class="raw">' + esc(e.payloadBase64) + "</pre></div>";
   } else if (e.payloadPreview) {
