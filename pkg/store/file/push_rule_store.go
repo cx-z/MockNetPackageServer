@@ -113,46 +113,9 @@ func (s *pushMockRuleStore) Delete(ctx context.Context, id string) error {
 // version can never be observed half-updated (对齐 mockRuleStore.Mutate，但使用
 // 独立的 PushRuleVersions 计数器)。
 func (s *pushMockRuleStore) Mutate(ctx context.Context, app, did string, fn func([]*capture.PushMockRule) ([]*capture.PushMockRule, bool, error)) (int, error) {
-	s.fs.mu.Lock()
-	defer s.fs.mu.Unlock()
-	if s.fs.cfg.ReadOnly {
-		return 0, store.ErrReadOnly
-	}
-
-	all := s.fs.data.PushMockRules
-	deviceRules := make([]*capture.PushMockRule, 0, len(all))
-	for _, r := range all {
-		if r.App == app && r.Did == did {
-			deviceRules = append(deviceRules, r)
-		}
-	}
-	updated, changed, err := fn(deviceRules)
-	if err != nil {
-		return 0, err
-	}
-	if !changed {
-		return s.fs.data.PushRuleVersions[versionKey(app, did)], nil
-	}
-
-	// Replace this device's push rules in place, preserving every other device's rows.
-	out := make([]*capture.PushMockRule, 0, len(all)-len(deviceRules)+len(updated))
-	for _, r := range all {
-		if r.App == app && r.Did == did {
-			continue
-		}
-		out = append(out, r)
-	}
-	out = append(out, updated...)
-	s.fs.data.PushMockRules = out
-
-	k := versionKey(app, did)
-	v := s.fs.data.PushRuleVersions[k] + 1
-	if s.fs.data.PushRuleVersions == nil {
-		s.fs.data.PushRuleVersions = make(map[string]int)
-	}
-	s.fs.data.PushRuleVersions[k] = v
-	s.fs.markDirty()
-	return v, nil
+	return mutateDeviceRules(s.fs, &s.fs.data.PushMockRules, &s.fs.data.PushRuleVersions, app, did, fn,
+		func(r *capture.PushMockRule) string { return r.App },
+		func(r *capture.PushMockRule) string { return r.Did })
 }
 
 // GetRuleVersion returns the current push rule-set version for (app, did)

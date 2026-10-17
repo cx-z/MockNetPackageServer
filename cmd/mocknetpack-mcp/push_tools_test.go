@@ -21,9 +21,9 @@ func TestMCPServer_ListPushMockRulesTool(t *testing.T) {
 	mux.HandleFunc("/api/v1/devices/com.a/d1/push-mock-rules", func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodGet, r.Method)
 		writeResp(w, 200, map[string]any{"version": 3, "rules": []*capture.PushMockRuleView{
-			{PushMockRule: &capture.PushMockRule{ID: "pr1", ChannelId: "xcpush_tcp", BizType: "1",
+			{PushMockRule: &capture.PushMockRule{ID: "pr1", ChannelID: "xcpush_tcp", BizType: "1",
 				ReplacePayload: `{"content":"hello"}`, Enabled: true, Note: "chat", HitCount: 7}, Effective: true},
-			{PushMockRule: &capture.PushMockRule{ID: "pr2", ChannelId: "xcpush_tcp", BizType: "2",
+			{PushMockRule: &capture.PushMockRule{ID: "pr2", ChannelID: "xcpush_tcp", BizType: "2",
 				ReplacePayload: `{"type":"mock"}`, Enabled: false, Note: "off"}, Effective: false},
 		}})
 	})
@@ -56,7 +56,7 @@ func TestMCPServer_CreatePushMockRuleTool(t *testing.T) {
 		require.Equal(t, http.MethodPost, r.Method)
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		writeResp(w, 201, capture.PushMockRuleView{PushMockRule: &capture.PushMockRule{
-			ID: "pr-new", ChannelId: got.ChannelId, BizType: got.BizType,
+			ID: "pr-new", ChannelID: got.ChannelID, BizType: got.BizType,
 			ReplacePayload: got.ReplacePayload, Enabled: got.Enabled, Note: got.Note,
 		}, Effective: got.Enabled})
 	})
@@ -69,7 +69,7 @@ func TestMCPServer_CreatePushMockRuleTool(t *testing.T) {
 		"replacePayload": `{"content":"mock-msg"}`, "note": "复现压测",
 	})
 	assert.False(t, res.IsError, resultText(res))
-	assert.Equal(t, "xcpush_tcp", got.ChannelId)
+	assert.Equal(t, "xcpush_tcp", got.ChannelID)
 	assert.Equal(t, "1", got.BizType)
 	assert.Equal(t, `{"content":"mock-msg"}`, got.ReplacePayload)
 	assert.Equal(t, "复现压测", got.Note)
@@ -111,7 +111,7 @@ func TestMCPServer_UpdatePushMockRuleTool(t *testing.T) {
 		require.Equal(t, http.MethodPut, r.Method)
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		writeResp(w, 200, capture.PushMockRuleView{PushMockRule: &capture.PushMockRule{
-			ID: "pr1", ChannelId: "xcpush_tcp", BizType: "1",
+			ID: "pr1", ChannelID: "xcpush_tcp", BizType: "1",
 			Match: got.Match, ReplacePayload: got.ReplacePayload,
 			ReplacePayloadBase64: got.ReplacePayloadBase64,
 			Enabled:              true, Note: derefNote(got.Note),
@@ -161,7 +161,7 @@ func TestMCPServer_SendPushMockRuleTool(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/devices/com.a/d1/push-mock-rules/pr1/send", func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodPost, r.Method)
-		writeResp(w, 200, capture.PushRuleCommandView{ID: "cmd-1", RuleID: "pr1", ChannelId: "xcpush_tcp", BizType: "1"})
+		writeResp(w, 200, capture.PushRuleCommandView{ID: "cmd-1", RuleID: "pr1", ChannelID: "xcpush_tcp", BizType: "1"})
 	})
 	mux.HandleFunc("/api/v1/devices/com.a/d1/push-mock-rules/pr2/send", func(w http.ResponseWriter, r *http.Request) {
 		writeResp(w, 409, map[string]string{"error": "push_rule_disabled", "message": "推送模板已停用"})
@@ -330,7 +330,7 @@ func TestMCPServer_CreatePushMockRuleFromLogTool(t *testing.T) {
 		require.Equal(t, http.MethodPost, r.Method)
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		writeResp(w, 201, capture.PushMockRuleView{PushMockRule: &capture.PushMockRule{
-			ID: "pr-from-log", ChannelId: got.ChannelId, BizType: got.BizType,
+			ID: "pr-from-log", ChannelID: got.ChannelID, BizType: got.BizType,
 			ReplacePayload: got.ReplacePayload, Enabled: got.Enabled, Note: got.Note,
 			Source: got.Source,
 		}, Effective: true})
@@ -343,15 +343,15 @@ func TestMCPServer_CreatePushMockRuleFromLogTool(t *testing.T) {
 		"app": "com.a", "did": "d1", "logId": "lc1", "note": "复现 chat 场景",
 	})
 	assert.False(t, res.IsError, resultText(res))
-	assert.Equal(t, "xcpush_tcp", got.ChannelId, "channelId must come from the log record")
+	assert.Equal(t, "xcpush_tcp", got.ChannelID, "channelId must come from the log record")
 	assert.Equal(t, "1", got.BizType, "bizType must come from the log record")
 	assert.Equal(t, `{"content":"real-1"}`, got.ReplacePayload, "payload must default to the record payloadText")
 	assert.True(t, got.Enabled, "one-click template must be enabled")
 	assert.Equal(t, "复现 chat 场景", got.Note)
 	require.NotNil(t, got.Source, "one-click creation must carry the source snapshot")
-	assert.Equal(t, "xcpush_tcp", got.Source.ChannelId)
+	assert.Equal(t, "xcpush_tcp", got.Source.ChannelID)
 	assert.Equal(t, "1", got.Source.BizType)
-	assert.Equal(t, "m1", got.Source.MsgId)
+	assert.Equal(t, "m1", got.Source.MsgID)
 	assert.Equal(t, `{"content":"real-1"}`, got.Source.PayloadText, "source snapshot must carry payloadText")
 	assert.Equal(t, time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC), got.Source.CapturedAt, "source snapshot must carry capturedAt")
 	body := resultText(res)
@@ -383,10 +383,10 @@ func TestMCPServer_GetPushMockRuleTool(t *testing.T) {
 	mux.HandleFunc("/api/v1/devices/com.a/d1/push-mock-rules", func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodGet, r.Method)
 		writeResp(w, 200, map[string]any{"version": 5, "rules": []*capture.PushMockRuleView{
-			{PushMockRule: &capture.PushMockRule{ID: "pr1", ChannelId: "xcpush_tcp", BizType: "1",
+			{PushMockRule: &capture.PushMockRule{ID: "pr1", ChannelID: "xcpush_tcp", BizType: "1",
 				ReplacePayload: `{"content":"very-long-payload-that-must-not-be-truncated"}`,
 				Enabled: true, Note: "chat", HitCount: 9, Owner: "admin",
-				Source: &capture.PushMockSource{ChannelId: "xcpush_tcp", BizType: "1", MsgId: "m1", CapturedAt: capturedAt},
+				Source: &capture.PushMockSource{ChannelID: "xcpush_tcp", BizType: "1", MsgID: "m1", CapturedAt: capturedAt},
 			}, Effective: true},
 		}})
 	})

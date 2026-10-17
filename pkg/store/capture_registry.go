@@ -40,7 +40,7 @@ var (
 	// without forcing an edit .
 	ErrNoteRequired = errors.New("mock rule note is required when editing the canned response")
 	// ErrPushRuleInvalidChannel means a push mock rule was created without the
-	// required ChannelId match key (能力线 L7; maps to HTTP 400).
+	// required ChannelID match key (能力线 L7; maps to HTTP 400).
 	ErrPushRuleInvalidChannel = errors.New("push mock rule requires channelId")
 	// ErrPushRuleDisabled means a "模拟推送" was requested for a disabled push
 	// mock rule (能力线 L7 模拟推送形态; maps to HTTP 409).

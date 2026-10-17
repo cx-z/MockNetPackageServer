@@ -65,7 +65,7 @@ func TestPushMockRuleAPI_CRUDAndVersion(t *testing.T) {
 	require.NotEmpty(t, created.ID)
 	assert.False(t, created.Enabled)
 	assert.False(t, created.Effective)
-	assert.Equal(t, "xcpush_tcp", created.ChannelId)
+	assert.Equal(t, "xcpush_tcp", created.ChannelID)
 
 	// Web full list: version=1, rule present, no conflicts.
 	var list PushMockRuleListResponse
@@ -74,7 +74,7 @@ func TestPushMockRuleAPI_CRUDAndVersion(t *testing.T) {
 	assert.Equal(t, 1, list.Version)
 	assert.Len(t, list.Rules, 1)
 	assert.Empty(t, list.Conflicts)
-	assert.Equal(t, "xcpush_tcp", list.Rules[0].ChannelId)
+	assert.Equal(t, "xcpush_tcp", list.Rules[0].ChannelID)
 	assert.Equal(t, int64(0), list.Rules[0].HitCount)
 
 	// SDK 增量拉取（sinceVersion=0）：只返回 effective 规则；无 sinceVersion=1 变化。
@@ -103,7 +103,7 @@ func TestPushMockRuleAPI_CRUDAndVersion(t *testing.T) {
 	for _, leaked := range []string{`"owner"`, `"updatedBy"`, `"hitCount"`, `"lastHitAt"`, `"source"`, `"note"`, `"conflicts"`} {
 		assert.NotContains(t, string(raw), leaked, "SDK pull must not carry Web-only field "+leaked)
 	}
-	assert.Equal(t, "xcpush_tcp", sdk2.Rules[0].ChannelId)
+	assert.Equal(t, "xcpush_tcp", sdk2.Rules[0].ChannelID)
 
 	// 同版本增量拉取：无变化（空数组）。
 	var sdk3 sdkPushRuleListResponse
@@ -175,7 +175,7 @@ func TestPushMockRuleAPI_UpdateMigratesDomain(t *testing.T) {
 		pushUpdateBody("tip", `{"type":"chat","data":{"tip":"moved"}}`, "迁移匹配键域", pushBoolPtr(true),
 			map[string]any{"channelId": "xcpush_tcp", "bizType": "2"}), &moved)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "xcpush_tcp", moved.ChannelId)
+	assert.Equal(t, "xcpush_tcp", moved.ChannelID)
 	assert.Equal(t, "2", moved.BizType)
 	assert.True(t, moved.Enabled)
 	assert.True(t, moved.Effective)
@@ -214,7 +214,7 @@ func TestPushMockRuleAPI_UpdateMigratesDomain(t *testing.T) {
 		pushUpdateBody("tip", `{"type":"chat","data":{"tip":"y"}}`, "只改bizType", nil,
 			map[string]any{"bizType": "3"}), &c2)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "xcpush_tcp", c2.ChannelId, "channelId 未提供保持原值")
+	assert.Equal(t, "xcpush_tcp", c2.ChannelID, "channelId 未提供保持原值")
 	assert.Equal(t, "3", c2.BizType)
 }
 
@@ -279,7 +279,7 @@ func TestPushMockRuleAPI_SendCommand(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.NotEmpty(t, cmd.ID)
 	assert.Equal(t, created.ID, cmd.RuleID)
-	assert.Equal(t, "xcpush_tcp", cmd.ChannelId)
+	assert.Equal(t, "xcpush_tcp", cmd.ChannelID)
 	assert.Equal(t, "1", cmd.BizType)
 	assert.Equal(t, `{"type":"chat","data":{"tip":"mocked"}}`, cmd.Payload)
 

@@ -151,8 +151,9 @@ func (m *CaptureManager) GetShare(ctx context.Context, shareID string) (*ShareSn
 	}
 	return nil, ErrNotFound
 }
-// janitor; expired shares are also rejected lazily on GetShare, so this is
-// housekeeping that keeps the persisted file bounded).
+// PurgeExpiredShares removes expired share snapshots from the persisted file.
+// It is the janitor; expired shares are also rejected lazily on GetShare, so
+// this is housekeeping that keeps the persisted file bounded.
 func (m *CaptureManager) PurgeExpiredShares(ctx context.Context) {
 	if _, err := m.sharesStore.DeleteExpired(ctx, time.Now()); err != nil {
 		m.log.Warn("capture health check: purge expired shares failed", "error", err)

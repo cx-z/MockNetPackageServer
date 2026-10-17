@@ -30,7 +30,7 @@ type PushMockRuleListResponse struct {
 // reach the SDK (对齐 HTTP sdkRuleView 语义)。
 type sdkPushRuleView struct {
 	ID                   string                 `json:"id"`
-	ChannelId            string                 `json:"channelId"`
+	ChannelID            string                 `json:"channelId"`
 	// BizType 恒输出（含空串）：2026-10-16 线上事故同构修复——空 bizType 省略
 	// 字段会让 SDK 非 Optional 模型 decode 失败（规则列表整体拉取失败）；
 	// SDK 端已对齐 Optional（yaml 非 required），空串 = 不限定 bizType。
@@ -48,7 +48,7 @@ func toSDKPushRules(views []*capture.PushMockRuleView) []sdkPushRuleView {
 	for _, v := range views {
 		out = append(out, sdkPushRuleView{
 			ID:                   v.ID,
-			ChannelId:            v.ChannelId,
+			ChannelID:            v.ChannelID,
 			BizType:              v.BizType,
 			Match:                v.Match,
 			ReplacePayload:       v.ReplacePayload,
@@ -201,7 +201,7 @@ func (a *API) handleDeletePushMockRule(w http.ResponseWriter, r *http.Request) {
 // 是 equals|contains（空按 contains）；jsonPath 为空但 jsonPathValue 非空 →
 // 400（值无路径无意义，防止配置漂移）。
 func validatePushMockRuleInput(w http.ResponseWriter, in *capture.PushMockRuleInput) bool {
-	if in.ChannelId == "" {
+	if in.ChannelID == "" {
 		writeError(w, http.StatusBadRequest, "missing_field", "channelId is required")
 		return false
 	}
@@ -211,7 +211,7 @@ func validatePushMockRuleInput(w http.ResponseWriter, in *capture.PushMockRuleIn
 // validateUpdatePushMockRuleInput validates the edit payload (UpdatePushMockRuleInput).
 // 2026-10-16（用户拍板放开匹配键编辑）：channelId 显式提供（编辑迁移域）时不能为空。
 func validateUpdatePushMockRuleInput(w http.ResponseWriter, in *capture.UpdatePushMockRuleInput) bool {
-	if in.ChannelId != nil && strings.TrimSpace(*in.ChannelId) == "" {
+	if in.ChannelID != nil && strings.TrimSpace(*in.ChannelID) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_field", "channelId cannot be empty")
 		return false
 	}
@@ -270,7 +270,7 @@ func toSDKPushCommand(c capture.PushRuleCommand) capture.PushRuleCommandView {
 	return capture.PushRuleCommandView{
 		ID:            c.ID,
 		RuleID:        c.RuleID,
-		ChannelId:     c.ChannelId,
+		ChannelID:     c.ChannelID,
 		BizType:       c.BizType,
 		Payload:       c.Payload,
 		PayloadBase64: c.PayloadBase64,

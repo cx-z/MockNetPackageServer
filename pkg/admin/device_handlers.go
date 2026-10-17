@@ -203,7 +203,7 @@ func (a *API) handleDeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 		sdkCommands = append(sdkCommands, capture.PushRuleCommandView{
 			ID:            c.ID,
 			RuleID:        c.RuleID,
-			ChannelId:     c.ChannelId,
+			ChannelID:     c.ChannelID,
 			BizType:       c.BizType,
 			Payload:       c.Payload,
 			PayloadBase64: c.PayloadBase64,

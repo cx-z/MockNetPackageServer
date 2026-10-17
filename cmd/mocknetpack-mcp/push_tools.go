@@ -146,7 +146,7 @@ func mcpListPushMockRules(base string) server.ToolHandlerFunc {
 			if r == nil || r.PushMockRule == nil {
 				continue
 			}
-			if channelFilter != "" && r.ChannelId != channelFilter {
+			if channelFilter != "" && r.ChannelID != channelFilter {
 				continue
 			}
 			payload := r.ReplacePayload
@@ -155,7 +155,7 @@ func mcpListPushMockRules(base string) server.ToolHandlerFunc {
 			}
 			views = append(views, map[string]any{
 				"ruleId":         r.ID,
-				"channelId":      r.ChannelId,
+				"channelId":      r.ChannelID,
 				"bizType":        r.BizType,
 				"payloadPreview": pushPayloadPreview(payload),
 				"enabled":        r.Enabled,
@@ -181,13 +181,13 @@ func mcpCreatePushMockRule(base string) server.ToolHandlerFunc {
 			return argErr, nil
 		}
 		in := &capture.PushMockRuleInput{
-			ChannelId:      mustString(p, "channelId"),
+			ChannelID:      mustString(p, "channelId"),
 			BizType:        mustString(p, "bizType"),
 			ReplacePayload: mustString(p, "replacePayload"),
 			Note:           mustString(p, "note"),
 			Enabled:        true, // 一键建模板语义：创建即启用，可直接 send
 		}
-		if in.ChannelId == "" {
+		if in.ChannelID == "" {
 			return mcp.NewToolResultError("channelId 必填（通道标识，如 xcpush_tcp）。"), nil
 		}
 		if strings.TrimSpace(in.ReplacePayload) == "" {
@@ -295,7 +295,7 @@ func mcpSendPushMockRule(base string) server.ToolHandlerFunc {
 		return jsonText(map[string]any{
 			"commandId": cmd.ID,
 			"ruleId":    cmd.RuleID,
-			"channelId": cmd.ChannelId,
+			"channelId": cmd.ChannelID,
 			"bizType":   cmd.BizType,
 			"hint":      "指令已入队（pending）——入队成功 ≠ 已到达设备。SDK 约 3s 心跳拉取后构造注入；到达证据是稍后长连接日志出现 mocked=true 的 packet。可重复 send 连续下发多条。",
 		}), nil
@@ -378,7 +378,7 @@ func pushRuleSummary(r *capture.PushMockRuleView) map[string]any {
 	}
 	return map[string]any{
 		"ruleId":    r.ID,
-		"channelId": r.ChannelId,
+		"channelId": r.ChannelID,
 		"bizType":   r.BizType,
 		"enabled":   r.Enabled,
 		"effective": r.Effective,
@@ -611,14 +611,14 @@ func mcpCreatePushMockRuleFromLog(base string) server.ToolHandlerFunc {
 			note = "from log " + logID
 		}
 		in := &capture.PushMockRuleInput{
-			ChannelId: rec.ChannelID,
+			ChannelID: rec.ChannelID,
 			BizType:   rec.BizType,
 			Enabled:   true,
 			Note:      note,
 			Source: &capture.PushMockSource{
-				ChannelId:     rec.ChannelID,
+				ChannelID:     rec.ChannelID,
 				BizType:       rec.BizType,
-				MsgId:         rec.MsgID,
+				MsgID:         rec.MsgID,
 				PayloadText:   rec.PayloadText,
 				PayloadBase64: rec.PayloadBase64,
 				CapturedAt:    rec.TS,
@@ -674,7 +674,7 @@ func mcpGetPushMockRule(base string) server.ToolHandlerFunc {
 		}
 		view := map[string]any{
 			"ruleId":               r.ID,
-			"channelId":            r.ChannelId,
+			"channelId":            r.ChannelID,
 			"bizType":              r.BizType,
 			"match":                r.Match,
 			"replacePayload":       r.ReplacePayload,
@@ -690,9 +690,9 @@ func mcpGetPushMockRule(base string) server.ToolHandlerFunc {
 		}
 		if r.Source != nil {
 			view["source"] = map[string]any{
-				"channelId":     r.Source.ChannelId,
+				"channelId":     r.Source.ChannelID,
 				"bizType":       r.Source.BizType,
-				"msgId":         r.Source.MsgId,
+				"msgId":         r.Source.MsgID,
 				"payloadText":   r.Source.PayloadText,
 				"payloadBase64": r.Source.PayloadBase64,
 				"capturedAt":    r.Source.CapturedAt,

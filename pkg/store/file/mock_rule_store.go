@@ -117,46 +117,9 @@ func (s *mockRuleStore) Delete(ctx context.Context, id string) error {
 // the device's current rules (safe to append/reorder/remove) and returns the
 // new set; any error aborts with the store untouched.
 func (s *mockRuleStore) Mutate(ctx context.Context, app, did string, fn func([]*capture.MockRule) ([]*capture.MockRule, bool, error)) (int, error) {
-	s.fs.mu.Lock()
-	defer s.fs.mu.Unlock()
-	if s.fs.cfg.ReadOnly {
-		return 0, store.ErrReadOnly
-	}
-
-	all := s.fs.data.MockRules
-	deviceRules := make([]*capture.MockRule, 0, len(all))
-	for _, r := range all {
-		if r.App == app && r.Did == did {
-			deviceRules = append(deviceRules, r)
-		}
-	}
-	updated, changed, err := fn(deviceRules)
-	if err != nil {
-		return 0, err
-	}
-	if !changed {
-		return s.fs.data.RuleVersions[versionKey(app, did)], nil
-	}
-
-	// Replace this device's rules in place, preserving every other device's rows.
-	out := make([]*capture.MockRule, 0, len(all)-len(deviceRules)+len(updated))
-	for _, r := range all {
-		if r.App == app && r.Did == did {
-			continue
-		}
-		out = append(out, r)
-	}
-	out = append(out, updated...)
-	s.fs.data.MockRules = out
-
-	k := versionKey(app, did)
-	v := s.fs.data.RuleVersions[k] + 1
-	if s.fs.data.RuleVersions == nil {
-		s.fs.data.RuleVersions = make(map[string]int)
-	}
-	s.fs.data.RuleVersions[k] = v
-	s.fs.markDirty()
-	return v, nil
+	return mutateDeviceRules(s.fs, &s.fs.data.MockRules, &s.fs.data.RuleVersions, app, did, fn,
+		func(r *capture.MockRule) string { return r.App },
+		func(r *capture.MockRule) string { return r.Did })
 }
 
 // GetRuleVersion returns the current rule-set version for (app, did) (0 when

@@ -221,6 +221,9 @@ func (r *LongConnectionRecordInput) Validate() error {
 		if r.Snapshot == nil {
 			return errors.New("snapshot is required when eventType=snapshot")
 		}
+	default:
+		// connect/disconnect/heartbeat events carry no conditional
+		// payload/snapshot requirements.
 	}
 	return nil
 }

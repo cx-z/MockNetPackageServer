@@ -184,39 +184,7 @@ func (m *CaptureManager) ListSessionLongConn(ctx context.Context, sessionID stri
 	entries := m.longconn[sessionID]
 	m.longconnMu.RUnlock()
 
-	filtered := entries
-	if q.ChannelID != "" || q.EventType != "" || q.BizType != "" || q.From != nil || q.To != nil || q.Since > 0 || q.Keyword != "" {
-		kw := strings.ToLower(q.Keyword)
-		filtered = make([]*capture.LongConnectionRecord, 0, len(entries))
-		for _, rec := range entries {
-			if q.ChannelID != "" && rec.ChannelID != q.ChannelID {
-				continue
-			}
-			if q.EventType != "" && rec.EventType != q.EventType {
-				continue
-			}
-			if q.BizType != "" && rec.BizType != q.BizType {
-				continue
-			}
-			if q.From != nil && rec.TS.Before(*q.From) {
-				continue
-			}
-			if q.To != nil && rec.TS.After(*q.To) {
-				continue
-			}
-			if q.Since > 0 && rec.Seq <= q.Since {
-				continue
-			}
-			if kw != "" {
-				hay := strings.ToLower(rec.MsgID + " " + rec.BizType + " " +
-					string(rec.EventType) + " " + rec.ChannelID)
-				if !strings.Contains(hay, kw) {
-					continue
-				}
-			}
-			filtered = append(filtered, rec)
-		}
-	}
+	filtered := filterLongConnEntries(entries, q)
 
 	total := len(filtered)
 	offset := q.Offset
@@ -236,6 +204,47 @@ func (m *CaptureManager) ListSessionLongConn(ctx context.Context, sessionID stri
 		out = append(out, &c)
 	}
 	return out, total, nil
+}
+
+// filterLongConnEntries narrows entries by q's filters (channelId/eventType/
+// bizType exact ANDed, from/to inclusive, since=seq cursor, keyword
+// case-insensitive substring). No active filter returns the input slice
+// unchanged (no copy). Results keep arrival order (seq ascending).
+func filterLongConnEntries(entries []*capture.LongConnectionRecord, q capture.LongConnectionQuery) []*capture.LongConnectionRecord {
+	if q.ChannelID == "" && q.EventType == "" && q.BizType == "" && q.From == nil && q.To == nil && q.Since <= 0 && q.Keyword == "" {
+		return entries
+	}
+	kw := strings.ToLower(q.Keyword)
+	filtered := make([]*capture.LongConnectionRecord, 0, len(entries))
+	for _, rec := range entries {
+		if q.ChannelID != "" && rec.ChannelID != q.ChannelID {
+			continue
+		}
+		if q.EventType != "" && rec.EventType != q.EventType {
+			continue
+		}
+		if q.BizType != "" && rec.BizType != q.BizType {
+			continue
+		}
+		if q.From != nil && rec.TS.Before(*q.From) {
+			continue
+		}
+		if q.To != nil && rec.TS.After(*q.To) {
+			continue
+		}
+		if q.Since > 0 && rec.Seq <= q.Since {
+			continue
+		}
+		if kw != "" {
+			hay := strings.ToLower(rec.MsgID + " " + rec.BizType + " " +
+				string(rec.EventType) + " " + rec.ChannelID)
+			if !strings.Contains(hay, kw) {
+				continue
+			}
+		}
+		filtered = append(filtered, rec)
+	}
+	return filtered
 }
 
 // GetLongConnWithOwner returns the owning device (app, did) of a long-

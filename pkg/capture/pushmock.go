@@ -41,15 +41,15 @@ type PushMockMatch struct {
 // 同语义）。临时长连接日志随会话结束清空，此快照随规则持久化保留，供后续
 // 查看原始值（Decoded Payload）与 Mock 值对照。
 type PushMockSource struct {
-	ChannelId     string    `json:"channelId"`
+	ChannelID     string    `json:"channelId"`
 	BizType       string    `json:"bizType,omitempty"`
-	MsgId         string    `json:"msgId,omitempty"`
+	MsgID         string    `json:"msgId,omitempty"`
 	PayloadText   string    `json:"payloadText,omitempty"`
 	PayloadBase64 string    `json:"payloadBase64,omitempty"`
 	CapturedAt    time.Time `json:"capturedAt"`
 }
 
-// PushMockRule 是持久化的、按设备隔离的 push mock 规则。匹配键 = ChannelId
+// PushMockRule 是持久化的、按设备隔离的 push mock 规则。匹配键 = ChannelID
 // （必选）+ BizType（可选，空 = 不限定）；payload 匹配条件与替换 payload 可编辑。
 // Enabled 是持久化用户开关；运行时 Effective 标志在读时计算（PushMockRuleView）。
 // 2026-10-16（用户拍板）：模板池语义——多条同域（channelId+bizType）enabled
@@ -58,7 +58,7 @@ type PushMockRule struct {
 	ID        string        `json:"id"`
 	App       string        `json:"app"`
 	Did       string        `json:"did"`
-	ChannelId string        `json:"channelId"`
+	ChannelID string        `json:"channelId"`
 	// BizType 恒输出（含空串）：2026-10-16 线上事故同构修复——空 bizType 省略
 	// 字段会让 SDK 非 Optional 模型 decode 失败（规则列表整体拉取失败）。
 	// SDK 端已对齐为 Optional（yaml 非 required），空串 = 不限定 bizType。
@@ -90,10 +90,10 @@ type PushMockRule struct {
 }
 
 // PushMockRuleInput 是创建 payload（对齐 MockRuleInput）。创建定义匹配键
-// （ChannelId 必选 + BizType 可选）；编辑用 UpdatePushMockRuleInput，可迁移
+// （ChannelID 必选 + BizType 可选）；编辑用 UpdatePushMockRuleInput，可迁移
 // 匹配键域（2026-10-16 用户拍板放开）。
 type PushMockRuleInput struct {
-	ChannelId            string          `json:"channelId"`
+	ChannelID            string          `json:"channelId"`
 	BizType              string          `json:"bizType,omitempty"`
 	Match                PushMockMatch   `json:"match,omitempty"`
 	ReplacePayload       string          `json:"replacePayload,omitempty"`
@@ -104,15 +104,15 @@ type PushMockRuleInput struct {
 }
 
 // UpdatePushMockRuleInput 是编辑 payload（对齐 UpdateMockRuleInput）。
-// 2026-10-16（用户拍板）：放开 ChannelId/BizType 编辑——编辑可迁移匹配键域；
+// 2026-10-16（用户拍板）：放开 ChannelID/BizType 编辑——编辑可迁移匹配键域；
 // 模板池语义（同轮拍板）：多条同域 enabled 模板共存合法，编辑迁移域/开启开关
 // 不再做域单活跃 409 冲突检查（模拟推送按规则 ID 快照成指令，无域内匹配歧义）。
-// Source 快照只读。指针区分「未提供（不修改）」与「显式置空」：ChannelId/BizType
+// Source 快照只读。指针区分「未提供（不修改）」与「显式置空」：ChannelID/BizType
 // 与 Note 均为指针——nil = 保持现值（纯 toggle 不清空既有备注），显式置空
-// （BizType 空 = 空 bizType 域，合法；ChannelId 置空 → 400；改内容时 Note
+// （BizType 空 = 空 bizType 域，合法；ChannelID 置空 → 400；改内容时 Note
 // 置空/未提供 → 400 note_required）。
 type UpdatePushMockRuleInput struct {
-	ChannelId            *string       `json:"channelId,omitempty"`
+	ChannelID            *string       `json:"channelId,omitempty"`
 	BizType              *string       `json:"bizType,omitempty"`
 	Match                PushMockMatch `json:"match,omitempty"`
 	ReplacePayload       string        `json:"replacePayload,omitempty"`
@@ -135,7 +135,7 @@ type PushMockRuleView struct {
 // 拍板）后服务端恒返回空数组——多条同域 enabled 模板是合法模板池，全部生效，
 // 不再有"整个域不生效"的冲突报告（对齐 HTTP MockRuleConflict 的历史形态）。
 type PushMockRuleConflict struct {
-	ChannelId string `json:"channelId"`
+	ChannelID string `json:"channelId"`
 	BizType   string `json:"bizType"`
 	Message   string `json:"message"`
 }
@@ -149,7 +149,7 @@ type PushMockRuleConflict struct {
 type PushRuleCommand struct {
 	ID            string    `json:"id"`
 	RuleID        string    `json:"ruleId"`
-	ChannelId     string    `json:"channelId"`
+	ChannelID     string    `json:"channelId"`
 	BizType       string    `json:"bizType,omitempty"`
 	Payload       string    `json:"payload,omitempty"`
 	PayloadBase64 string    `json:"payloadBase64,omitempty"`
@@ -166,7 +166,7 @@ type PushRuleCommand struct {
 type PushRuleCommandView struct {
 	ID            string `json:"id"`
 	RuleID        string `json:"ruleId"`
-	ChannelId     string `json:"channelId"`
+	ChannelID     string `json:"channelId"`
 	BizType       string `json:"bizType"`
 	Payload       string `json:"payload,omitempty"`
 	PayloadBase64 string `json:"payloadBase64,omitempty"`

@@ -32,12 +32,12 @@ func newPushManager(t *testing.T) (*store.CaptureManager, *FileStore) {
 // carry a source snapshot and may omit the note (对齐 HTTP MockRule D6 豁免)。
 func pushInput(channelID, bizType string, enabled bool) *capture.PushMockRuleInput {
 	return &capture.PushMockRuleInput{
-		ChannelId:      channelID,
+		ChannelID:      channelID,
 		BizType:        bizType,
 		Match:          capture.PushMockMatch{Keyword: "tip"},
 		ReplacePayload: `{"type":"chat","data":{"tip":"mocked"}}`,
 		Enabled:        enabled,
-		Source:         &capture.PushMockSource{ChannelId: channelID, BizType: bizType, MsgId: "1"},
+		Source:         &capture.PushMockSource{ChannelID: channelID, BizType: bizType, MsgID: "1"},
 	}
 }
 
@@ -70,7 +70,7 @@ func TestPushRuleStore_MutateVersion(t *testing.T) {
 
 	// file 层 Create 不 bump 版本（版本仅由 Mutate/BumpRuleVersion 驱动，对齐
 	// HTTP mockRuleStore）；HTTP 与 push 版本相互独立（互不污染）。
-	if err := fs.PushMockRules().Create(ctx, &capture.PushMockRule{ID: "p1", App: "app", Did: "d1", ChannelId: "xcpush_tcp", Enabled: true}); err != nil {
+	if err := fs.PushMockRules().Create(ctx, &capture.PushMockRule{ID: "p1", App: "app", Did: "d1", ChannelID: "xcpush_tcp", Enabled: true}); err != nil {
 		t.Fatalf("Create(p1) = %v", err)
 	}
 	if v, _ := fs.PushMockRules().GetRuleVersion(ctx, "app", "d1"); v != 0 {
@@ -104,7 +104,7 @@ func TestPushRuleStore_PersistenceAcrossRestart(t *testing.T) {
 
 	fs := newFS()
 	if err := fs.PushMockRules().Create(ctx, &capture.PushMockRule{
-		ID: "p1", App: "app", Did: "d1", ChannelId: "xcpush_tcp", BizType: "1",
+		ID: "p1", App: "app", Did: "d1", ChannelID: "xcpush_tcp", BizType: "1",
 		Match: capture.PushMockMatch{Keyword: "tip"}, ReplacePayload: `{"ok":1}`, Enabled: true,
 	}); err != nil {
 		t.Fatalf("Create(p1) = %v", err)
@@ -122,7 +122,7 @@ func TestPushRuleStore_PersistenceAcrossRestart(t *testing.T) {
 	if err != nil || len(rules) != 1 {
 		t.Fatalf("after restart List() = %d rules, %v; want 1, nil", len(rules), err)
 	}
-	if rules[0].ID != "p1" || rules[0].ChannelId != "xcpush_tcp" || rules[0].ReplacePayload != `{"ok":1}` || !rules[0].Enabled {
+	if rules[0].ID != "p1" || rules[0].ChannelID != "xcpush_tcp" || rules[0].ReplacePayload != `{"ok":1}` || !rules[0].Enabled {
 		t.Fatalf("restored rule mismatch: %+v", rules[0])
 	}
 	if v, _ := fs2.PushMockRules().GetRuleVersion(ctx, "app", "d1"); v != 1 {
@@ -137,7 +137,7 @@ func TestPushMockRule_CreateVersionAndEffective(t *testing.T) {
 	caller := &store.RuleCaller{Username: "alice", IsAdmin: false}
 
 	// 无 source 且空 note → ErrNoteRequired（手动创建规则语义锚点，对齐 HTTP）。
-	_, _, err := m.CreatePushMockRule(ctx, "app", "d1", &capture.PushMockRuleInput{ChannelId: "xcpush_tcp", Enabled: true}, caller)
+	_, _, err := m.CreatePushMockRule(ctx, "app", "d1", &capture.PushMockRuleInput{ChannelID: "xcpush_tcp", Enabled: true}, caller)
 	if !errors.Is(err, store.ErrNoteRequired) {
 		t.Fatalf("Create(no source, no note) = %v, want ErrNoteRequired", err)
 	}
@@ -228,7 +228,7 @@ func TestPushMockRule_UpdateSemantics(t *testing.T) {
 
 	// 未提供 channelId/bizType（指针 nil）= 保持原匹配键域（2026-10-16 放开
 	// 匹配键编辑后，迁移域需显式携带指针字段）。
-	if upd.ChannelId != "xcpush_tcp" || upd.BizType != "1" {
+	if upd.ChannelID != "xcpush_tcp" || upd.BizType != "1" {
 		t.Fatalf("match key mutated without explicit domain fields: %+v", upd.PushMockRule)
 	}
 }
@@ -309,7 +309,7 @@ func TestPushMockRule_ListActiveSinceVersion(t *testing.T) {
 	if err != nil || !changed || len(active) != 1 {
 		t.Fatalf("pull(from 0) = %d rules changed=%v err=%v; want 1 true nil", len(active), changed, err)
 	}
-	if active[0].ChannelId != "xcpush_tcp" || active[0].BizType != "1" {
+	if active[0].ChannelID != "xcpush_tcp" || active[0].BizType != "1" {
 		t.Fatalf("pulled rule mismatch: %+v", active[0])
 	}
 	// owner 等 Web-only 字段的裁剪在 handler 线格式层（L7.1b toSDKRules，
@@ -467,10 +467,10 @@ func TestPushRuleCommandStore_AppendListMarkConsumed(t *testing.T) {
 	ctx := context.Background()
 
 	now := time.Now()
-	if err := cmds.Append(ctx, "app", "d1", &capture.PushRuleCommand{ID: "c1", RuleID: "r1", ChannelId: "xcpush_tcp", BizType: "1", Payload: `{"a":1}`, CreatedAt: now}); err != nil {
+	if err := cmds.Append(ctx, "app", "d1", &capture.PushRuleCommand{ID: "c1", RuleID: "r1", ChannelID: "xcpush_tcp", BizType: "1", Payload: `{"a":1}`, CreatedAt: now}); err != nil {
 		t.Fatalf("Append(c1) = %v", err)
 	}
-	if err := cmds.Append(ctx, "app", "d1", &capture.PushRuleCommand{ID: "c2", RuleID: "r2", ChannelId: "xcpush_tcp", BizType: "2", Payload: `{"b":2}`, CreatedAt: now}); err != nil {
+	if err := cmds.Append(ctx, "app", "d1", &capture.PushRuleCommand{ID: "c2", RuleID: "r2", ChannelID: "xcpush_tcp", BizType: "2", Payload: `{"b":2}`, CreatedAt: now}); err != nil {
 		t.Fatalf("Append(c2) = %v", err)
 	}
 
@@ -513,7 +513,7 @@ func TestPushRuleCommandStore_PurgeExpiredAndQueueCap(t *testing.T) {
 	// 队列上限：超 100 条丢弃最旧。
 	for i := 0; i < 105; i++ {
 		if err := cmds.Append(ctx, "app", "d1", &capture.PushRuleCommand{
-			ID: "c" + strconv.Itoa(i), RuleID: "r1", ChannelId: "xcpush_tcp", CreatedAt: time.Now(),
+			ID: "c" + strconv.Itoa(i), RuleID: "r1", ChannelID: "xcpush_tcp", CreatedAt: time.Now(),
 		}); err != nil {
 			t.Fatalf("Append #%d = %v", i, err)
 		}

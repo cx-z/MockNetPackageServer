@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/ohler55/ojg/jp"
@@ -87,7 +88,7 @@ func stringifyJSONValue(v interface{}) string {
 		return t
 	case float64:
 		if t == float64(int64(t)) {
-			return fmt.Sprintf("%d", int64(t))
+			return strconv.FormatInt(int64(t), 10)
 		}
 		return fmt.Sprintf("%v", t)
 	case bool:

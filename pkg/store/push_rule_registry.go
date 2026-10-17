@@ -91,7 +91,7 @@ func (m *CaptureManager) EnqueuePushRuleCommand(ctx context.Context, app, did, r
 	cmd := &capture.PushRuleCommand{
 		ID:            id.ULID(),
 		RuleID:        rule.ID,
-		ChannelId:     rule.ChannelId,
+		ChannelID:     rule.ChannelID,
 		BizType:       rule.BizType,
 		Payload:       rule.ReplacePayload,
 		PayloadBase64: rule.ReplacePayloadBase64,
@@ -134,7 +134,7 @@ func (m *CaptureManager) CreatePushMockRule(ctx context.Context, app, did string
 	if in.Source == nil && strings.TrimSpace(in.Note) == "" {
 		return nil, 0, ErrNoteRequired
 	}
-	if strings.TrimSpace(in.ChannelId) == "" {
+	if strings.TrimSpace(in.ChannelID) == "" {
 		return nil, 0, ErrPushRuleInvalidChannel
 	}
 	now := time.Now()
@@ -150,7 +150,7 @@ func (m *CaptureManager) CreatePushMockRule(ctx context.Context, app, did string
 			ID:                   id.ULID(),
 			App:                  app,
 			Did:                  did,
-			ChannelId:            in.ChannelId,
+			ChannelID:            in.ChannelID,
 			BizType:              in.BizType,
 			Match:                in.Match,
 			ReplacePayload:       in.ReplacePayload,
@@ -183,7 +183,7 @@ func (m *CaptureManager) CreatePushMockRule(ctx context.Context, app, did string
 
 // UpdatePushMockRule edits a push rule's payload match, replace payload, note,
 // enabled switch, and — since 2026-10-16（用户拍板放开）— the match key domain
-// (ChannelId+BizType, pointer fields: nil = keep current). 模板池语义（同轮拍板）：
+// (ChannelID+BizType, pointer fields: nil = keep current). 模板池语义（同轮拍板）：
 // 编辑迁移域/开启开关不再做域单活跃 409 冲突检查（多条同域 enabled 共存合法）。
 // The source snapshot stays immutable. The update and the version bump run in ONE
 // store lock. 权限：仅规则 owner 与 admin 可编辑/启停；
@@ -212,20 +212,20 @@ func (m *CaptureManager) UpdatePushMockRule(ctx context.Context, app, did, ruleI
 		}
 
 		// 匹配键域编辑（2026-10-16 用户拍板放开）：指针字段区分「未提供」与
-		// 「显式置空」。ChannelId 显式提供时不能为空（契约必填）。
+		// 「显式置空」。ChannelID 显式提供时不能为空（契约必填）。
 		// 2026-10-16（用户拍板）：模板池允许多条同域共存，编辑迁移域/开启开关
 		// 不再做域单活跃 409 冲突检查（模拟推送按规则 ID 快照，无匹配歧义）。
-		targetChannel, targetBiz := existing.ChannelId, existing.BizType
-		if in.ChannelId != nil {
-			if strings.TrimSpace(*in.ChannelId) == "" {
+		targetChannel, targetBiz := existing.ChannelID, existing.BizType
+		if in.ChannelID != nil {
+			if strings.TrimSpace(*in.ChannelID) == "" {
 				return nil, false, ErrPushRuleInvalidChannel
 			}
-			targetChannel = *in.ChannelId
+			targetChannel = *in.ChannelID
 		}
 		if in.BizType != nil {
 			targetBiz = *in.BizType
 		}
-		domainChanged := targetChannel != existing.ChannelId || targetBiz != existing.BizType
+		domainChanged := targetChannel != existing.ChannelID || targetBiz != existing.BizType
 
 		// note 仅当 PUT 实际改动规则内容（匹配条件/替换 payload/匹配键域变化）时
 		// 必填；纯开关操作可留空（对齐 HTTP UpdateMockRule 语义）。Note 为指针：
@@ -243,7 +243,7 @@ func (m *CaptureManager) UpdatePushMockRule(ctx context.Context, app, did, ruleI
 		}
 
 		c := *existing
-		c.ChannelId = targetChannel
+		c.ChannelID = targetChannel
 		c.BizType = targetBiz
 		c.Match = in.Match
 		c.ReplacePayload = in.ReplacePayload
@@ -429,7 +429,7 @@ func (m *CaptureManager) PurgeExpiredPushRules(ctx context.Context) {
 			bumped[key] = true
 		}
 		m.log.Info("push rule janitor: purged expired push mock rule",
-			"rule", r.ID, "channelId", r.ChannelId, "bizType", r.BizType, "lastUsedAt", pushRuleUsageTime(r))
+			"rule", r.ID, "channelId", r.ChannelID, "bizType", r.BizType, "lastUsedAt", pushRuleUsageTime(r))
 	}
 }
 
