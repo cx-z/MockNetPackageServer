@@ -60,7 +60,7 @@ func toolCreatePushMockRule() mcp.Tool {
 		mcp.WithDescription("凭空创建推送模板（无日志来源）：channelId 必填 + replacePayload 必填（payload 模板快照，SDK 构造假 Packet 时写入 bizData）+ note 必填（服务端要求无 source 快照的规则必须带备注）。创建即启用（enabled=true），可直接 send_push_mock_rule。"+
 			"何时用：模拟一条未抓包过的推送。"+
 			"重要——payload 不要凭字段名从零编：先调 get_longconn_packet_samples 拉同 bizType 的真实日志作骨架，只改内层展示文本；"+
-			"msgid/session_id/time 每次下发前换成全新随机大整数（否则客户端按 id 判重，假 push 被静默丢弃）；touser/fromuser/name 必须继承当前设备登录账号的真实会话骨架，不能跨账号抄。错误处理：400 channelId/note 缺失；409 同 channelId+bizType 域已有启用模板；403 仅 owner/admin。"),
+			"msgid/session_id/time 每次下发前换成全新随机大整数（否则客户端按 id 判重，假 push 被静默丢弃）；touser/fromuser/name 必须继承当前设备登录账号的真实会话骨架，不能跨账号抄。错误处理：400 channelId/note 缺失；403 仅 owner/admin。模板池语义（2026-10-16 起）：同 channelId+bizType 域允许多条模板共存、全部生效——重复创建同域模板合法（用 note 区分用途）。"),
 		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
 		mcp.WithString("channelId", mcp.Required(), mcp.Description("通道标识（必填，如 xcpush_tcp）")),
@@ -72,8 +72,9 @@ func toolCreatePushMockRule() mcp.Tool {
 
 func toolUpdatePushMockRule() mcp.Tool {
 	return mcp.NewTool("update_push_mock_rule",
-		mcp.WithDescription("编辑推送模板的 replacePayload（模板 payload；channelId/bizType 域不可改）。read-modify-write：只传新 payload 即可，note/其他字段自动保留；"+
+		mcp.WithDescription("编辑推送模板的 replacePayload（模板 payload）。read-modify-write：只传新 payload 即可，note/其他字段自动保留；"+
 			"若原模板是 base64 二进制 payload，传 replacePayload 后自动转为文本模式。"+
+			"本工具不改匹配键域（channelId/bizType 保持原值）；需要迁移域或改备注请用 Web 编辑面板（模板池语义：同域允许多条共存，改域不再有 409 冲突）。"+
 			"何时用：改模板 payload 后重新 send（模板本身无启停开关，enabled 仅作 send 门槛）。错误处理：403 仅 owner/admin；404 模板不存在。"),
 		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
@@ -164,10 +165,6 @@ func mcpListPushMockRules(base string) server.ToolHandlerFunc {
 			})
 		}
 		out := map[string]any{"version": list.Version, "rules": views, "total": len(views)}
-		if len(list.Conflicts) > 0 {
-			out["conflicts"] = list.Conflicts
-			out["hint"] = "检测到同 channelId+bizType 域多条启用模板（conflicts）：该域规则不生效，SDK 不注入；请先停用/删除冲突模板。"
-		}
 		return jsonText(out), nil
 	}
 }
@@ -240,7 +237,7 @@ func mcpUpdatePushMockRule(base string) server.ToolHandlerFunc {
 		in := &capture.UpdatePushMockRuleInput{
 			Match:          existing.Match,
 			ReplacePayload: newPayload,
-			Note:           existing.Note,
+			Note:           &existing.Note,
 		}
 		if existing.ReplacePayloadBase64 != "" {
 			in.ReplacePayloadBase64 = ""
@@ -548,7 +545,7 @@ func toolCreatePushMockRuleFromLog() mcp.Tool {
 		mcp.WithDescription("从一条长连接日志一键创建推送模板：以日志的 channelId/bizType 为模板域、payload 为模板 payload 原样固化，并把原日志快照（source：channelId/bizType/msgId/payloadText/capturedAt）随规则持久化。创建即启用（enabled=true），可直接 send_push_mock_rule。"+
 			"何时用：把某条真实 push「复现成假推送」——先 list_longconn_logs 找到目标记录拿 logId，再本工具建模板，再 send。可选 replacePayload 覆盖默认 payload（缺省=原日志 payloadText）。"+
 			"⚠️ 默认 payload 与真实包相同（msgid/session_id/time 都是真实值），send 前必须先 update_push_mock_rule 把 msgid/session_id/time 换成全新随机大整数——否则 IM 客户端按 id 判重，假 push 被静默丢弃、UI 无变化；注意协议层 ACK 正常回传，日志里仍会显示 mocked=true+ackSent=true，不要据此误判为送达。touser/fromuser/name 保持当前设备登录账号骨架，勿跨账号抄。"+
-			"注意：不做 Web 前端的 [mock] 标记注入——需要业务 UI 显示 mock 标识时请用 replacePayload 自行改 payload 文本。错误处理：404 logId 不在该设备日志中（48h 保留期内）或无会话；403 仅 owner/admin 可创建；409 同域冲突（该 channelId+bizType 已有启用模板）。"),
+			"注意：不做 Web 前端的 [mock] 标记注入——需要业务 UI 显示 mock 标识时请用 replacePayload 自行改 payload 文本。错误处理：404 logId 不在该设备日志中（48h 保留期内）或无会话；403 仅 owner/admin 可创建。模板池语义（2026-10-16 起）：同 channelId+bizType 域允许多条模板共存、全部生效——重复建同域模板合法（用 note 区分）。"),
 		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
 		mcp.WithString("sessionId", mcp.Description("会话 ID（可选；缺省自动解析，同 list_longconn_logs）")),

@@ -51,7 +51,7 @@ func GetLocalConfigSearchPaths() []string {
 // FindGlobalConfig returns the path to the global config file.
 // Returns empty string if not found.
 func FindGlobalConfig() (string, error) {
-	configDir, err := os.UserConfigDir()
+	configDir, err := userConfigDir()
 	if err != nil {
 		//nolint:nilerr // intentionally returning empty string when no config dir is available
 		return "", nil
@@ -67,7 +67,7 @@ func FindGlobalConfig() (string, error) {
 
 // GetGlobalConfigSearchPaths returns the paths that will be searched for global config.
 func GetGlobalConfigSearchPaths() []string {
-	configDir, err := os.UserConfigDir()
+	configDir, err := userConfigDir()
 	if err != nil {
 		return nil
 	}
@@ -76,6 +76,17 @@ func GetGlobalConfigSearchPaths() []string {
 		paths[i] = filepath.Join(configDir, GlobalConfigDir, name)
 	}
 	return paths
+}
+
+// userConfigDir returns the base directory for user configuration.
+// 优先 $XDG_CONFIG_HOME（显式读取：darwin 上 os.UserConfigDir 忽略
+// XDG_CONFIG_HOME 恒返回 ~/Library/Application Support，测试无法重定向），
+// 否则回退 os.UserConfigDir()（macOS = ~/Library/Application Support）。
+func userConfigDir() (string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return xdg, nil
+	}
+	return os.UserConfigDir()
 }
 
 // LoadConfigFile loads a CLIConfig from a YAML file.

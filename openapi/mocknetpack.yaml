@@ -250,7 +250,7 @@ paths:
   /devices/{app}/{did}/push-mock-rules/{ruleId}:
     put:
       tags: [push-mock]
-      summary: 编辑 push mock 规则（requireAuth；匹配键不可改）
+      summary: 编辑 push mock 规则（requireAuth；channelId/bizType 可迁移匹配键域，模板池语义：同域允许多条共存）
       operationId: updatePushMockRule
       parameters:
         - $ref: '#/components/parameters/AppPath'
@@ -2743,15 +2743,15 @@ components:
           description: 替换 payload 的原始字节（base64）——二进制/压缩包时使用；SDK 解码后写 Packet.bizData
         enabled:
           type: boolean
-          description: 用户开关（持久化；前端互斥：同 channelId+bizType 域同时仅一个开）
+          description: 用户开关（持久化；2026-10-16 起模板池语义：同 channelId+bizType 域允许多条 enabled 共存）
         effective:
           type: boolean
           default: true
           description: |
-            服务端计算的运行时生效态。SDK 仅对 effective=true 的规则替换。
-            正常态 enabled==effective；当同匹配键域存在多条 enabled（异常态）时，
-            该域全部规则 effective=false（不替换、走真实通道），并在
-            PushMockRuleList.conflicts 报告。
+            服务端计算的运行时生效态。SDK 仅对 effective=true 的规则下发。
+            2026-10-16（用户拍板）：模板池语义——Effective 即 enabled（多条同域
+            共存全部生效；模拟推送按规则 ID 快照成指令下发，无域内匹配歧义），
+            不再有域冲突 effective=false 状态。
         source:
           $ref: '#/components/schemas/PushMockSource'
           nullable: true
@@ -2817,10 +2817,19 @@ components:
       type: object
       required: [match]
       description: |
-        编辑 push mock 规则请求体。与创建用 PushMockRuleInput 分离：不含
-        channelId/bizType（匹配键不可改）、不含 source（快照只读）。编辑只允许
-        改 match、replacePayload、replacePayloadBase64、note、enabled。
+        编辑 push mock 规则请求体。2026-10-16（用户拍板）放开匹配键编辑：
+        允许显式提供 channelId/bizType 迁移匹配键域；模板池语义（同轮拍板）——
+        多条同域 enabled 模板共存合法，编辑迁移域/开启开关不再做域单活跃 409
+        冲突检查（模拟推送按规则 ID 快照成指令，无域内匹配歧义；channelId 显式
+        置空 → 400）。省略 = 保持现值；不含 source（快照只读）。编辑允许改
+        match、replacePayload、replacePayloadBase64、note、enabled、channelId、bizType。
       properties:
+        channelId:
+          type: string
+          description: 迁移后的匹配键 channelId（显式提供时不能为空；省略保持现值）
+        bizType:
+          type: string
+          description: 迁移后的匹配键 bizType（空串 = 空 bizType 域，合法；省略保持现值）
         match:
           $ref: '#/components/schemas/PushMockMatch'
         replacePayload:
@@ -2830,11 +2839,12 @@ components:
         note:
           type: string
           description: |
-            规则备注，单条覆盖式更新。仅当请求体实际改动规则内容（match/
-            replacePayload 变化）时必填且非空；纯开关操作可省略或留空。
+            规则备注。省略（不发送该字段）= 保持现值（纯 toggle 不清空既有备注）；
+            显式提供时单条覆盖。仅当请求体实际改动规则内容（match/replacePayload/
+            匹配键域变化）时必填且非空（400 note_required）；纯开关操作可省略。
         enabled:
           type: boolean
-          description: 用户开关。若与现值不同则切换，并触发同域互斥校验（已有 409 语义）；省略则保持现值不变
+          description: 用户开关。省略则保持现值不变。模板池语义（2026-10-16）：开启/关闭不再触发同域互斥 409——多条同域 enabled 模板共存合法
     PushMockRuleList:
       type: object
       required: [version, rules]
@@ -2849,9 +2859,9 @@ components:
         conflicts:
           type: array
           description: |
-            异常态报告（仅 Web 全量列表返回）：当前存在"同一 channelId+bizType
-            域多条规则同时 enabled"的域列表。Web 拉到非空即按 message 弹窗提示；
-            这些域的规则 effective=false，SDK 不替换。
+            兼容保留字段（2026-10-16 模板池语义后恒为 []）：push mock 不再有
+            "同 channelId+bizType 域多条规则同时 enabled" 的异常态——多条同域
+            模板是合法模板池，全部 effective=true。
           items:
             type: object
             required: [channelId, bizType, message]

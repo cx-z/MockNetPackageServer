@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/getmockd/mockd/pkg/capture"
@@ -30,7 +31,10 @@ type PushMockRuleListResponse struct {
 type sdkPushRuleView struct {
 	ID                   string                 `json:"id"`
 	ChannelId            string                 `json:"channelId"`
-	BizType              string                 `json:"bizType,omitempty"`
+	// BizType 恒输出（含空串）：2026-10-16 线上事故同构修复——空 bizType 省略
+	// 字段会让 SDK 非 Optional 模型 decode 失败（规则列表整体拉取失败）；
+	// SDK 端已对齐 Optional（yaml 非 required），空串 = 不限定 bizType。
+	BizType              string                 `json:"bizType"`
 	Match                capture.PushMockMatch  `json:"match"`
 	ReplacePayload       string                 `json:"replacePayload,omitempty"`
 	ReplacePayloadBase64 string                 `json:"replacePayloadBase64,omitempty"`
@@ -70,7 +74,8 @@ type sdkPushRuleListResponse struct {
 //   - SDK incremental pull: ?sinceVersion=N returns only Effective rules. When
 //     the device version is unchanged the list is empty (SDK keeps its snapshot).
 //   - Web full list: no sinceVersion returns every rule (including disabled,
-//     with source snapshots) plus the abnormal conflicts report.
+//     with source snapshots); conflicts is a compatibility field, always empty
+//     (2026-10-16 模板池语义：多条同域 enabled 模板合法，全部 Effective).
 func (a *API) handleListPushMockRules(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	did := r.PathValue("did")
@@ -130,8 +135,8 @@ func (a *API) handleListPushMockRules(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreatePushMockRule handles POST /api/v1/devices/{app}/{did}/push-mock-rules.
-// Creates a push rule (default disabled). Enabling it rejects with 409 if
-// another enabled rule already matches the same channelId+bizType domain.
+// Creates a push rule (default disabled). 模板池语义（2026-10-16 用户拍板）：同域
+// （channelId+bizType）允许多条 enabled 规则共存，创建不做域单活跃 409 检查。
 func (a *API) handleCreatePushMockRule(w http.ResponseWriter, r *http.Request) {
 	var in capture.PushMockRuleInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -153,10 +158,12 @@ func (a *API) handleCreatePushMockRule(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdatePushMockRule handles PUT /api/v1/devices/{app}/{did}/push-mock-rules/{ruleId}.
-// Edits the payload match, replace payload and note (match key channelId+bizType
-// is immutable); optionally flips the enabled switch. Enabling against another
-// enabled rule on the same domain returns 409. note must be non-blank only when
-// the PUT actually changes rule content; a pure toggle may leave it blank.
+// Edits the payload match, replace payload and note; optionally flips the enabled
+// switch. Since 2026-10-16（用户拍板）channelId/bizType 指针字段可迁移匹配键域；
+// 模板池语义（同轮拍板）：迁移域/开启开关不再返回域单活跃 409（多条同域
+// enabled 共存合法）。note must be non-blank only when the PUT actually changes
+// rule content (including a match-key domain migration); a pure toggle may leave
+// it blank.
 func (a *API) handleUpdatePushMockRule(w http.ResponseWriter, r *http.Request) {
 	var in capture.UpdatePushMockRuleInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -202,7 +209,12 @@ func validatePushMockRuleInput(w http.ResponseWriter, in *capture.PushMockRuleIn
 }
 
 // validateUpdatePushMockRuleInput validates the edit payload (UpdatePushMockRuleInput).
+// 2026-10-16（用户拍板放开匹配键编辑）：channelId 显式提供（编辑迁移域）时不能为空。
 func validateUpdatePushMockRuleInput(w http.ResponseWriter, in *capture.UpdatePushMockRuleInput) bool {
+	if in.ChannelId != nil && strings.TrimSpace(*in.ChannelId) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_field", "channelId cannot be empty")
+		return false
+	}
 	return validatePushMockMatch(w, &in.Match)
 }
 

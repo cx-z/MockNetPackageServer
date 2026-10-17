@@ -480,4 +480,12 @@ func writeResp(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// derefNote 解引用 UpdatePushMockRuleInput.Note 指针（测试断言辅助）。
+func derefNote(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 var _ = strings.TrimSpace

@@ -204,9 +204,8 @@ function renderHistoryList(replace) {
     const el = document.createElement("div");
     if (historyMode === "longconn") {
       el.className = "lc-row";
-      const meta = [];
-      if (e.bizType) meta.push("biz=" + e.bizType);
-      if (e.msgId) meta.push("msg=" + e.msgId);
+      // 与当前日志列表共用 longConnCellMeta（channelId · biz= · msg=，摘要头兜底）。
+      const meta = longConnCellMeta(e);
       el.innerHTML =
         longConnFakeBadge(e) +
         '<span class="lc-meta">' + esc(meta.join(" · ")) + "</span>" +

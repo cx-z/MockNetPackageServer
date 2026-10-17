@@ -28,16 +28,25 @@ func pushRuleBody(channelID, bizType string, enabled bool) map[string]any {
 	}
 }
 
-// pushUpdateBody builds an edit payload (UpdatePushMockRuleInput). No channelId/
-// bizType: the match key is immutable on edit. Content changes require note.
-func pushUpdateBody(keyword, replacePayload, note string, enabled *bool) map[string]any {
+// pushUpdateBody builds an edit payload (UpdatePushMockRuleInput).
+// 2026-10-16（用户拍板放开匹配键编辑）：可选 domain map 携带 channelId/bizType
+// 迁移匹配键域（指针语义：缺省 = 不修改）。note 为空时不发送 note 字段（服务端
+// 指针语义：未提供 = 保持现值，纯 toggle 不清空既有备注）。
+func pushUpdateBody(keyword, replacePayload, note string, enabled *bool, domain ...map[string]any) map[string]any {
 	m := map[string]any{
 		"match":          map[string]any{"keyword": keyword},
 		"replacePayload": replacePayload,
-		"note":           note,
+	}
+	if note != "" {
+		m["note"] = note
 	}
 	if enabled != nil {
 		m["enabled"] = *enabled
+	}
+	for _, d := range domain {
+		for k, v := range d {
+			m[k] = v
+		}
 	}
 	return m
 }
@@ -118,23 +127,95 @@ func TestPushMockRuleAPI_DomainConflict(t *testing.T) {
 	seedMockRuleDevice(t, srv)
 	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/push-mock-rules"
 
+	// 2026-10-16（用户拍板）：push mock 模板池允许多条同域（channelId+bizType）
+	// enabled 模板共存（模拟推送按规则 ID 快照，无域内匹配歧义）——同域再开
+	// 一条 enabled 不再 409，两条都 Effective=true，无 conflicts 报告。
 	var c1 capture.PushMockRuleView
 	resp := doJSON(t, http.MethodPost, base, pushRuleBody("xcpush_tcp", "1", true), &c1)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.True(t, c1.Effective)
 
-	// 同域（channelId+bizType）再开一条 enabled → 409 rule_conflict。
-	resp = doJSON(t, http.MethodPost, base, pushRuleBody("xcpush_tcp", "1", true), nil)
-	require.Equal(t, http.StatusConflict, resp.StatusCode)
-	// 不同 bizType 域可开。
 	var c2 capture.PushMockRuleView
-	resp = doJSON(t, http.MethodPost, base, pushRuleBody("xcpush_tcp", "2", true), &c2)
+	resp = doJSON(t, http.MethodPost, base, pushRuleBody("xcpush_tcp", "1", true), &c2)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.True(t, c2.Effective, "同域多条 enabled 全部 Effective（模板池语义）")
+
+	var list PushMockRuleListResponse
+	resp = doJSON(t, http.MethodGet, base, nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, list.Rules, 2)
+	for _, r := range list.Rules {
+		assert.True(t, r.Effective)
+	}
+	assert.Empty(t, list.Conflicts, "多条同域 enabled 不再是异常，无 conflicts 报告")
 
 	// 停用规则（纯 toggle 回传内容、note 空）合法。
 	var upd capture.PushMockRuleView
 	resp = doJSON(t, http.MethodPut, base+"/"+c2.ID, pushUpdateBody("tip", `{"type":"chat","data":{"tip":"mocked"}}`, "", pushBoolPtr(false)), &upd)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.False(t, upd.Enabled)
+}
+
+// TestPushMockRuleAPI_UpdateMigratesDomain：2026-10-16 用户拍板放开匹配键编辑。
+// 编辑可迁移 channelId+bizType 域；模板池语义（同轮拍板）：目标域已有活跃
+// 规则不再 409（多条同域共存全部 Effective）；channelId 显式置空 → 400。
+func TestPushMockRuleAPI_UpdateMigratesDomain(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/push-mock-rules"
+
+	// A 在 (xcpush_tcp, "1") 域。
+	var a capture.PushMockRuleView
+	resp := doJSON(t, http.MethodPost, base, pushRuleBody("xcpush_tcp", "1", true), &a)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	// 编辑 A 迁移到 (xcpush_tcp, "2") → 成功且更新匹配键。
+	var moved capture.PushMockRuleView
+	resp = doJSON(t, http.MethodPut, base+"/"+a.ID,
+		pushUpdateBody("tip", `{"type":"chat","data":{"tip":"moved"}}`, "迁移匹配键域", pushBoolPtr(true),
+			map[string]any{"channelId": "xcpush_tcp", "bizType": "2"}), &moved)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "xcpush_tcp", moved.ChannelId)
+	assert.Equal(t, "2", moved.BizType)
+	assert.True(t, moved.Enabled)
+	assert.True(t, moved.Effective)
+
+	// 原域 (xcpush_tcp, "1") 可开新活跃规则。
+	var b capture.PushMockRuleView
+	resp = doJSON(t, http.MethodPost, base, pushRuleBody("xcpush_tcp", "1", true), &b)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	// 把 B 也迁到 (xcpush_tcp, "2")（A 已在该域）→ 模板池语义：不再 409，
+	// 迁移成功且 Effective=true（多条同域共存）。
+	var b2 capture.PushMockRuleView
+	resp = doJSON(t, http.MethodPut, base+"/"+b.ID,
+		pushUpdateBody("tip", `{"type":"chat","data":{"tip":"x"}}`, "迁移到已有活跃规则域", nil,
+			map[string]any{"bizType": "2"}), &b2)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "2", b2.BizType)
+	assert.True(t, b2.Effective)
+
+	// channelId 显式置空 → 400 invalid_field。
+	resp = doJSON(t, http.MethodPut, base+"/"+b.ID,
+		pushUpdateBody("tip", `{"type":"chat","data":{"tip":"x"}}`, "置空channel", nil,
+			map[string]any{"channelId": ""}), nil)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	// 仅迁移匹配键域但不写 note → 400 note_required（2026-10-16 用户拍板：
+	// 编辑 push 模板强制备注，对齐 HTTP 规则编辑语义；域迁移算实质编辑）。
+	resp = doJSON(t, http.MethodPut, base+"/"+b.ID,
+		pushUpdateBody("tip", `{"type":"chat","data":{"tip":"mocked"}}`, "", nil,
+			map[string]any{"bizType": "9"}), nil)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	// 仅改 bizType（channelId 未提供）→ 只迁移 bizType 域。
+	var c2 capture.PushMockRuleView
+	resp = doJSON(t, http.MethodPut, base+"/"+b.ID,
+		pushUpdateBody("tip", `{"type":"chat","data":{"tip":"y"}}`, "只改bizType", nil,
+			map[string]any{"bizType": "3"}), &c2)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "xcpush_tcp", c2.ChannelId, "channelId 未提供保持原值")
+	assert.Equal(t, "3", c2.BizType)
 }
 
 func TestPushMockRuleAPI_Validation(t *testing.T) {

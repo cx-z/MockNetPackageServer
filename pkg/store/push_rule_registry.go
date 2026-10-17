@@ -11,26 +11,16 @@ import (
 )
 
 // File: push_rule_registry.go
-// Push mock rules (能力线 L7): CRUD, Effective/conflict evaluation, version,
+// Push mock rules (能力线 L7): CRUD, Effective evaluation, version,
 // hit statistics, retention janitor. 复用 HTTP MockRule 的管理语义（权限/启停/
 // effective/增量拉取），独立模型与独立版本号（L7 决策 D3）。
+// 2026-10-16（用户拍板）：push mock 模板池允许多条同域（channelId+bizType）
+// enabled 模板共存——Effective 即 enabled，无域冲突报告。
 // ============================================================================
 
-// pushMockRuleConflictMessage is the Web-facing conflict message for push rules
-// (对齐 MockRuleConflictMessage：同一匹配键域内多条 enabled 时全部不生效)。
-const pushMockRuleConflictMessage = "不允许同一 channelId+bizType 同时开启多个 push Mock 规则"
-
-// pushMatchKey identifies the mutual-exclusion domain of a push mock rule:
-// ChannelId (required) + BizType (optional; empty = channel-only domain).
-func pushMatchKey(channelID, bizType string) string {
-	return channelID + "\x00" + bizType
-}
-
-// evaluatePushRules recomputes the runtime Effective flag for every push rule of
-// a device and collects the abnormal multi-enabled domains. A push rule is
-// Effective only when it is the sole enabled rule on its (channelId, bizType)
-// domain; a domain with >1 enabled rule mocks nothing and is reported as a
-// conflict (对齐 HTTP evaluateRules).
+// evaluatePushRules computes the runtime Effective flag for every push rule of a
+// device. Effective 即 enabled（模板池语义：多条同域共存全部生效；模拟推送按
+// 规则 ID 快照成指令下发，无域内匹配歧义——2026-10-16 用户拍板）。
 func (m *CaptureManager) evaluatePushRules(ctx context.Context, app, did string) ([]*capture.PushMockRuleView, []capture.PushMockRuleConflict, int, error) {
 	if m.pushRules == nil {
 		return nil, nil, 0, nil
@@ -44,32 +34,15 @@ func (m *CaptureManager) evaluatePushRules(ctx context.Context, app, did string)
 		return nil, nil, 0, err
 	}
 
-	enabledCount := make(map[string]int)
-	for _, r := range all {
-		if r.Enabled {
-			enabledCount[pushMatchKey(r.ChannelId, r.BizType)]++
-		}
-	}
-
+	// 2026-10-16（用户拍板）：push mock 模板池允许多条同域（channelId+bizType）
+	// enabled 模板共存——模拟推送按规则 ID 快照成指令下发，无域内匹配歧义。
+	// Effective 即 enabled（不再要求域内唯一）；不再报告 conflicts。
 	views := make([]*capture.PushMockRuleView, 0, len(all))
 	for _, r := range all {
-		eff := r.Enabled && enabledCount[pushMatchKey(r.ChannelId, r.BizType)] == 1
 		c := *r
-		views = append(views, &capture.PushMockRuleView{PushMockRule: &c, Effective: eff})
+		views = append(views, &capture.PushMockRuleView{PushMockRule: &c, Effective: r.Enabled})
 	}
-
-	var conflicts []capture.PushMockRuleConflict
-	for k, n := range enabledCount {
-		if n > 1 {
-			parts := strings.SplitN(k, "\x00", 2)
-			conflicts = append(conflicts, capture.PushMockRuleConflict{
-				ChannelId: parts[0],
-				BizType:   parts[1],
-				Message:   pushMockRuleConflictMessage,
-			})
-		}
-	}
-	return views, conflicts, version, nil
+	return views, nil, version, nil
 }
 
 // SetPushMockRules wires the persistent push rule store (L7 决策 D3：注入模式
@@ -147,14 +120,13 @@ func (m *CaptureManager) MarkPushRuleCommandsConsumed(ctx context.Context, app, 
 	return m.pushRuleCommands.MarkConsumed(ctx, app, did, ids)
 }
 
-// CreatePushMockRule persists a new push mock rule. When enabled=true it enforces
-// the single-active rule per match-key domain (channelId+bizType): if another
-// enabled rule already matches the same domain it returns ErrRuleConflict (409).
-// The conflict check, the insert and the push rule-set version bump run in ONE
-// store lock. caller stamps the rule's Owner (creator username); nil caller
-// (--no-auth) leaves Owner empty (legacy rule, admin-manageable only).
-// A hand-authored rule (Source == nil) must carry a non-blank note (对齐 HTTP
-// MockRule：无 source 快照时 note 是唯一语义锚点)。
+// CreatePushMockRule persists a new push mock rule. 模板池语义（2026-10-16 用户
+// 拍板）：同域（channelId+bizType）允许多条 enabled 规则共存，创建不做域单活跃
+// 409 冲突检查——模拟推送按规则 ID 快照成指令下发，无域内匹配歧义。The insert
+// and the push rule-set version bump run in ONE store lock. caller stamps the
+// rule's Owner (creator username); nil caller (--no-auth) leaves Owner empty
+// (legacy rule, admin-manageable only). A hand-authored rule (Source == nil) must
+// carry a non-blank note (对齐 HTTP MockRule：无 source 快照时 note 是唯一语义锚点)。
 func (m *CaptureManager) CreatePushMockRule(ctx context.Context, app, did string, in *capture.PushMockRuleInput, caller *RuleCaller) (*capture.PushMockRuleView, int, error) {
 	if m.pushRules == nil {
 		return nil, 0, ErrRuleNotFound // 未启用时创建一律不可见（不泄露能力存在性）
@@ -168,13 +140,8 @@ func (m *CaptureManager) CreatePushMockRule(ctx context.Context, app, did string
 	now := time.Now()
 	var created *capture.PushMockRule
 	version, err := m.pushRules.Mutate(ctx, app, did, func(rules []*capture.PushMockRule) ([]*capture.PushMockRule, bool, error) {
-		if in.Enabled {
-			for _, r := range rules {
-				if r.Enabled && pushMatchKey(r.ChannelId, r.BizType) == pushMatchKey(in.ChannelId, in.BizType) {
-					return nil, false, ErrRuleConflict
-				}
-			}
-		}
+		// 2026-10-16（用户拍板）：push mock 模板池允许多条同域 enabled 模板共存，
+		// 创建不再做域单活跃 409 冲突检查（模拟推送按规则 ID 快照，无匹配歧义）。
 		var owner string
 		if caller != nil {
 			owner = caller.Username
@@ -215,11 +182,11 @@ func (m *CaptureManager) CreatePushMockRule(ctx context.Context, app, did string
 }
 
 // UpdatePushMockRule edits a push rule's payload match, replace payload, note,
-// and/or enabled switch. The match key (ChannelId+BizType) and the source
-// snapshot are immutable — the input type UpdatePushMockRuleInput deliberately
-// omits them. Turning the switch on is rejected with ErrRuleConflict if another
-// enabled rule already matches the rule's (frozen) domain. The update and the
-// version bump run in ONE store lock. 权限：仅规则 owner 与 admin 可编辑/启停；
+// enabled switch, and — since 2026-10-16（用户拍板放开）— the match key domain
+// (ChannelId+BizType, pointer fields: nil = keep current). 模板池语义（同轮拍板）：
+// 编辑迁移域/开启开关不再做域单活跃 409 冲突检查（多条同域 enabled 共存合法）。
+// The source snapshot stays immutable. The update and the version bump run in ONE
+// store lock. 权限：仅规则 owner 与 admin 可编辑/启停；
 // 非 admin 对未知 ruleID 同样返回 ErrRuleForbidden（不泄露规则存在性）。
 func (m *CaptureManager) UpdatePushMockRule(ctx context.Context, app, did, ruleID string, in *capture.UpdatePushMockRuleInput, caller *RuleCaller) (*capture.PushMockRuleView, int, error) {
 	if m.pushRules == nil {
@@ -244,30 +211,46 @@ func (m *CaptureManager) UpdatePushMockRule(ctx context.Context, app, did, ruleI
 			return nil, false, ErrRuleForbidden
 		}
 
-		// note 仅当 PUT 实际改动规则内容（匹配条件/替换 payload 变化）时必填；
-		// 纯开关操作可留空（对齐 HTTP UpdateMockRule 语义）。
+		// 匹配键域编辑（2026-10-16 用户拍板放开）：指针字段区分「未提供」与
+		// 「显式置空」。ChannelId 显式提供时不能为空（契约必填）。
+		// 2026-10-16（用户拍板）：模板池允许多条同域共存，编辑迁移域/开启开关
+		// 不再做域单活跃 409 冲突检查（模拟推送按规则 ID 快照，无匹配歧义）。
+		targetChannel, targetBiz := existing.ChannelId, existing.BizType
+		if in.ChannelId != nil {
+			if strings.TrimSpace(*in.ChannelId) == "" {
+				return nil, false, ErrPushRuleInvalidChannel
+			}
+			targetChannel = *in.ChannelId
+		}
+		if in.BizType != nil {
+			targetBiz = *in.BizType
+		}
+		domainChanged := targetChannel != existing.ChannelId || targetBiz != existing.BizType
+
+		// note 仅当 PUT 实际改动规则内容（匹配条件/替换 payload/匹配键域变化）时
+		// 必填；纯开关操作可留空（对齐 HTTP UpdateMockRule 语义）。Note 为指针：
+		// nil = 保持现值（纯 toggle 不清空既有备注）；改内容时未提供/置空 → 400。
 		contentChanged := !reflect.DeepEqual(existing.Match, in.Match) ||
 			existing.ReplacePayload != in.ReplacePayload ||
-			existing.ReplacePayloadBase64 != in.ReplacePayloadBase64
-		if contentChanged && strings.TrimSpace(in.Note) == "" {
+			existing.ReplacePayloadBase64 != in.ReplacePayloadBase64 ||
+			domainChanged
+		if in.Note == nil {
+			if contentChanged {
+				return nil, false, ErrNoteRequired
+			}
+		} else if contentChanged && strings.TrimSpace(*in.Note) == "" {
 			return nil, false, ErrNoteRequired
 		}
 
-		// 开启开关时校验域内单活跃（冻结的匹配键）。
-		if in.Enabled != nil && *in.Enabled && !existing.Enabled {
-			for _, r := range rules {
-				if r.ID != ruleID && r.Enabled &&
-					pushMatchKey(r.ChannelId, r.BizType) == pushMatchKey(existing.ChannelId, existing.BizType) {
-					return nil, false, ErrRuleConflict
-				}
-			}
-		}
-
 		c := *existing
+		c.ChannelId = targetChannel
+		c.BizType = targetBiz
 		c.Match = in.Match
 		c.ReplacePayload = in.ReplacePayload
 		c.ReplacePayloadBase64 = in.ReplacePayloadBase64
-		c.Note = in.Note
+		if in.Note != nil {
+			c.Note = *in.Note
+		}
 		if in.Enabled != nil {
 			c.Enabled = *in.Enabled
 		}
@@ -331,16 +314,17 @@ func (m *CaptureManager) DeletePushMockRule(ctx context.Context, app, did, ruleI
 }
 
 // ListPushMockRules returns every push rule of the device (Web view, including
-// disabled) with the runtime Effective flag, the abnormal conflicts, and the
-// current push rule-set version.
+// disabled) with the runtime Effective flag and the current push rule-set
+// version. 模板池语义（2026-10-16 用户拍板）：Effective 即 enabled（多条同域
+// enabled 共存全部 Effective），conflicts 恒空（保留 API 字段兼容）。
 func (m *CaptureManager) ListPushMockRules(ctx context.Context, app, did string) ([]*capture.PushMockRuleView, []capture.PushMockRuleConflict, int, error) {
 	return m.evaluatePushRules(ctx, app, did)
 }
 
 // ListActivePushMockRules is the SDK pull. When the device push rule-set version
 // equals sinceVersion nothing changed: it returns no rules and changed=false.
-// Otherwise it returns only the Effective rules (abnormal domains excluded) and
-// the new version.
+// Otherwise it returns the Effective rules (模板池语义：Effective 即 enabled，同域
+// 多条全部下发) and the new version.
 func (m *CaptureManager) ListActivePushMockRules(ctx context.Context, app, did string, sinceVersion int) ([]*capture.PushMockRuleView, int, bool, error) {
 	views, _, version, err := m.evaluatePushRules(ctx, app, did)
 	if err != nil {

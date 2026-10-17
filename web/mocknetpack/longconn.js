@@ -95,13 +95,28 @@ function longConnFakeBadge(e) {
     : '<span class="lc-type lc-real">real</span>';
 }
 
+/** 日志行 meta（channelId · biz= · msg= · dup/empty）：记录顶层字段优先，
+ *  SDK 摘要头（type=… msgId=… bizType=… payload=…）兜底——历史/分享快照
+ *  顶层无 bizType/msgId，只有摘要头里有（2026-10-16 历史 cell 空修复）。
+ *  当前日志与历史日志列表共用，保证两处展示一致。 */
+function longConnCellMeta(e) {
+  const meta = [];
+  if (e.channelId) meta.push(e.channelId);
+  const headParams = parsePayloadHead(payloadSummaryInfo(e.payloadText || "").head);
+  if (e.bizType || headParams.bizType) meta.push("biz=" + (e.bizType || headParams.bizType));
+  if (e.msgId) meta.push("msg=" + e.msgId);
+  else if (headParams.msgId) meta.push("msg=" + headParams.msgId);
+  if (e.duplicate) meta.push("dup");
+  if (e.empty) meta.push("empty");
+  return meta;
+}
+
 /** 渲染：最新 snapshot 卡片 + 倒序列表。 */
 function renderLongConn() {
   if (!detail) return;
   // 最新 snapshot（seq 最大的 snapshot 事件）→ 状态卡片
   const snapshots = longConnLog.filter((r) => r.eventType === "snapshot" && r.snapshot);
   renderSnapshotCard(snapshots[snapshots.length - 1]);
-
   const q = longConnFilter.trim().toLowerCase();
   // 列表只显示业务包（packet）；snapshot 进状态卡，connect/disconnect/heartbeat/
   // timeout 等生命周期事件仅驱动状态卡、不占列表（用户反馈 2026-10-14）。
@@ -132,17 +147,7 @@ function renderLongConn() {
   for (const e of entries) {
     const el = document.createElement("div");
     el.className = "lc-row" + (detail._activeLongConn === e.id ? " active" : "");
-    const meta = [];
-    if (e.channelId) meta.push(e.channelId);
-    if (e.bizType) meta.push("biz=" + e.bizType);
-    // msgId：独立字段优先；否则从 SDK 摘要文本（"msgId=123"）提取。
-    if (e.msgId) meta.push("msg=" + e.msgId);
-    else {
-      const m = (e.payloadText || "").match(/msgId=(\d+)/);
-      if (m) meta.push("msg=" + m[1]);
-    }
-    if (e.duplicate) meta.push("dup");
-    if (e.empty) meta.push("empty");
+    const meta = longConnCellMeta(e);
     el.innerHTML =
       longConnFakeBadge(e) +
       '<span class="lc-meta">' + esc(meta.join(" · ")) + "</span>" +
@@ -189,26 +194,68 @@ function renderSnapshotCard(s) {
   box.classList.remove("hidden");
 }
 
+/** 解析 payload 文本中的 SDK 摘要头。
+ *  SDK 长连接采集上报的是「摘要头 + payload= + 业务体」拼接的展示文本
+ *  （LongConnHookEngine.decodePayload：summary + " payload=" + body，如
+ *  "type=Packet_PacketType(rawValue: 7) msgId=123 bizType=1 payload={…}"）。
+ *  返回 { has, head, body }：has=true 时 head 为摘要头（不含 payload=），body
+ *  为 payload= 之后的业务体；非摘要形态 has=false、body=原文。判定供
+ *  formatPayloadText / pushReplaceDesc / 一键建模板共用，保证一致不误剥。 */
+function payloadSummaryInfo(text) {
+  const info = { has: false, head: "", body: text };
+  if (!text) return info;
+  const idx = text.indexOf("payload=");
+  if (idx <= 0) return info;
+  const head = text.slice(0, idx);
+  // 摘要头特征：单行、纯 key=value 文本（不含 JSON 结构字符）。
+  // 纯 JSON（多行 pretty，或单行字符串值里恰好含 "payload="）不会命中，原样保留。
+  if (head.indexOf("\n") >= 0) return info;
+  if (/[{\[\\'"]/.test(head)) return info;
+  info.has = true;
+  info.head = head;
+  info.body = text.slice(idx + "payload=".length).replace(/^\s+/, "");
+  return info;
+}
+
+/** 剥离 SDK 摘要头，返回纯业务体（非摘要形态原样返回）。 */
+function stripPayloadSummary(text) {
+  return payloadSummaryInfo(text).body;
+}
+
+/** 解析摘要头（"type=… msgId=… bizType=…" 单行 key=value，值可含空格/括号）
+ *  为 {key: value}。按已知 key= 位置切分（不用空格 split，避免
+ *  "Packet_PacketType(rawValue: 7)" 这类值被拆碎）。 */
+function parsePayloadHead(head) {
+  const out = {};
+  if (!head) return out;
+  const re = /([A-Za-z_][A-Za-z0-9_]*)=/g;
+  const keys = [];
+  let m;
+  while ((m = re.exec(head)) !== null) keys.push({ key: m[1], idx: m.index });
+  for (let i = 0; i < keys.length; i++) {
+    const start = keys[i].idx + keys[i].key.length + 1; // 值起点
+    const end = i + 1 < keys.length ? keys[i + 1].idx : head.length;
+    out[keys[i].key] = head.slice(start, end).trim();
+  }
+  return out;
+}
+
 /** payload 文本美化：SDK 摘要形态（"type=... msgId=... payload={json}"）或纯 JSON
  *  都尝试美化为缩进多行；解析失败原样返回。返回 { display, json }——json=true
- *  时给 pre 加 lc-payload-json 类（语义标记，全展开无折叠）。注意：64 位
- *  msgid/session_id 等数字字段在 JSON.parse 时已丢精度（仅展示美化，不回写
- *  服务端/不做模板替换，无副作用）。 */
+ *  时给 pre 加 lc-payload-json 类（语义标记，全展开无折叠）。
+ *  2026-10-16（Web UI 重构）：摘要形态只展示业务体（body），摘要头参数由
+ *  renderLongConnDetail 移入上方参数列表。注意：64 位 msgid/session_id 等
+ *  数字字段在 JSON.parse 时已丢精度（仅展示美化，不回写服务端/不做模板
+ *  替换，无副作用）。 */
 function formatPayloadText(text) {
   if (!text) return { display: text, json: false };
-  // SDK 摘要：头部 "type=... msgId=... bizType=... " + "payload=" + JSON。
-  const idx = text.indexOf("payload=");
-  if (idx >= 0) {
-    const head = text.slice(0, idx + "payload=".length);
-    const jsonPart = text.slice(idx + "payload=".length);
-    try {
-      return { display: head + "\n" + JSON.stringify(JSON.parse(jsonPart), null, 2), json: true };
-    } catch (e) { /* 非 JSON，落到下面 */ }
-  }
+  const body = stripPayloadSummary(text);
   try {
-    return { display: JSON.stringify(JSON.parse(text), null, 2), json: true };
+    return { display: JSON.stringify(JSON.parse(body), null, 2), json: true };
   } catch (e) {
-    return { display: text, json: false };
+    // 原文本 JSON 解析失败：剥离过摘要头则展示剥离后的 body（如非 JSON 业务体），
+    // 否则原样（防误改纯文本/非 JSON 形态）。
+    return body !== text ? { display: body, json: false } : { display: text, json: false };
   }
 }
 
@@ -275,6 +322,13 @@ function renderLongConnDetail(e, target) {
         ? '<span class="lc-type">' + esc(e.adapter) + "</span>"
         : "—";
 
+  // 摘要头参数（type/msgId/bizType 等）移入上方参数列表（2026-10-16 Web UI
+  // 重构：解析内容只保留业务体）。记录顶层若无 msgId/bizType 字段（如分享
+  // 快照），以摘要头解析值兜底；type 仅存在于摘要头。
+  const headParams = parsePayloadHead(payloadSummaryInfo(e.payloadText || "").head);
+  const msgId = e.msgId || headParams.msgId;
+  const bizType = e.bizType || headParams.bizType;
+
   box.innerHTML =
     '<div class="detail-panel">' + toolbar +
       '<div class="d-kv"><span class="d-k">eventType</span><span class="d-v">' + esc(e.eventType || "?") + "</span></div>" +
@@ -284,9 +338,10 @@ function renderLongConnDetail(e, target) {
       '<div class="d-kv"><span class="d-k">channelId</span><span class="d-v">' + esc(e.channelId || "?") + "</span></div>" +
       row("seq", e.seq) +
       row("ts", e.ts) +
-      row("msgId", e.msgId) +
-      row("bizType", e.bizType) +
-      row("zipType", e.zipType) +
+      row("type", headParams.type) +
+      row("msgId", msgId) +
+      row("bizType", bizType) +
+      row("zipType", e.zipType || headParams.zipType) +
       row("status", e.status) +
       row("receiver", e.receiver) +
       row("receiverResult", e.receiverResult) +
@@ -319,7 +374,7 @@ function renderLongConnDetail(e, target) {
   };
   if (shareBtn) shareBtn.onclick = () => shareRequest({ longConnId: e.id });
   const mockRuleBtn = box.querySelector("#lcMockBtn");
-  if (mockRuleBtn) mockRuleBtn.onclick = () => openPushMockRuleForm(e);
+  if (mockRuleBtn) mockRuleBtn.onclick = () => createPushMockRuleFromLog(e);
 }
 
 // ============================================================================
@@ -355,63 +410,37 @@ function pushMockTemplatePayload(rawText) {
   return rawText.slice(0, insertAt) + "[mock] " + rawText.slice(insertAt);
 }
 
-/** 一键建推送模板弹窗：预览 channelId/bizType/模拟 payload（可编辑），
- *  创建 POST /devices/{app}/{did}/push-mock-rules。
+/** 一键建推送模板（对齐 HTTP「Mock 此请求」交互：不弹窗，直接生成）。
  *  模拟推送形态（D0/D1）：不再需要匹配关键字——模板即 payload；SDK 下轮
- *  心跳拉取指令后构造假 Packet 注入，业务收到"新 push"。 */
-function openPushMockRuleForm(record) {
-  let overlay = $("lcMockOverlay");
-  if (!overlay) {
-    overlay = document.createElement("div");
-    overlay.id = "lcMockOverlay";
-    overlay.className = "modal-overlay hidden";
-    document.body.appendChild(overlay);
+ *  心跳拉取指令后构造假 Packet 注入，业务收到"新 push"。
+ *  模板以纯业务体为底：SDK 上报的 payloadText 是「摘要头 + payload= + 业务体」
+ *  展示文本，直接入模板会让业务注入器按 JSON 解析失败（真机教训 2026-10-16），
+ *  先剥离摘要头；二进制（base64）日志无法自动生成文本模板，toast 提示手写。
+ *  channelId/bizType 取日志值（bizType 摘要头兜底——分享快照顶层无该字段）。 */
+async function createPushMockRuleFromLog(record) {
+  if (!detail) return;
+  if (!record.payloadText && record.payloadBase64) {
+    showError("该日志为 base64 二进制 payload，无法自动生成文本模板；请用下方「新建推送模板」手写完整 push 体 JSON。");
+    return;
   }
-  const rawText = record.payloadText || record.payloadBase64 || "";
-  const payload = pushMockTemplatePayload(rawText) || '{\n  "type": "mock"\n}';
-  const bizType = record.bizType || "";
-
-  overlay.innerHTML =
-    '<div class="modal-card" style="max-width:560px">' +
-      "<h3>一键建推送模板</h3>" +
-      '<div class="d-kv"><span class="d-k">设备</span><span class="d-v">' + esc(detail.app) + " / " + esc(detail.did) + "</span></div>" +
-      '<div class="d-kv"><span class="d-k">channelId</span><span class="d-v">' + esc(record.channelId || "") + "</span></div>" +
-      '<div class="d-kv"><span class="d-k">bizType</span><span class="d-v">' + esc(bizType || "（空=任意 bizType）") + "</span></div>" +
-      '<label class="lc-mock-label">模拟推送 payload（模板：保留结构字段，[mock] 标记自动注入 say_content.content 文本前；可编辑）</label>' +
-      '<textarea class="lc-mock-input lc-mock-payload" id="lcCreatePayload" rows="8">' + esc(payload) + "</textarea>" +
-      '<div class="lc-mock-hint">创建后点模板行 → 右栏详情点「模拟推送」即下发一次性假推送；不影响任何真实 push。Debug-only。</div>' +
-      '<div class="modal-actions">' +
-        '<button class="small ghost" id="lcMockCancelBtn">取消</button>' +
-        '<button class="small" id="lcMockCreateBtn">创建推送模板</button>' +
-      "</div>" +
-    "</div>";
-
-  overlay.querySelector("#lcMockCancelBtn").onclick = () => overlay.classList.add("hidden");
-  overlay.querySelector("#lcMockCreateBtn").onclick = () => {
-    const p = overlay.querySelector("#lcCreatePayload").value;
-    if (!p.trim() && !confirm("payload 为空将推送空数据包，确认创建？")) return;
-    createPushMockRule(record, p, overlay);
-  };
-  overlay.classList.remove("hidden");
-}
-
-/** 创建 push mock 规则（模拟推送形态：无匹配条件；source 快照=原日志）。 */
-async function createPushMockRule(record, payload, overlay) {
+  const payload = pushMockTemplatePayload(stripPayloadSummary(record.payloadText || ""));
+  if (!payload.trim()) {
+    showError("日志无业务 payload，无法自动生成模板；请用下方「新建推送模板」手写。");
+    return;
+  }
+  const headParams = parsePayloadHead(payloadSummaryInfo(record.payloadText || "").head);
   const body = {
-    channelId: record.channelId,
-    bizType: record.bizType || "",
+    channelId: record.channelId || "",
+    bizType: record.bizType || headParams.bizType || "",
     enabled: true,
     match: {},
     replacePayload: payload,
     source: {
-      channelId: record.channelId,
-      bizType: record.bizType || "",
-      msgId: record.msgId || "",
+      channelId: record.channelId || "",
+      bizType: record.bizType || headParams.bizType || "",
+      msgId: record.msgId || headParams.msgId || "",
     },
   };
-  const btn = overlay.querySelector("#lcMockCreateBtn");
-  btn.disabled = true;
-  btn.textContent = "创建中…";
   try {
     const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
       encodeURIComponent(detail.did) + "/push-mock-rules", {
@@ -421,19 +450,14 @@ async function createPushMockRule(record, payload, overlay) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      btn.disabled = false;
-      btn.textContent = "创建推送模板";
-      alert("创建失败：" + (data.message || "HTTP " + res.status));
+      showError("创建失败：" + (data.message || "HTTP " + res.status));
       return;
     }
-    overlay.classList.add("hidden");
-    alert("推送模板已创建（" + data.id + "）。点模板行 → 右栏「模拟推送」下发，SDK 下轮心跳生效。");
+    showError("推送模板已创建（" + data.id + "）。点模板行 → 右栏「模拟推送」下发，SDK 下轮心跳生效。");
     // 若 push 规则列表已渲染则刷新（L7.3b）。
     if (typeof refreshPushMockRules === "function") refreshPushMockRules();
   } catch (err) {
-    btn.disabled = false;
-    btn.textContent = "创建推送模板";
-    alert("创建失败：" + err.message);
+    showError("创建失败：" + err.message);
   }
 }
 
@@ -567,10 +591,11 @@ function openBlankPushMockRuleForm() {
 // 能力线 L7（L7.3b）：push mock 规则列表与启停（决策 D2：长连接页签内嵌区块）
 // ============================================================================
 
-/** 替换 payload 摘要（base64 标记或 JSON 缩成一行）。 */
+/** 替换 payload 摘要（base64 标记或 JSON 缩成一行；带 SDK 摘要头的先剥离，
+ *  避免列表摘要显示 "type=Packet… payload=" 前缀噪音）。 */
 function pushReplaceDesc(r) {
   if (r.replacePayloadBase64) return "base64 二进制替换";
-  const t = r.replacePayload || "";
+  const t = stripPayloadSummary(r.replacePayload || "");
   if (!t) return "（无替换 payload）";
   try {
     const pretty = JSON.stringify(JSON.parse(t));
@@ -668,15 +693,25 @@ function renderPushRuleDetail(rule, editing) {
 
   if (editing) {
     const payload = rule.replacePayload || "";
+    const pinfo = payloadSummaryInfo(payload);
+    const stripBtn = pinfo.has
+      ? '<button class="small ghost" id="lcStripBtn">剥离摘要头</button>'
+      : "";
     box.innerHTML =
       '<div class="detail-panel editing">' +
         '<div class="d-actions">' +
           '<button class="small ghost" id="lcMockCancelBtn">取消</button>' +
+          stripBtn +
           '<button class="small" id="lcMockSaveBtn">保存模板</button>' +
         "</div>" +
         '<div class="d-kv"><span class="d-k">模板 ID</span><span class="d-v">' + esc(rule.id) + "</span></div>" +
-        '<div class="d-kv"><span class="d-k">channelId</span><span class="d-v">' + esc(rule.channelId || "—") + "</span></div>" +
-        '<div class="d-kv"><span class="d-k">bizType</span><span class="d-v">' + esc(rule.bizType || "（空=任意）") + "</span></div>" +
+        '<label class="lc-mock-label">channelId（必填；修改会迁移匹配键域——模板池语义：同域允许多条模板共存，迁移/重复建模板均合法）</label>' +
+        '<input class="lc-mock-input" id="lcEditChannelId" value="' + esc(rule.channelId || "") + '">' +
+        '<label class="lc-mock-label">bizType（空 = 任意 bizType）</label>' +
+        '<input class="lc-mock-input" id="lcEditBizType" value="' + esc(rule.bizType || "") + '">' +
+        '<label class="lc-mock-label">备注（必填）</label>' +
+        '<input class="lc-mock-input" id="lcEditNote" type="text" placeholder="说明这条模板的用途/场景" value="' + esc(rule.note || "") + '">' +
+        (pinfo.has ? '<div class="lc-warn">⚠ 该 payload 带日志摘要头（' + esc(pinfo.head + "payload=…") + '），客户端按业务 JSON 解析可能失败。点「剥离摘要头」自动去除前缀后保存。</div>' : "") +
         '<div class="d-block"><div class="d-title">payload（注意：顶层 content 必须保持合法 JSON；[mock] 标记加在 say_content.content 文本前）</div>' +
           '<div class="edit-body-wrap"><textarea id="lcMockPayload">' + esc(payload) + "</textarea></div></div>" +
       "</div>";
@@ -695,9 +730,28 @@ function renderPushRuleDetail(rule, editing) {
     });
     pushBodyEditor.refresh();
     box.querySelector("#lcMockCancelBtn").onclick = () => renderPushRuleDetail(rule, false);
+    // 剥离摘要头：历史模板可能带 SDK 日志摘要头（type=… payload=），点击后
+    // 就地改写编辑区为纯业务体（仅改编辑器，保存时才会写服务端）。
+    const strip = box.querySelector("#lcStripBtn");
+    if (strip) strip.onclick = () => {
+      pushBodyEditor.save();
+      const stripped = stripPayloadSummary($("lcMockPayload").value);
+      pushBodyEditor.setValue(stripped);
+      const warn = box.querySelector(".lc-warn");
+      if (warn) warn.remove();
+      strip.disabled = true;
+      strip.textContent = "已剥离";
+      pushBodyEditor.refresh();
+    };
     box.querySelector("#lcMockSaveBtn").onclick = async () => {
       pushBodyEditor.save();   // CM 内容回写 textarea 后统一取值
       const p = $("lcMockPayload").value;
+      const ch = $("lcEditChannelId").value.trim();
+      const bz = $("lcEditBizType").value.trim();
+      if (!ch) { alert("channelId 不能为空"); return; }
+      // 备注必填（对齐 HTTP 规则编辑语义：实质编辑保存必须写备注）。
+      const note = $("lcEditNote").value.trim();
+      if (!note) { showError("备注必填，请填写后再保存"); return; }
       const btn = box.querySelector("#lcMockSaveBtn");
       btn.disabled = true;
       btn.textContent = "保存中…";
@@ -710,7 +764,9 @@ function renderPushRuleDetail(rule, editing) {
             match: rule.match || {},
             replacePayload: p,
             replacePayloadBase64: rule.replacePayloadBase64 || "",
-            note: "编辑 payload（Web 模板编辑器）",
+            note: note,
+            channelId: ch,
+            bizType: bz,
           }),
         });
         const data = await res.json().catch(() => ({}));
@@ -732,7 +788,12 @@ function renderPushRuleDetail(rule, editing) {
     return;
   }
 
-  const payload = rule.replacePayload || "(无 payload)";
+  const payload = rule.replacePayload || "";
+  const pinfo = payloadSummaryInfo(payload);
+  const payloadBlock =
+    (pinfo.has ? '<div class="lc-warn">⚠ 该 payload 带日志摘要头（' + esc(pinfo.head + "payload=…") + '），客户端按业务 JSON 解析可能失败；点「编辑」→「剥离摘要头」修复。</div>' : "") +
+    '<div class="d-block"><div class="d-title">payload（模拟推送内容）</div>' +
+      '<pre class="raw">' + esc(payload || "(无 payload)") + "</pre></div>";
   box.innerHTML =
     '<div class="detail-panel">' +
       '<div class="d-actions">' +
@@ -743,8 +804,7 @@ function renderPushRuleDetail(rule, editing) {
       '<div class="d-kv"><span class="d-k">channelId</span><span class="d-v">' + esc(rule.channelId || "—") + "</span></div>" +
       '<div class="d-kv"><span class="d-k">bizType</span><span class="d-v">' + esc(rule.bizType || "（空=任意）") + "</span></div>" +
       '<div class="d-kv"><span class="d-k">命中次数</span><span class="d-v">' + (rule.hitCount || 0) + "</span></div>" +
-      '<div class="d-block"><div class="d-title">payload（模拟推送内容）</div>' +
-        '<pre class="raw">' + esc(payload) + "</pre></div>" +
+      payloadBlock +
     "</div>";
   box.querySelector("#lcEditBtn").onclick = () => renderPushRuleDetail(rule, true);
   box.querySelector("#lcSendBtn").onclick = async () => {

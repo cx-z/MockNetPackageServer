@@ -132,7 +132,7 @@ func TestPushRuleStore_PersistenceAcrossRestart(t *testing.T) {
 }
 
 func TestPushMockRule_CreateVersionAndEffective(t *testing.T) {
-	m, fs := newPushManager(t)
+	m, _ := newPushManager(t)
 	ctx := context.Background()
 	caller := &store.RuleCaller{Username: "alice", IsAdmin: false}
 
@@ -161,27 +161,26 @@ func TestPushMockRule_CreateVersionAndEffective(t *testing.T) {
 		t.Fatalf("version after first create = %d, want 1", version)
 	}
 
-	// 同域（channelId+bizType）再开一条 enabled → 409 冲突；effective 全 false + conflicts 报告。
-	_, _, err = m.CreatePushMockRule(ctx, "app", "d1", pushInput("xcpush_tcp", "1", true), caller)
-	if !errors.Is(err, store.ErrRuleConflict) {
-		t.Fatalf("Create(second enabled same domain) = %v, want ErrRuleConflict", err)
-	}
-	// 不同 bizType 域可以同时开（互斥域 = channelId+bizType）。
-	v2, _, err := m.CreatePushMockRule(ctx, "app", "d1", pushInput("xcpush_tcp", "2", true), caller)
+	// 2026-10-16（用户拍板）：push mock 模板池允许多条同域（channelId+bizType）
+	// enabled 模板共存——同域再开一条 enabled 不再 409，两条都 Effective=true。
+	// （模拟推送按规则 ID 快照成指令下发，无域内匹配歧义。）
+	v2, _, err := m.CreatePushMockRule(ctx, "app", "d1", pushInput("xcpush_tcp", "1", true), caller)
 	if err != nil {
-		t.Fatalf("Create(p2 different bizType) = %v", err)
+		t.Fatalf("Create(second enabled same domain) = %v", err)
 	}
 	if !v2.Effective {
+		t.Fatal("same-domain enabled rule must be Effective (模板池语义)")
+	}
+	// 不同 bizType 域同样可开且 Effective。
+	v3, _, err := m.CreatePushMockRule(ctx, "app", "d1", pushInput("xcpush_tcp", "2", true), caller)
+	if err != nil {
+		t.Fatalf("Create(p3 different bizType) = %v", err)
+	}
+	if !v3.Effective {
 		t.Fatal("rule in a different bizType domain must be Effective")
 	}
 
-	// 异常域冲突报告：多开状态正常流程被 409 挡住（与 HTTP 一致），只能由
-	// 历史/并发遗留数据产生——file 层直插第二条同域 enabled 规则模拟。
-	if err := fs.PushMockRules().Create(ctx, &capture.PushMockRule{
-		ID: "p3", App: "app", Did: "d1", ChannelId: "xcpush_tcp", BizType: "1", Enabled: true,
-	}); err != nil {
-		t.Fatalf("store Create(p3, same domain) = %v", err)
-	}
+	// 模板池语义：同域多条 enabled 全部 Effective=true，无 conflicts 报告。
 	views, conflicts, _, err := m.ListPushMockRules(ctx, "app", "d1")
 	if err != nil {
 		t.Fatalf("ListPushMockRules = %v", err)
@@ -190,11 +189,11 @@ func TestPushMockRule_CreateVersionAndEffective(t *testing.T) {
 	for _, v := range views {
 		byID[v.ID] = v
 	}
-	if byID[v1.ID].Effective || byID["p3"].Effective {
-		t.Fatal("multi-enabled domain rules must be non-Effective")
+	if !byID[v1.ID].Effective || !byID[v2.ID].Effective {
+		t.Fatal("multi-enabled same-domain rules must all be Effective (模板池语义)")
 	}
-	if len(conflicts) != 1 || conflicts[0].ChannelId != "xcpush_tcp" || conflicts[0].BizType != "1" {
-		t.Fatalf("conflicts = %+v, want one domain xcpush_tcp/1", conflicts)
+	if len(conflicts) != 0 {
+		t.Fatalf("conflicts = %+v, want none (模板池语义不再报告域冲突)", conflicts)
 	}
 }
 
@@ -227,10 +226,10 @@ func TestPushMockRule_UpdateSemantics(t *testing.T) {
 		t.Fatal("toggled rule must be enabled and effective")
 	}
 
-	// 匹配键 frozen：UpdatePushMockRuleInput 无 ChannelId/BizType 字段——
-	// 更新后 ChannelId 保持原值（编译期约束 + 运行时验证）。
+	// 未提供 channelId/bizType（指针 nil）= 保持原匹配键域（2026-10-16 放开
+	// 匹配键编辑后，迁移域需显式携带指针字段）。
 	if upd.ChannelId != "xcpush_tcp" || upd.BizType != "1" {
-		t.Fatalf("match key mutated: %+v", upd.PushMockRule)
+		t.Fatalf("match key mutated without explicit domain fields: %+v", upd.PushMockRule)
 	}
 }
 
@@ -247,14 +246,15 @@ func TestPushMockRule_Permissions(t *testing.T) {
 	}
 
 	// 非 owner 编辑/删除 → ErrRuleForbidden。
-	if _, _, err = m.UpdatePushMockRule(ctx, "app", "d1", v.ID, &capture.UpdatePushMockRuleInput{Note: "x", Enabled: boolPtr(false)}, bob); !errors.Is(err, store.ErrRuleForbidden) {
+	note := "x"
+	if _, _, err = m.UpdatePushMockRule(ctx, "app", "d1", v.ID, &capture.UpdatePushMockRuleInput{Note: &note, Enabled: boolPtr(false)}, bob); !errors.Is(err, store.ErrRuleForbidden) {
 		t.Fatalf("Update(by bob) = %v, want ErrRuleForbidden", err)
 	}
 	if _, err = m.DeletePushMockRule(ctx, "app", "d1", v.ID, bob); !errors.Is(err, store.ErrRuleForbidden) {
 		t.Fatalf("Delete(by bob) = %v, want ErrRuleForbidden", err)
 	}
 	// 未知 ruleID 对非 admin 掩码为 ErrRuleForbidden（不泄露存在性）。
-	if _, _, err = m.UpdatePushMockRule(ctx, "app", "d1", "ghost", &capture.UpdatePushMockRuleInput{Note: "x"}, bob); !errors.Is(err, store.ErrRuleForbidden) {
+	if _, _, err = m.UpdatePushMockRule(ctx, "app", "d1", "ghost", &capture.UpdatePushMockRuleInput{Note: &note}, bob); !errors.Is(err, store.ErrRuleForbidden) {
 		t.Fatalf("Update(ghost, by bob) = %v, want ErrRuleForbidden", err)
 	}
 

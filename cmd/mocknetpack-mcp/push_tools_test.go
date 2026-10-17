@@ -114,7 +114,7 @@ func TestMCPServer_UpdatePushMockRuleTool(t *testing.T) {
 			ID: "pr1", ChannelId: "xcpush_tcp", BizType: "1",
 			Match: got.Match, ReplacePayload: got.ReplacePayload,
 			ReplacePayloadBase64: got.ReplacePayloadBase64,
-			Enabled:              true, Note: got.Note,
+			Enabled:              true, Note: derefNote(got.Note),
 		}, Effective: true})
 	})
 	_, base := setupFake(t, mux)
@@ -127,7 +127,7 @@ func TestMCPServer_UpdatePushMockRuleTool(t *testing.T) {
 	})
 	assert.False(t, res.IsError, resultText(res))
 	assert.Equal(t, `{"content":"new-mock"}`, got.ReplacePayload)
-	assert.Equal(t, "keep-me", got.Note, "existing note must be preserved (server rejects blank note on content change)")
+	assert.Equal(t, "keep-me", derefNote(got.Note), "existing note must be preserved (server rejects blank note on content change)")
 	assert.Equal(t, "old", got.Match.Keyword, "match must be re-sent unchanged (full-replace PUT)")
 	assert.Empty(t, got.ReplacePayloadBase64, "binary snapshot must be cleared when switching to a text payload")
 	body := resultText(res)

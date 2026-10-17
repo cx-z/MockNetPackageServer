@@ -68,7 +68,7 @@ func NewDefaultContextConfig() *ContextConfig {
 
 // GetContextConfigPath returns the path to the context config file.
 func GetContextConfigPath() (string, error) {
-	configDir, err := os.UserConfigDir()
+	configDir, err := userConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine config directory: %w", err)
 	}

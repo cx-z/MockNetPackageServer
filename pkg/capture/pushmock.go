@@ -51,14 +51,18 @@ type PushMockSource struct {
 
 // PushMockRule 是持久化的、按设备隔离的 push mock 规则。匹配键 = ChannelId
 // （必选）+ BizType（可选，空 = 不限定）；payload 匹配条件与替换 payload 可编辑。
-// Enabled 是持久化用户开关；运行时 Effective 标志在读时计算（PushMockRuleView），
-// 异常多开状态（同一匹配键多条 enabled）下该域全部不生效。
+// Enabled 是持久化用户开关；运行时 Effective 标志在读时计算（PushMockRuleView）。
+// 2026-10-16（用户拍板）：模板池语义——多条同域（channelId+bizType）enabled
+// 模板共存合法，Effective 即 enabled，全部可被下发。
 type PushMockRule struct {
 	ID        string        `json:"id"`
 	App       string        `json:"app"`
 	Did       string        `json:"did"`
 	ChannelId string        `json:"channelId"`
-	BizType   string        `json:"bizType,omitempty"`
+	// BizType 恒输出（含空串）：2026-10-16 线上事故同构修复——空 bizType 省略
+	// 字段会让 SDK 非 Optional 模型 decode 失败（规则列表整体拉取失败）。
+	// SDK 端已对齐为 Optional（yaml 非 required），空串 = 不限定 bizType。
+	BizType   string        `json:"bizType"`
 	Match     PushMockMatch `json:"match,omitempty"`
 	// ReplacePayload 是替换 payload 的 UTF-8 文本；ReplacePayloadBase64 存在时
 	// 仅作展示（对齐 MockResponse.Body/BodyBase64 语义）。
@@ -86,7 +90,8 @@ type PushMockRule struct {
 }
 
 // PushMockRuleInput 是创建 payload（对齐 MockRuleInput）。创建定义匹配键
-// （ChannelId 必选 + BizType 可选）；编辑用 UpdatePushMockRuleInput，匹配键 frozen。
+// （ChannelId 必选 + BizType 可选）；编辑用 UpdatePushMockRuleInput，可迁移
+// 匹配键域（2026-10-16 用户拍板放开）。
 type PushMockRuleInput struct {
 	ChannelId            string          `json:"channelId"`
 	BizType              string          `json:"bizType,omitempty"`
@@ -99,27 +104,36 @@ type PushMockRuleInput struct {
 }
 
 // UpdatePushMockRuleInput 是编辑 payload（对齐 UpdateMockRuleInput）。
-// 不含 ChannelId/BizType（匹配键不可改），不含 Source（快照只读）。允许改
-// payload 匹配条件、替换 payload、note、enabled。
+// 2026-10-16（用户拍板）：放开 ChannelId/BizType 编辑——编辑可迁移匹配键域；
+// 模板池语义（同轮拍板）：多条同域 enabled 模板共存合法，编辑迁移域/开启开关
+// 不再做域单活跃 409 冲突检查（模拟推送按规则 ID 快照成指令，无域内匹配歧义）。
+// Source 快照只读。指针区分「未提供（不修改）」与「显式置空」：ChannelId/BizType
+// 与 Note 均为指针——nil = 保持现值（纯 toggle 不清空既有备注），显式置空
+// （BizType 空 = 空 bizType 域，合法；ChannelId 置空 → 400；改内容时 Note
+// 置空/未提供 → 400 note_required）。
 type UpdatePushMockRuleInput struct {
+	ChannelId            *string       `json:"channelId,omitempty"`
+	BizType              *string       `json:"bizType,omitempty"`
 	Match                PushMockMatch `json:"match,omitempty"`
 	ReplacePayload       string        `json:"replacePayload,omitempty"`
 	ReplacePayloadBase64 string        `json:"replacePayloadBase64,omitempty"`
-	Note                 string        `json:"note,omitempty"`
+	Note                 *string       `json:"note,omitempty"`
 	Enabled              *bool         `json:"enabled,omitempty"`
 }
 
 // PushMockRuleView 是 API 输出：持久化规则 + 服务端计算的运行时 Effective 标志。
-// SDK 只应用 Effective=true 的规则。
+// SDK 只应用 Effective=true 的规则。2026-10-16（用户拍板）模板池语义：Effective
+// 即 enabled（多条同域 enabled 模板全部 Effective），无异常多开状态。
 type PushMockRuleView struct {
 	*PushMockRule
-	// Effective 仅当该规则是其匹配键（channelId+bizType）域内唯一 enabled 时为 true。
-	// 异常多开状态下该域全部规则 Effective=false 并在 conflicts 报告。
+	// Effective 即 enabled（2026-10-16 用户拍板模板池语义：多条同域 enabled
+	// 模板全部 Effective；不再有"域内唯一才生效"的异常多开状态）。
 	Effective bool `json:"effective"`
 }
 
-// PushMockRuleConflict 报告异常状态：同一匹配键（channelId+bizType）存在多条
-// enabled 规则；整个域不生效，Web 弹窗提示（对齐 MockRuleConflict）。
+// PushMockRuleConflict 是兼容保留的 Web 视图字段：模板池语义（2026-10-16 用户
+// 拍板）后服务端恒返回空数组——多条同域 enabled 模板是合法模板池，全部生效，
+// 不再有"整个域不生效"的冲突报告（对齐 HTTP MockRuleConflict 的历史形态）。
 type PushMockRuleConflict struct {
 	ChannelId string `json:"channelId"`
 	BizType   string `json:"bizType"`
@@ -146,11 +160,14 @@ type PushRuleCommand struct {
 
 // PushRuleCommandView 是 SDK 线格式的指令视图（心跳响应携带）：剥离 Consumed/
 // ConsumedAt（消费标记由 SDK ack 端点回报），保留构造 Packet 所需字段。
+// BizType 不用 omitempty：SDK 端 PushRuleCommand.bizType 为非 Optional String，
+// 指令 JSON 缺该字段会导致 SDK 心跳响应 decode 失败（keyNotFound），指令永不消费
+// （2026-10-16 线上事故根因：bizType 为空的新建规则指令全部未消费）。
 type PushRuleCommandView struct {
 	ID            string `json:"id"`
 	RuleID        string `json:"ruleId"`
 	ChannelId     string `json:"channelId"`
-	BizType       string `json:"bizType,omitempty"`
+	BizType       string `json:"bizType"`
 	Payload       string `json:"payload,omitempty"`
 	PayloadBase64 string `json:"payloadBase64,omitempty"`
 }
