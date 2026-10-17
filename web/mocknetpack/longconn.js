@@ -1,6 +1,6 @@
 "use strict";
 
-// MockNetPack web: 长连接日志页签（能力线 L1, 业务级长连接日志）。
+// MockNetPack web: 长连接日志页签（业务级长连接日志）。
 // 独立页签承载：与 HTTP 请求流分页签、互不混入；独立轮询 since 游标。
 // 数据通道：GET /api/v1/sessions/{sid}/longconn（服务端独立额度/独立存档）。
 // ============================================================================
@@ -97,7 +97,7 @@ function longConnFakeBadge(e) {
 
 /** 日志行 meta（channelId · biz= · msg= · dup/empty）：记录顶层字段优先，
  *  SDK 摘要头（type=… msgId=… bizType=… payload=…）兜底——历史/分享快照
- *  顶层无 bizType/msgId，只有摘要头里有（2026-10-16 历史 cell 空修复）。
+ *  顶层无 bizType/msgId，只有摘要头里有。
  *  当前日志与历史日志列表共用，保证两处展示一致。 */
 function longConnCellMeta(e) {
   const meta = [];
@@ -119,13 +119,13 @@ function renderLongConn() {
   renderSnapshotCard(snapshots[snapshots.length - 1]);
   const q = longConnFilter.trim().toLowerCase();
   // 列表只显示业务包（packet）；snapshot 进状态卡，connect/disconnect/heartbeat/
-  // timeout 等生命周期事件仅驱动状态卡、不占列表（用户反馈 2026-10-14）。
+  // timeout 等生命周期事件仅驱动状态卡、不占列表。
   let entries = longConnLog.filter((e) => e.eventType === "packet");
   const total = entries.length;
   if (q) {
     entries = entries.filter((e) => {
       // 真假过滤：仅完整词 fake/real 触发；f/r/fa 等短串走普通文本匹配，
-      // 避免劫持 bizType/msgId 搜索（用户拍板 2026-10-14）。
+      // 避免劫持 bizType/msgId 搜索。
       if (q === "fake") return !!e.mocked;
       if (q === "real") return !e.mocked;
       return (e.eventType || "").toLowerCase().includes(q) ||
@@ -243,7 +243,7 @@ function parsePayloadHead(head) {
 /** payload 文本美化：SDK 摘要形态（"type=... msgId=... payload={json}"）或纯 JSON
  *  都尝试美化为缩进多行；解析失败原样返回。返回 { display, json }——json=true
  *  时给 pre 加 lc-payload-json 类（语义标记，全展开无折叠）。
- *  2026-10-16（Web UI 重构）：摘要形态只展示业务体（body），摘要头参数由
+ *  摘要形态只展示业务体（body），摘要头参数由
  *  renderLongConnDetail 移入上方参数列表。注意：64 位 msgid/session_id 等
  *  数字字段在 JSON.parse 时已丢精度（仅展示美化，不回写服务端/不做模板
  *  替换，无副作用）。 */
@@ -274,7 +274,7 @@ function renderLongConnDetail(e, target) {
     : '<div class="d-kv"><span class="d-k">' + esc(k) + '</span><span class="d-v">' + esc(String(v)) + "</span></div>";
 
   // 工具条：复制（payload 文本）+ 分享（单条快照，7 天有效）+
-  // 一键建推送模板（能力线 L7 模拟推送形态：仅业务包展示，channelId 必选）。
+  // 一键建推送模板（模拟推送形态：仅业务包展示，channelId 必选）。
   const mockBtn = e.eventType === "packet"
     ? '<button class="small ghost" id="lcMockBtn">一键建推送模板</button>'
     : "";
@@ -312,7 +312,7 @@ function renderLongConnDetail(e, target) {
     payloadBlock = '<div class="d-block"><div class="d-title">payload（超限预览，≤1KB）</div><pre class="raw">' + esc(e.payloadPreview) + "</pre></div>";
   }
 
-  // L6.2 采集方式如实标注：哪条适配器采的（xcpush）/ API 注入（unknown-inject）/
+  // 采集方式如实标注：哪条适配器采的（xcpush）/ API 注入（unknown-inject）/
   // 老 SDK 无字段 → 缺省展示 "—"（零副作用）。
   const adapterLabel = e.adapter === "xcpush"
     ? '<span class="lc-type lc-adapter">xcpush 适配器</span>'
@@ -322,8 +322,7 @@ function renderLongConnDetail(e, target) {
         ? '<span class="lc-type">' + esc(e.adapter) + "</span>"
         : "—";
 
-  // 摘要头参数（type/msgId/bizType 等）移入上方参数列表（2026-10-16 Web UI
-  // 重构：解析内容只保留业务体）。记录顶层若无 msgId/bizType 字段（如分享
+  // 摘要头参数（type/msgId/bizType 等）移入上方参数列表（解析内容只保留业务体）。记录顶层若无 msgId/bizType 字段（如分享
   // 快照），以摘要头解析值兜底；type 仅存在于摘要头。
   const headParams = parsePayloadHead(payloadSummaryInfo(e.payloadText || "").head);
   const msgId = e.msgId || headParams.msgId;
@@ -378,12 +377,12 @@ function renderLongConnDetail(e, target) {
 }
 
 // ============================================================================
-// 能力线 L7（L7.3a 重做）：一键建推送模板（模拟推送形态 D0）
+// 一键建推送模板（模拟推送形态）
 // ============================================================================
 
 /** 模板化替换 payload（技术方案 3.3#3 业务兼容）：保留结构字段
  *  （session_id/msgid/from/touser 等原值）。[mock] 标记必须注入顶层
- *  content JSON **内部**的 say_content.content 文本前面（真机教训：
+ *  content JSON **内部**的 say_content.content 文本前面（
  *  加在整个 content 字符串外面会破坏 JSON → 业务 toJson 失败 → 显示
  *  "不支持的消息"）。不能用 JSON.parse/stringify：64 位 msgid/session_id
  *  超过 2^53 会丢精度，全程字符串扫描。 */
@@ -411,10 +410,10 @@ function pushMockTemplatePayload(rawText) {
 }
 
 /** 一键建推送模板（对齐 HTTP「Mock 此请求」交互：不弹窗，直接生成）。
- *  模拟推送形态（D0/D1）：不再需要匹配关键字——模板即 payload；SDK 下轮
+ *  模拟推送形态：不再需要匹配关键字——模板即 payload；SDK 下轮
  *  心跳拉取指令后构造假 Packet 注入，业务收到"新 push"。
  *  模板以纯业务体为底：SDK 上报的 payloadText 是「摘要头 + payload= + 业务体」
- *  展示文本，直接入模板会让业务注入器按 JSON 解析失败（真机教训 2026-10-16），
+ *  展示文本，直接入模板会让业务注入器按 JSON 解析失败，
  *  先剥离摘要头；二进制（base64）日志无法自动生成文本模板，toast 提示手写。
  *  channelId/bizType 取日志值（bizType 摘要头兜底——分享快照顶层无该字段）。 */
 async function createPushMockRuleFromLog(record) {
@@ -454,7 +453,7 @@ async function createPushMockRuleFromLog(record) {
       return;
     }
     showError("推送模板已创建（" + data.id + "）。点模板行 → 右栏「模拟推送」下发，SDK 下轮心跳生效。");
-    // 若 push 规则列表已渲染则刷新（L7.3b）。
+    // 若 push 规则列表已渲染则刷新。
     if (typeof refreshPushMockRules === "function") refreshPushMockRules();
   } catch (err) {
     showError("创建失败：" + err.message);
@@ -588,7 +587,7 @@ function openBlankPushMockRuleForm() {
 }
 
 // ============================================================================
-// 能力线 L7（L7.3b）：push mock 规则列表与启停（决策 D2：长连接页签内嵌区块）
+// push mock 规则列表与启停（长连接页签内嵌区块）
 // ============================================================================
 
 /** 替换 payload 摘要（base64 标记或 JSON 缩成一行；带 SDK 摘要头的先剥离，
@@ -862,6 +861,6 @@ async function deletePushMockRule(rule, row) {
 }
 
 $("pushRuleRefreshBtn").onclick = refreshPushMockRules;
-// 切到长连接页签时刷新规则列表（决策 D2：与日志同屏）。
+// 切到长连接页签时刷新规则列表（与日志同屏）。
 const _lcTabOnclick = $("tabLongConn").onclick;
 $("tabLongConn").onclick = (ev) => { _lcTabOnclick(ev); refreshPushMockRules(); };

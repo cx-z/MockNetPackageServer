@@ -114,9 +114,9 @@ doLogout   → POST /auth/logout (server-side revoke) → clear token/state/poll
              back to list view + showAuth()
 ```
 
-### 7. Impact of machine channels (v0.13.0) on the Web
+### 7. Impact of machine channels on the Web
 
-- **Request stream does not regress**: `pollTraffic` still uses the default (no projection) full-entry response; the server guarantees the default response shape is identical to v0.11.0 (the Web still authenticates with a session token); mocked entries additionally carry `matchedRuleId` (consumed only by machine channels; Web request-stream display is unaffected).
+- **Request stream does not regress**: `pollTraffic` still uses the default (no projection) full-entry response; the server guarantees the default response shape is unchanged (the Web still authenticates with a session token); mocked entries additionally carry `matchedRuleId` (consumed only by machine channels; Web request-stream display is unaffected).
 - **New "API Key 管理" (API Key management) entry**: logged-in users see an "API Key" button in the header → a modal that supports creating (plaintext shown once at creation, one-click copy), listing (only keyPrefix + created/expires time), and revoking (double confirmation, immediate invalidation). The frontend `apikey.js` reuses `apiFetch` (Bearer session token) and calls the server's three `/auth/keys` endpoints; plaintext lives only in an in-memory variable and is cleared when the modal closes — never written to localStorage.
 
 ## UX / error patterns

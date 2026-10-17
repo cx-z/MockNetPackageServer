@@ -9,7 +9,7 @@ import (
 )
 
 // pushMockRuleStore implements store.PushMockRuleStore using the FileStore's
-// in-memory data + debounced persistence (能力线 L7; 独立规则集与独立版本号
+// in-memory data + debounced persistence (独立规则集与独立版本号
 // key = app + "\x00" + did，与 HTTP mockRuleStore 互不干扰)。
 type pushMockRuleStore struct {
 	fs *FileStore
@@ -144,7 +144,7 @@ func (s *pushMockRuleStore) BumpRuleVersion(ctx context.Context, app, did string
 	return v, nil
 }
 
-// pushRuleCommandStore implements store.PushRuleCommandStore (能力线 L7 模拟推送
+// pushRuleCommandStore implements store.PushRuleCommandStore (模拟推送
 // 形态：pending 指令队列，独立于 push 规则集/版本号)。
 type pushRuleCommandStore struct {
 	fs *FileStore

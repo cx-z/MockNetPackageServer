@@ -7,8 +7,8 @@
 // location.origin 是 localhost，手机连自己的 localhost 必然失败，故先请求
 // GET /api/v1/local-address 拿 `{origin}` 替换；非 localhost（域名/局域网 IP）直接同源。
 // 令牌可复用：同一二维码可扫多台设备，10 分钟有效，过期提示刷新
-// （D1 扫码即注册由服务端 RegisterDeviceWithPairing 保证）。
-// （v0.8.2）：二维码弹窗打开期间轮询 GET /pairing-tokens/{token}，
+// （扫码即注册由服务端 RegisterDeviceWithPairing 保证）。
+// 二维码弹窗打开期间轮询 GET /pairing-tokens/{token}，
 // 检测到有新设备用该令牌完成注册 → 自动关闭二维码弹窗 → 弹出设备命名框 →
 // 提交改名后跳转该设备的请求列表页（#/device/{app}/{did}）开始看抓包。
 
@@ -177,7 +177,7 @@ function closeScanConnectModal() {
 const SCAN_POLL_MS = 3000; // 轮询间隔
 let scanPollTimer = null;
 let scanPollToken = null;
-let scanPollBaseline = 0; // 打开弹窗时的已配对数量（令牌可复用 D5，以「新增」为准）
+let scanPollBaseline = 0; // 打开弹窗时的已配对数量（令牌可复用，以「新增」为准）
 
 /// 轮询令牌状态：一旦出现新的配对注册，自动关闭二维码弹窗并进入设备命名。
 function startScanPoll(token) {

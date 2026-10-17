@@ -18,7 +18,7 @@ async function renderShareView(shareId) {
     if (!res.ok) throw new Error("HTTP " + res.status);
     const snap = await res.json();
 
-    // 能力线 L1: 长连接日志分享（方案 A）——渲染只读快照。
+    // 长连接日志分享——渲染只读快照。
     if (snap.longConnEntry) {
       const expDate = new Date(snap.expiresAt);
       const e = snap.longConnEntry;

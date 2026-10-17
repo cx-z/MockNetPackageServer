@@ -11,16 +11,16 @@ import (
 )
 
 // ============================================================================
-// Push mock payload matching (能力线 L7)
+// Push mock payload matching
 // ============================================================================
 //
 // 服务端匹配引擎：用于 Web 预演/命中统计语义对齐与 SDK 轻量子集的参考实现。
-// 实时拦截在 SDK 本地执行（L7 决策 D1），SDK 按本函数的语义实现轻量匹配。
+// 实时拦截在 SDK 本地执行，SDK 按本函数的语义实现轻量匹配。
 
 // MatchPushPayload evaluates a rule's PushMockMatch against the raw payload
 // bytes of an inbound push (解压后原始字节，非 base64)。
 //
-// 匹配语义（技术方案 3.4 + L7 决策 D1）：
+// 匹配语义（技术方案 3.4）：
 //   - payload 为 JSON：
 //     - JSONPath 非空 → 提取路径值后按 op 比较（equals=字符串化相等，
 //       contains=字符串化包含，缺省 contains）；提取不到值 → 未命中

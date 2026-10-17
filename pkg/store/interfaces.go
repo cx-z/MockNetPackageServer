@@ -351,7 +351,7 @@ type TrafficStore interface {
 
 // LongConnStore persists per-session long-connection log archives as one
 // independent file per capture session under <dataDir>/longconn/<sessionID>.json
-// (能力线 L1: 数据与 HTTP 流量分开存储、独立额度). A nil LongConnStore keeps the
+// (数据与 HTTP 流量分开存储、独立额度). A nil LongConnStore keeps the
 // memory-only behavior (existing tests).
 type LongConnStore interface {
 	// SaveSessionLongConn atomically persists a session's full longconn slice.
@@ -403,11 +403,11 @@ type MockRuleStore interface {
 }
 
 // ============================================================================
-// MockNetPack push mock rules (能力线 L7)
+// MockNetPack push mock rules
 // ============================================================================
 
 // PushMockRuleStore handles persistence for MockNetPack push mock rules and the
-// per-device monotonic push rule-set version (L7 决策 D3：独立存储/独立版本号，
+// per-device monotonic push rule-set version (独立存储/独立版本号，
 // 不污染 HTTP MockRule)。规则跨重启持久化；运行时 Effective 标志由 manager
 // 计算，不在此存储。版本 key 与 HTTP 规则版本相互独立——同 (app,did) 两类规则
 // 各自维护单调版本，SDK 分别增量拉取。
@@ -436,8 +436,8 @@ type PushMockRuleStore interface {
 	BumpRuleVersion(ctx context.Context, app, did string) (int, error)
 }
 
-// PushRuleCommandStore 是「模拟推送」pending 指令的持久化（能力线 L7 模拟推送
-// 形态，D0/D3）：独立于 push 规则集与版本号（指令是临时队列，入队/消费不 bump
+// PushRuleCommandStore 是「模拟推送」pending 指令的持久化（模拟推送形态）：
+// 独立于 push 规则集与版本号（指令是临时队列，入队/消费不 bump
 // PushRuleVersions）。按设备（app+did）组织；指令随 SDK ack 消费，过期清理。
 type PushRuleCommandStore interface {
 	// Append 追加一条指令到设备队列尾部（同一规则重复触发 = 追加，支持连续

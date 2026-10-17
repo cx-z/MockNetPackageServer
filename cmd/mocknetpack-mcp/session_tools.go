@@ -1,6 +1,6 @@
 package main
 
-// MCP capture-session management tools (M12.8): get_capture_status,
+// MCP capture-session management tools: get_capture_status,
 // start_capture, renew_capture_observer, release_capture_observer.
 //
 // These tools only orchestrate the existing admin API session endpoints

@@ -1,7 +1,7 @@
-// Package admin: push mock rule handlers (能力线 L7).
+// Package admin: push mock rule handlers.
 // Web CRUD/toggle + SDK incremental snapshot pull. Routes live under
 // /api/v1/devices/{app}/{did}/push-mock-rules — 与 HTTP mock-rules 并列的
-// 独立资源（L7 决策 D3：独立模型/独立版本号/独立端点，HTTP 契约零改动）。
+// 独立资源（独立模型/独立版本号/独立端点，HTTP 契约零改动）。
 package admin
 
 import (
@@ -31,9 +31,9 @@ type PushMockRuleListResponse struct {
 type sdkPushRuleView struct {
 	ID                   string                 `json:"id"`
 	ChannelID            string                 `json:"channelId"`
-	// BizType 恒输出（含空串）：2026-10-16 线上事故同构修复——空 bizType 省略
-	// 字段会让 SDK 非 Optional 模型 decode 失败（规则列表整体拉取失败）；
-	// SDK 端已对齐 Optional（yaml 非 required），空串 = 不限定 bizType。
+	// BizType 恒输出（含空串）：空 bizType 省略字段会让 SDK 非 Optional 模型
+	// decode 失败（规则列表整体拉取失败）；SDK 端已对齐 Optional（yaml 非
+	// required），空串 = 不限定 bizType。
 	BizType              string                 `json:"bizType"`
 	Match                capture.PushMockMatch  `json:"match"`
 	ReplacePayload       string                 `json:"replacePayload,omitempty"`
@@ -75,7 +75,7 @@ type sdkPushRuleListResponse struct {
 //     the device version is unchanged the list is empty (SDK keeps its snapshot).
 //   - Web full list: no sinceVersion returns every rule (including disabled,
 //     with source snapshots); conflicts is a compatibility field, always empty
-//     (2026-10-16 模板池语义：多条同域 enabled 模板合法，全部 Effective).
+//     (模板池语义：多条同域 enabled 模板合法，全部 Effective).
 func (a *API) handleListPushMockRules(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	did := r.PathValue("did")
@@ -135,7 +135,7 @@ func (a *API) handleListPushMockRules(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreatePushMockRule handles POST /api/v1/devices/{app}/{did}/push-mock-rules.
-// Creates a push rule (default disabled). 模板池语义（2026-10-16 用户拍板）：同域
+// Creates a push rule (default disabled). 模板池语义：同域
 // （channelId+bizType）允许多条 enabled 规则共存，创建不做域单活跃 409 检查。
 func (a *API) handleCreatePushMockRule(w http.ResponseWriter, r *http.Request) {
 	var in capture.PushMockRuleInput
@@ -159,8 +159,8 @@ func (a *API) handleCreatePushMockRule(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdatePushMockRule handles PUT /api/v1/devices/{app}/{did}/push-mock-rules/{ruleId}.
 // Edits the payload match, replace payload and note; optionally flips the enabled
-// switch. Since 2026-10-16（用户拍板）channelId/bizType 指针字段可迁移匹配键域；
-// 模板池语义（同轮拍板）：迁移域/开启开关不再返回域单活跃 409（多条同域
+// switch. channelId/bizType 指针字段可迁移匹配键域；
+// 模板池语义：迁移域/开启开关不再返回域单活跃 409（多条同域
 // enabled 共存合法）。note must be non-blank only when the PUT actually changes
 // rule content (including a match-key domain migration); a pure toggle may leave
 // it blank.
@@ -209,7 +209,7 @@ func validatePushMockRuleInput(w http.ResponseWriter, in *capture.PushMockRuleIn
 }
 
 // validateUpdatePushMockRuleInput validates the edit payload (UpdatePushMockRuleInput).
-// 2026-10-16（用户拍板放开匹配键编辑）：channelId 显式提供（编辑迁移域）时不能为空。
+// channelId 显式提供（编辑迁移域）时不能为空。
 func validateUpdatePushMockRuleInput(w http.ResponseWriter, in *capture.UpdatePushMockRuleInput) bool {
 	if in.ChannelID != nil && strings.TrimSpace(*in.ChannelID) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_field", "channelId cannot be empty")
@@ -218,7 +218,7 @@ func validateUpdatePushMockRuleInput(w http.ResponseWriter, in *capture.UpdatePu
 	return validatePushMockMatch(w, &in.Match)
 }
 
-// validatePushMockMatch enforces the push match condition shape (D1).
+// validatePushMockMatch enforces the push match condition shape.
 func validatePushMockMatch(w http.ResponseWriter, m *capture.PushMockMatch) bool {
 	if m.JSONPath == "" && m.JSONPathValue != "" {
 		writeError(w, http.StatusBadRequest, "invalid_field", "jsonPathValue requires jsonPath (e.g. $.data.tip)")
@@ -233,7 +233,7 @@ func validatePushMockMatch(w http.ResponseWriter, m *capture.PushMockMatch) bool
 }
 
 // handleSendPushMockRule handles POST /api/v1/devices/{app}/{did}/push-mock-rules/{ruleId}/send
-// (能力线 L7 模拟推送形态 D0)：Web 点「模拟推送」→ 服务端为设备入队一条
+// Web 点「模拟推送」→ 服务端为设备入队一条
 // pending 指令（快照规则 payload）→ SDK 下次心跳携带 → 构造注入。
 // requireAuth + authorizeDeviceAccess；规则必须存在且 enabled（停用 409）。
 // 同一规则重复触发每次追加新指令（支持连续模拟推送多条）。
@@ -350,7 +350,7 @@ func (a *API) handleListPushRuleCommands(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, pushRuleCommandListResponse{Commands: views})
 }
 
-// pushRuleCommandAckRequest is the SDK ack body (能力线 L7 模拟推送形态)。
+// pushRuleCommandAckRequest is the SDK ack body (模拟推送形态)。
 type pushRuleCommandAckRequest struct {
 	IDs []string `json:"ids"`
 }

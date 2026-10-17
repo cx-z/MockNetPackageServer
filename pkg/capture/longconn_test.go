@@ -26,7 +26,7 @@ func TestLongConnectionRecordInput_Normalize(t *testing.T) {
 }
 
 func TestLongConnectionRecordInput_AdapterRoundTrip(t *testing.T) {
-	// L6.2：adapter 标识随记录 JSON 往返（SDK 填充、服务端透传、Web 读取）。
+	// adapter 标识随记录 JSON 往返（SDK 填充、服务端透传、Web 读取）。
 	raw := `{"channelId":"xcpush_tcp","eventType":"packet","ts":"2026-10-15T10:00:00Z","payloadText":"x","adapter":"xcpush"}`
 	var r LongConnectionRecordInput
 	if err := json.Unmarshal([]byte(raw), &r); err != nil {

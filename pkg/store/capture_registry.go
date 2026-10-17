@@ -40,14 +40,14 @@ var (
 	// without forcing an edit .
 	ErrNoteRequired = errors.New("mock rule note is required when editing the canned response")
 	// ErrPushRuleInvalidChannel means a push mock rule was created without the
-	// required ChannelID match key (能力线 L7; maps to HTTP 400).
+	// required ChannelID match key (maps to HTTP 400).
 	ErrPushRuleInvalidChannel = errors.New("push mock rule requires channelId")
 	// ErrPushRuleDisabled means a "模拟推送" was requested for a disabled push
-	// mock rule (能力线 L7 模拟推送形态; maps to HTTP 409).
+	// mock rule (模拟推送形态; maps to HTTP 409).
 	ErrPushRuleDisabled = errors.New("push mock rule is disabled")
 	// ErrPushRuleEmptyPayload means a "模拟推送" was requested for a push mock
 	// rule whose template payload is empty (replacePayload 与 replacePayloadBase64
-	// 均缺；能力线 L7 修复 2026-10-15：PUT 整体覆盖曾把模板 payload 清空，空指令
+	// 均缺；PUT 整体覆盖曾把模板 payload 清空，空指令
 	// 在 SDK 侧 makePacket 失败且永不 ack → 永久「待下发」；此处提前 409 拦截；
 	// maps to HTTP 409 push_rule_empty_payload).
 	ErrPushRuleEmptyPayload = errors.New("push mock rule has no payload to send; edit the template first")
@@ -97,7 +97,7 @@ type CaptureConfig struct {
 	// 0 means the server default (48h).
 	TrafficRetention time.Duration
 	// MaxSessionLongConnEntries caps the number of long-connection log entries
-	// kept per session (能力线 L1). Long-connection logs are an independent
+	// kept per session. Long-connection logs are an independent
 	// quota: they do NOT count against MaxSessionTrafficEntries. 0 means the
 	// server default (DefaultMaxSessionLongConnEntries = 1000).
 	MaxSessionLongConnEntries int
@@ -130,11 +130,11 @@ type CaptureManager struct {
 	devices  DeviceStore
 	sessions CaptureSessionStore
 	rules    MockRuleStore
-	// pushRules persists push mock rules (能力线 L7, PushMockRuleStore)。
+	// pushRules persists push mock rules (PushMockRuleStore)。
 	// nil = push mock 未启用（注入前/旧测试），push 规则方法返回空集。
 	// 注入沿用 SetLongConnStore 模式：SetPushMockRules(dataStore.PushMockRules())。
 	pushRules PushMockRuleStore
-	// pushRuleCommands persists pending push mock commands (能力线 L7 模拟推送
+	// pushRuleCommands persists pending push mock commands (模拟推送
 	// 形态, PushRuleCommandStore)。nil = 未启用，指令方法返回空集。
 	pushRuleCommands PushRuleCommandStore
 	// pairingTokens persists QR pairing tokens : short-lived credentials
@@ -171,8 +171,8 @@ type CaptureManager struct {
 	// cleaned up together with orphaned traffic keys.
 	trafficSeq map[string]int64
 
-	// longconnMu guards runtime long-connection log entries (能力线 L1,
-	// 业务级长连接日志), keyed by session ID. Independent quota: these records
+	// longconnMu guards runtime long-connection log entries (业务级长连接日志),
+	// keyed by session ID. Independent quota: these records
 	// never touch trafficMu / traffic / trafficSeq and do not count against
 	// MaxSessionTrafficEntries. They are persisted under mockd-data/longconn.
 	longconnMu  sync.RWMutex
@@ -293,13 +293,13 @@ func (m *CaptureManager) ServerConfig() capture.ServerConfig {
 // QR pairing tokens
 // ============================================================================
 
-// pairingTokenTTL is how long a QR pairing token stays valid (10 minutes,
-// D5): one QR can onboard several devices within the window.
+// pairingTokenTTL is how long a QR pairing token stays valid (10 minutes):
+// one QR can onboard several devices within the window.
 const pairingTokenTTL = 10 * time.Minute
 
 // CreatePairingToken issues a new pairing token for the given user and app.
 // The same (user, app) may be issued repeatedly; earlier tokens remain valid
-// until their TTL (reusable, D5 — validation never consumes a token).
+// until their TTL (reusable — validation never consumes a token).
 func (m *CaptureManager) CreatePairingToken(ctx context.Context, user, app string) (*account.PairingToken, error) {
 	token, err := account.NewToken()
 	if err != nil {

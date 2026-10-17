@@ -6,7 +6,7 @@ import (
 )
 
 // ============================================================================
-// Long-connection logs (长连接日志, capability line L1)
+// Long-connection logs (长连接日志)
 // ============================================================================
 
 // LongConnectionDirection is the packet direction of a long-connection log
@@ -145,13 +145,13 @@ type LongConnectionRecordInput struct {
 	Empty bool `json:"empty,omitempty"`
 	// AckSent marks whether the ACK was sent.
 	AckSent bool `json:"ackSent,omitempty"`
-	// Mocked marks a packet that was replaced by a push mock rule (能力线 L7:
-	// SDK 旁路采集时标记；Web 显示 "Mock 命中"，对齐 HTTP mocked 标识)。
+	// Mocked marks a packet that was replaced by a push mock rule (SDK 旁路
+	// 采集时标记；Web 显示 "Mock 命中"，对齐 HTTP mocked 标识)。
 	Mocked bool `json:"mocked,omitempty"`
 	// MockRuleID is the push mock rule ID that replaced this packet (SDK 上报；
 	// 服务端据此 RecordPushMockHit 递增 hitCount/lastHitAt，Web 可溯源)。
 	MockRuleID string `json:"mockRuleId,omitempty"`
-	// Adapter identifies which adapter collected this record (L6.2 采集方式
+	// Adapter identifies which adapter collected this record (采集方式
 	// 如实标注：适配器标识如 "xcpush" / 业务 API 注入 "unknown-inject"；
 	// SDK 填充、服务端透传；老 SDK 不携带 → 空)。
 	Adapter string `json:"adapter,omitempty"`

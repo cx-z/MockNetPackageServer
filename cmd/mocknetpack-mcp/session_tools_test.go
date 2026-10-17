@@ -1,6 +1,6 @@
 package main
 
-// Integration tests for the M12.8 capture-session tools. Unlike the fake-
+// Integration tests for the capture-session tools. Unlike the fake-
 // server handler tests in tools_test.go, these run against the REAL admin API
 // (admin.NewAPI over a temp data dir, no-auth, real capture manager), so the
 // MCP orchestration is verified against the genuine session/viewer-lease

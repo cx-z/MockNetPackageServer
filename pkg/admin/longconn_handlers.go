@@ -17,7 +17,7 @@ type LongConnUploadResponse struct {
 }
 
 // handleUploadLongConnection handles POST /api/v1/sessions/{id}/longconn (SDK
-// batch upload, 能力线 L1: 业务级长连接日志). No requireAuth — aligned with
+// batch upload, 业务级长连接日志). No requireAuth — aligned with
 // handleUploadTraffic (SDK upload channel). Contract semantics: 202 on
 // acceptance; 400 when the batch is empty or every record is invalid;
 // 404 session_not_found for an unknown session; 409 session_ended for an

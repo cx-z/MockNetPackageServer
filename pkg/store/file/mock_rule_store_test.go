@@ -17,8 +17,8 @@ func ruleInput(method, path string, enabled bool) *capture.MockRuleInput {
 		Response: capture.MockResponse{StatusCode: 200, Body: `{"ok":true}`},
 		Enabled:  enabled,
 		//  Step1: existing tests model capture-originated rules ("Mock 此
-		// 请求") — they carry a source snapshot and may omit the note (D6
-		// exempts source-bearing creates). Hand-authored rules are exercised
+		// 请求") — they carry a source snapshot and may omit the note
+		// (source-bearing creates are exempt). Hand-authored rules are exercised
 		// explicitly in TestMockRule_HandAuthoredNoteRequired below.
 		Source: &capture.MockRuleSource{Method: method, Path: path},
 	}
@@ -551,7 +551,7 @@ func TestMockRule_HandAuthoredNoteRequired(t *testing.T) {
 	}
 
 	// S2: capture-originated create (Source set) with a blank note still
-	// succeeds — the D6 exemption is the status quo.
+	// succeeds — the source-bearing exemption is the status quo.
 	logIn := ruleInput("GET", "/api/from-log", false)
 	if _, _, err := m.CreateMockRule(ctx, "app", "d1", logIn, nil); err != nil {
 		t.Errorf("create with source blank note = %v, want nil", err)

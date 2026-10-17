@@ -100,7 +100,7 @@ function bindSession(session) {
   registerViewer(session, "设备详情页");
   trafficTimer = setInterval(pollTraffic, TRAFFIC_POLL_MS);
   pollTraffic();
-  bindLongConnSession(session);   // 能力线 L1: 长连接日志独立轮询
+  bindLongConnSession(session);   // 长连接日志独立轮询
 }
 
 function stopTrafficPoll() {

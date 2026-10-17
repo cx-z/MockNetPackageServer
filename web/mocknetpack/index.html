@@ -158,10 +158,10 @@
         <div id="trafficList"><div class="empty">请选择会话查看实时请求。</div></div>
         </div>
 
-        <!-- 能力线 L1: 长连接日志（独立页签，与 HTTP 流量互不混入） -->
+        <!-- 长连接日志（独立页签，与 HTTP 流量互不混入） -->
         <div id="longconnPane" class="hidden">
           <div id="longconnSnapshot" class="snapshot-card hidden"></div>
-          <!-- 能力线 L7（L7.3b）：推送模板区块——置于日志上方（同请求流布局：操作区在上、日志流在下） -->
+          <!-- 推送模板区块——置于日志上方（同请求流布局：操作区在上、日志流在下） -->
           <div class="section-title lc-push-rule-title">推送模板（模拟 push）
             <span class="sub" id="pushRuleInfo"></span>
             <button id="pushRuleCreateBtn" class="small" title="不基于任何日志，直接手写 channelId/bizType/payload 创建模板">＋ 新建空白模板</button>

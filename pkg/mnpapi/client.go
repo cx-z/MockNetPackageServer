@@ -444,7 +444,7 @@ func (c *Client) DeleteMockRule(ctx context.Context, app, did, ruleID string) er
 }
 
 // ============================================================================
-// push mock 规则（能力线 L7 模拟推送形态；MCP push_tools 的薄封装基座）
+// push mock 规则（模拟推送形态；MCP push_tools 的薄封装基座）
 // ============================================================================
 
 // PushMockRuleList mirrors the Web full-list contract PushMockRuleList:

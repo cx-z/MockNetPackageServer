@@ -423,7 +423,7 @@ async function saveRuleEdit(rule) {
   // ：CodeMirror 内容先回写隐藏 textarea，再统一按 textarea 取值/校验。
   if (ruleBodyEditor) ruleBodyEditor.save();
   // ：保存前 JSON 合法性校验——回包体形如 JSON（{…}/[…]）时必须可解析，
-  // 拦截全角符号/多余逗号等低级错误（ 真机教训），避免坏 JSON 以"无网络"误导。
+  // 拦截全角符号/多余逗号等低级错误，避免坏 JSON 以"无网络"误导。
   const bodyText = $("editBody").value;
   const trimmedBody = bodyText.trim();
   if (trimmedBody && (trimmedBody.startsWith("{") || trimmedBody.startsWith("["))) {
@@ -679,7 +679,7 @@ async function submitCreateRule() {
       encodeURIComponent(detail.did) + "/mock-rules", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // D4 默认停用；从零创建不带 source（D1 统一模型，Source=nil）。
+      // 默认停用；从零创建不带 source（统一模型，Source=nil）。
       body: JSON.stringify({
         method: method,
         path: path,

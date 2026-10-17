@@ -10,7 +10,7 @@ import (
 )
 
 // longConnStore implements store.LongConnStore as one JSON file per capture
-// session under <dataDir>/longconn/<sessionID>.json (能力线 L1: 长连接日志
+// session under <dataDir>/longconn/<sessionID>.json (长连接日志
 // 与 HTTP 流量分开存储、独立额度). Writes are atomic (tmp + fsync + rename),
 // mirroring trafficStore; the CaptureManager serializes all mutations of one
 // session's slice under longconnMu, so no internal mutex is needed.

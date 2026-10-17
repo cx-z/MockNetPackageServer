@@ -253,8 +253,8 @@ func TestPairingToken_StatusUnknownToken(t *testing.T) {
 	assert.Equal(t, "not_found", errResp.Error)
 }
 
-// TestPairingToken_AppNameRefreshedOnReuse: v0.9.0 — pairing registration
-// stores the SDK-reported app display name; on D7 reuse the appName refreshes
+// TestPairingToken_AppNameRefreshedOnReuse: pairing registration
+// stores the SDK-reported app display name; on reuse the appName refreshes
 // as metadata while name/owner stay untouched.
 func TestPairingToken_AppNameRefreshedOnReuse(t *testing.T) {
 	_, ts := newAuthRequiredTestAPI(t)

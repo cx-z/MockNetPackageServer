@@ -11,16 +11,16 @@ import (
 )
 
 // File: push_rule_registry.go
-// Push mock rules (能力线 L7): CRUD, Effective evaluation, version,
+// Push mock rules: CRUD, Effective evaluation, version,
 // hit statistics, retention janitor. 复用 HTTP MockRule 的管理语义（权限/启停/
-// effective/增量拉取），独立模型与独立版本号（L7 决策 D3）。
-// 2026-10-16（用户拍板）：push mock 模板池允许多条同域（channelId+bizType）
+// effective/增量拉取），独立模型与独立版本号。
+// push mock 模板池允许多条同域（channelId+bizType）
 // enabled 模板共存——Effective 即 enabled，无域冲突报告。
 // ============================================================================
 
 // evaluatePushRules computes the runtime Effective flag for every push rule of a
 // device. Effective 即 enabled（模板池语义：多条同域共存全部生效；模拟推送按
-// 规则 ID 快照成指令下发，无域内匹配歧义——2026-10-16 用户拍板）。
+// 规则 ID 快照成指令下发，无域内匹配歧义）。
 func (m *CaptureManager) evaluatePushRules(ctx context.Context, app, did string) ([]*capture.PushMockRuleView, []capture.PushMockRuleConflict, int, error) {
 	if m.pushRules == nil {
 		return nil, nil, 0, nil
@@ -34,7 +34,7 @@ func (m *CaptureManager) evaluatePushRules(ctx context.Context, app, did string)
 		return nil, nil, 0, err
 	}
 
-	// 2026-10-16（用户拍板）：push mock 模板池允许多条同域（channelId+bizType）
+	// push mock 模板池允许多条同域（channelId+bizType）
 	// enabled 模板共存——模拟推送按规则 ID 快照成指令下发，无域内匹配歧义。
 	// Effective 即 enabled（不再要求域内唯一）；不再报告 conflicts。
 	views := make([]*capture.PushMockRuleView, 0, len(all))
@@ -45,7 +45,7 @@ func (m *CaptureManager) evaluatePushRules(ctx context.Context, app, did string)
 	return views, nil, version, nil
 }
 
-// SetPushMockRules wires the persistent push rule store (L7 决策 D3：注入模式
+// SetPushMockRules wires the persistent push rule store (注入模式
 // 对齐 SetLongConnStore，NewCaptureManager 签名不变)。nil store 表示 push mock
 // 未启用——所有 push 规则方法返回空集（旧测试/未注入环境零影响）。
 func (m *CaptureManager) SetPushMockRules(ps PushMockRuleStore) {
@@ -53,7 +53,7 @@ func (m *CaptureManager) SetPushMockRules(ps PushMockRuleStore) {
 }
 
 // SetPushRuleCommands wires the persistent pending push command store
-// (L7 模拟推送形态 D3：独立于规则集的临时队列)。nil store 表示未启用。
+// (模拟推送形态：独立于规则集的临时队列)。nil store 表示未启用。
 func (m *CaptureManager) SetPushRuleCommands(cs PushRuleCommandStore) {
 	m.pushRuleCommands = cs
 }
@@ -84,7 +84,7 @@ func (m *CaptureManager) EnqueuePushRuleCommand(ctx context.Context, app, did, r
 		return nil, ErrPushRuleDisabled
 	}
 	// 空 payload 模板拒绝入队：空指令在 SDK 侧 makePacket 失败且永不 ack，
-	// 会卡成永久「待下发」（修复 2026-10-15：PUT 整体覆盖曾把模板 payload 清空）。
+	// 会卡成永久「待下发」（PUT 整体覆盖曾把模板 payload 清空）。
 	if rule.ReplacePayload == "" && rule.ReplacePayloadBase64 == "" {
 		return nil, ErrPushRuleEmptyPayload
 	}
@@ -120,8 +120,8 @@ func (m *CaptureManager) MarkPushRuleCommandsConsumed(ctx context.Context, app, 
 	return m.pushRuleCommands.MarkConsumed(ctx, app, did, ids)
 }
 
-// CreatePushMockRule persists a new push mock rule. 模板池语义（2026-10-16 用户
-// 拍板）：同域（channelId+bizType）允许多条 enabled 规则共存，创建不做域单活跃
+// CreatePushMockRule persists a new push mock rule. 模板池语义：同域
+// （channelId+bizType）允许多条 enabled 规则共存，创建不做域单活跃
 // 409 冲突检查——模拟推送按规则 ID 快照成指令下发，无域内匹配歧义。The insert
 // and the push rule-set version bump run in ONE store lock. caller stamps the
 // rule's Owner (creator username); nil caller (--no-auth) leaves Owner empty
@@ -140,7 +140,7 @@ func (m *CaptureManager) CreatePushMockRule(ctx context.Context, app, did string
 	now := time.Now()
 	var created *capture.PushMockRule
 	version, err := m.pushRules.Mutate(ctx, app, did, func(rules []*capture.PushMockRule) ([]*capture.PushMockRule, bool, error) {
-		// 2026-10-16（用户拍板）：push mock 模板池允许多条同域 enabled 模板共存，
+		// push mock 模板池允许多条同域 enabled 模板共存，
 		// 创建不再做域单活跃 409 冲突检查（模拟推送按规则 ID 快照，无匹配歧义）。
 		var owner string
 		if caller != nil {
@@ -182,8 +182,8 @@ func (m *CaptureManager) CreatePushMockRule(ctx context.Context, app, did string
 }
 
 // UpdatePushMockRule edits a push rule's payload match, replace payload, note,
-// enabled switch, and — since 2026-10-16（用户拍板放开）— the match key domain
-// (ChannelID+BizType, pointer fields: nil = keep current). 模板池语义（同轮拍板）：
+// enabled switch, and the match key domain
+// (ChannelID+BizType, pointer fields: nil = keep current). 模板池语义：
 // 编辑迁移域/开启开关不再做域单活跃 409 冲突检查（多条同域 enabled 共存合法）。
 // The source snapshot stays immutable. The update and the version bump run in ONE
 // store lock. 权限：仅规则 owner 与 admin 可编辑/启停；
@@ -211,9 +211,9 @@ func (m *CaptureManager) UpdatePushMockRule(ctx context.Context, app, did, ruleI
 			return nil, false, ErrRuleForbidden
 		}
 
-		// 匹配键域编辑（2026-10-16 用户拍板放开）：指针字段区分「未提供」与
+		// 匹配键域编辑：指针字段区分「未提供」与
 		// 「显式置空」。ChannelID 显式提供时不能为空（契约必填）。
-		// 2026-10-16（用户拍板）：模板池允许多条同域共存，编辑迁移域/开启开关
+		// 模板池允许多条同域共存，编辑迁移域/开启开关
 		// 不再做域单活跃 409 冲突检查（模拟推送按规则 ID 快照，无匹配歧义）。
 		targetChannel, targetBiz := existing.ChannelID, existing.BizType
 		if in.ChannelID != nil {
@@ -315,7 +315,7 @@ func (m *CaptureManager) DeletePushMockRule(ctx context.Context, app, did, ruleI
 
 // ListPushMockRules returns every push rule of the device (Web view, including
 // disabled) with the runtime Effective flag and the current push rule-set
-// version. 模板池语义（2026-10-16 用户拍板）：Effective 即 enabled（多条同域
+// version. 模板池语义：Effective 即 enabled（多条同域
 // enabled 共存全部 Effective），conflicts 恒空（保留 API 字段兼容）。
 func (m *CaptureManager) ListPushMockRules(ctx context.Context, app, did string) ([]*capture.PushMockRuleView, []capture.PushMockRuleConflict, int, error) {
 	return m.evaluatePushRules(ctx, app, did)

@@ -4,11 +4,11 @@
 // code rendered on the device page carries it. The SDK presents the token in
 // POST /devices/register so the server can auto-register the scanned device
 // under the issuing user — the QR scan therefore completes "address config +
-// device registration + connect" in one step (D1, 扫码即注册).
+// device registration + connect" in one step (扫码即注册).
 //
 // Security notes:
 //   - Tokens are 32 random bytes hex-encoded (same primitive as session
-//     tokens) and are reusable within their TTL (D5: one QR can onboard
+//     tokens) and are reusable within their TTL (one QR can onboard
 //     several devices), so validation never consumes them.
 //   - The token binds a user and an app; a token minted for one app cannot
 //     register a device of another app.

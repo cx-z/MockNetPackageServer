@@ -4,7 +4,7 @@
 // MockNetPack web: push mock 模板生成 / SDK 摘要头剥离回归测试（node，无浏览器
 // 依赖）。运行：node tests/push-template-payload.test.js（在 web/mocknetpack 目录）。
 // ============================================================================
-// 验收口径（真机教训 2026-10-16）：
+// 验收口径：
 //   1) stripPayloadSummary 剥离 SDK 摘要头（"type=… msgId=… bizType=1 payload={…}"）
 //      得到纯业务体；纯 JSON / 无摘要头文本原样返回，绝不误剥。
 //   2) pushMockTemplatePayload 在剥离后的纯业务体上工作：say_content 结构注入
@@ -12,8 +12,8 @@
 //      那样把带摘要头的整段展示文本存成模板 payload（导致业务注入器解析失败、
 //      指令永远 pending）。
 //   3) pushReplaceDesc 对带摘要头的规则列表摘要显示剥离后的 JSON。
-//   4) formatPayloadText 摘要形态只展示业务体（2026-10-16 Web UI 重构：摘要头
-//      参数由 renderLongConnDetail 移入上方参数列表，解析内容不再带 type=… 前缀）。
+//   4) formatPayloadText 摘要形态只展示业务体（摘要头参数由
+//      renderLongConnDetail 移入上方参数列表，解析内容不再带 type=… 前缀）。
 // ============================================================================
 
 const fs = require("fs");

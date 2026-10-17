@@ -45,7 +45,7 @@ func (a *API) handleListApps(w http.ResponseWriter, r *http.Request) {
 
 // handleCreatePairingToken handles POST /api/v1/pairing-tokens (requireAuth):
 // issue a 10-minute pairing token for the given app on behalf of the logged-in
-// user. The same user may issue repeatedly (D5: tokens are reusable until
+// user. The same user may issue repeatedly (tokens are reusable until
 // expiry, so one QR can onboard several devices).
 func (a *API) handleCreatePairingToken(w http.ResponseWriter, r *http.Request) {
 	var req CreatePairingTokenRequest

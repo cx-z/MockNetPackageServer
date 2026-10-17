@@ -136,7 +136,7 @@ async function expectBlocked(name, mutate, expectHint) {
   if (fetchCalls.length === 1) {
     const body = JSON.parse(fetchCalls[0].opts.body);
     check("payload 不含 source 键", !("source" in body), fetchCalls[0].opts.body);
-    check("payload enabled=false（D4 默认停用）", body.enabled === false, JSON.stringify(body.enabled));
+    check("payload enabled=false（默认停用）", body.enabled === false, JSON.stringify(body.enabled));
     check("method 大写化为 POST", body.method === "POST", body.method);
     check("path/statusCode/note/body 透传",
       body.path === "/api/hello" && body.response.statusCode === 201 &&

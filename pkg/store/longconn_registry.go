@@ -11,13 +11,13 @@ import (
 )
 
 // File: longconn_registry.go
-// Session-scoped long-connection logs (能力线 L1, 业务级日志采集): upload,
+// Session-scoped long-connection logs (业务级日志采集): upload,
 // persist. 独立于 HTTP 流量——独立额度、独立存档（mockd-data/longconn）、
 // 独立 seq 计数，不占用 traffic 的内存与上限。
 // ============================================================================
 
 // DefaultMaxSessionLongConnEntries is the default cap on the number of
-// long-connection log entries kept per session (决策: 独立额度 1000 条).
+// long-connection log entries kept per session (独立额度 1000 条).
 // 超限丢最旧（rolling window），与 traffic 窗口同语义。
 // Overridable via --capture-session-longconn-max-entries
 // (CaptureConfig.MaxSessionLongConnEntries).
@@ -34,7 +34,7 @@ const DefaultMaxSessionLongConnEntries = 1000
 // validation is authoritative); the returned count is the number of records
 // actually stored. IDs and Seq are server-generated here, exactly like
 // UploadTraffic, but longconn keeps its OWN seq counter — longconn and traffic
-// never share a counter (决策: 独立计数、互不跳号).
+// never share a counter (独立计数、互不跳号).
 //
 // Long-connection logs do NOT count against MaxSessionTrafficEntries and do
 // NOT touch RequestCount (独立额度, 不占用 HTTP 流量额度).
@@ -94,7 +94,7 @@ func (m *CaptureManager) UploadLongConn(ctx context.Context, sessionID string, r
 	// Best-effort persist (errors logged, upload unaffected) — inside the lock
 	// so the file always matches the in-memory slice.
 	m.persistLongConn(ctx, sessionID)
-	// 能力线 L7: mocked 命中记录 → 命中统计（hitCount/lastHitAt 递增，不 bump
+	// mocked 命中记录 → 命中统计（hitCount/lastHitAt 递增，不 bump
 	// push 规则版本——规则内容未变，SDK 不应因命中重拉）。Best-effort，日志记录。
 	for _, rec := range stored {
 		if rec.Mocked && rec.MockRuleID != "" {
@@ -277,7 +277,7 @@ func (m *CaptureManager) GetLongConnWithOwner(ctx context.Context, longConnID st
 }
 
 // RestoreLongConn loads persisted per-session longconn archives back into
-// memory at startup (能力线 L1: 独立存档跨重启保留). Sessions whose record no
+// memory at startup (独立存档跨重启保留). Sessions whose record no
 // longer exists (cleared/deleted) or whose 48h retention window has already
 // passed are skipped and their archive files removed — the same semantics the
 // hourly janitor applies. A nil longconnStore is a no-op. Best-effort: load

@@ -1,6 +1,6 @@
 package admin
 
-// T12 (M12.8): real viewer-lease TTL sweep through the production health-check
+// Real viewer-lease TTL sweep through the production health-check
 // loop. Unlike the request-path tests in capture_handlers_test.go (which never
 // start the background goroutine), this test runs StartHealthCheck with
 // sub-second timing, keeps the DEVICE alive with heartbeats, and lets the

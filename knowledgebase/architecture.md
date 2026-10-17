@@ -54,7 +54,7 @@ pkg/capture (models) ◄── pkg/store.CaptureManager ◄── pkg/store inte
 | Account | `pkg/account/account.go` | `User`, `Role`, `AuthSession`, PBKD-SHA256 hashing, `NewToken` |
 | HTTP (custom) | `pkg/admin/{capture_handlers,device_handlers,traffic_handlers,auth_handlers,auth_middleware,mock_rule_handlers,mocknetpack_web}.go` + `routes.go` + `api.go` | `/api/v1` handlers, auth gate, ownership filtering, static web serving |
 | HTTP (upstream) | rest of `pkg/admin/*.go` | mockd native admin API (mocks, workspaces, engines, proxy, recording, chaos, …) |
-| Contract | `openapi/mocknetpack.yaml` | `/api/v1` schemas + paths (v0.8.0: adds `/pairing-tokens`, register `pairingToken`/`deviceName`, `403 pairing_token_invalid`) |
+| Contract | `openapi/mocknetpack.yaml` | `/api/v1` schemas + paths (adds `/pairing-tokens`, register `pairingToken`/`deviceName`, `403 pairing_token_invalid`) |
 
 ## Domain flows
 
@@ -71,7 +71,7 @@ SDK register (metadata refresh only; pairingToken enables auto-create)
     body {app, did, pairingToken?, deviceName?}
     no token  → GetDevice first: unknown (app,did) ⇒ 404 device_not_registered
     with token→ ValidatePairingToken(token, app): expired/invalid ⇒ 403 pairing_token_invalid
-                RegisterDeviceWithPairing (D1+D7): unknown ⇒ create (owner=token user,
+                RegisterDeviceWithPairing: unknown ⇒ create (owner=token user,
                 name=deviceName ?? "platform·did[:12]"); known ⇒ reuse — owner only filled if
                 empty, name never overwritten, refresh OS/SDK/version/platform/LastSeenAt
     → returns DeviceView + ServerConfig (idle heartbeat interval 5s)
@@ -130,7 +130,7 @@ Query     GET /api/v1/sessions/{id}/traffic?limit&offset        [requireAuth]
             → ended session: [] + total 0 (record is gone)
           GET /api/v1/traffic/{id}                              [requireAuth]
             → live session OR retained store of ended session
-          Machine channels (v0.12.0):
+          Machine channels:
             ?projection=compact → CompactTrafficView slim view (8 fields, no
               headers/bodies/query; each entry carries seq — a per-session arrival
               sequence number) — low-bandwidth pull for MCP/CLI
@@ -140,7 +140,7 @@ Query     GET /api/v1/sessions/{id}/traffic?limit&offset        [requireAuth]
             ?method=GET&scheme=https → filtering (method case-insensitive; scheme
               matched by URL prefix)
             (filters AND-combine with the existing keyword/statusCode/from/to)
-            (without projection the response shape is identical to v0.11.0 — no Web UI regression)
+            (without projection the response shape is unchanged — no Web UI regression)
 
 Delete    DELETE /api/v1/traffic/{id}                           [requireAuth]
             → per-row delete; RequestCount decremented best-effort
@@ -193,7 +193,7 @@ Login     POST /api/v1/auth/login      → verify PBKD; issue AuthSession
 Logout    POST /api/v1/auth/logout     → delete session server-side (revocation)
 Me        GET  /api/v1/auth/me         → current user (page refresh)
 
-  Long-lived API Keys (v0.12.0, machine-native credentials):
+  Long-lived API Keys (machine-native credentials):
 Create    POST /api/v1/auth/keys                     [requireAuth]
             → issues an mnpk_-prefixed key for the current user; plaintext returned
               only once, in the create response

@@ -29,9 +29,8 @@ func pushRuleBody(channelID, bizType string, enabled bool) map[string]any {
 }
 
 // pushUpdateBody builds an edit payload (UpdatePushMockRuleInput).
-// 2026-10-16（用户拍板放开匹配键编辑）：可选 domain map 携带 channelId/bizType
-// 迁移匹配键域（指针语义：缺省 = 不修改）。note 为空时不发送 note 字段（服务端
-// 指针语义：未提供 = 保持现值，纯 toggle 不清空既有备注）。
+// 可选 domain map 携带 channelId/bizType 迁移匹配键域（指针语义：缺省 = 不修改）。
+// note 为空时不发送 note 字段（服务端指针语义：未提供 = 保持现值，纯 toggle 不清空既有备注）。
 func pushUpdateBody(keyword, replacePayload, note string, enabled *bool, domain ...map[string]any) map[string]any {
 	m := map[string]any{
 		"match":          map[string]any{"keyword": keyword},
@@ -127,9 +126,9 @@ func TestPushMockRuleAPI_DomainConflict(t *testing.T) {
 	seedMockRuleDevice(t, srv)
 	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/push-mock-rules"
 
-	// 2026-10-16（用户拍板）：push mock 模板池允许多条同域（channelId+bizType）
-	// enabled 模板共存（模拟推送按规则 ID 快照，无域内匹配歧义）——同域再开
-	// 一条 enabled 不再 409，两条都 Effective=true，无 conflicts 报告。
+	// push mock 模板池允许多条同域（channelId+bizType）enabled 模板共存
+	// （模拟推送按规则 ID 快照，无域内匹配歧义）——同域再开一条 enabled 不再 409，
+	// 两条都 Effective=true，无 conflicts 报告。
 	var c1 capture.PushMockRuleView
 	resp := doJSON(t, http.MethodPost, base, pushRuleBody("xcpush_tcp", "1", true), &c1)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -156,9 +155,9 @@ func TestPushMockRuleAPI_DomainConflict(t *testing.T) {
 	assert.False(t, upd.Enabled)
 }
 
-// TestPushMockRuleAPI_UpdateMigratesDomain：2026-10-16 用户拍板放开匹配键编辑。
-// 编辑可迁移 channelId+bizType 域；模板池语义（同轮拍板）：目标域已有活跃
-// 规则不再 409（多条同域共存全部 Effective）；channelId 显式置空 → 400。
+// TestPushMockRuleAPI_UpdateMigratesDomain：编辑可迁移 channelId+bizType 域；
+// 模板池语义：目标域已有活跃规则不再 409（多条同域共存全部 Effective）；
+// channelId 显式置空 → 400。
 func TestPushMockRuleAPI_UpdateMigratesDomain(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	seedMockRuleDevice(t, srv)
@@ -201,8 +200,8 @@ func TestPushMockRuleAPI_UpdateMigratesDomain(t *testing.T) {
 			map[string]any{"channelId": ""}), nil)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
-	// 仅迁移匹配键域但不写 note → 400 note_required（2026-10-16 用户拍板：
-	// 编辑 push 模板强制备注，对齐 HTTP 规则编辑语义；域迁移算实质编辑）。
+	// 仅迁移匹配键域但不写 note → 400 note_required（编辑 push 模板强制备注，
+	// 对齐 HTTP 规则编辑语义；域迁移算实质编辑）。
 	resp = doJSON(t, http.MethodPut, base+"/"+b.ID,
 		pushUpdateBody("tip", `{"type":"chat","data":{"tip":"mocked"}}`, "", nil,
 			map[string]any{"bizType": "9"}), nil)
@@ -344,7 +343,7 @@ func TestPushMockRuleAPI_SendDisabledAndUnknown(t *testing.T) {
 func TestPushMockRuleAPI_SendEmptyPayloadRejected(t *testing.T) {
 	// 空 payload 模板（replacePayload 与 replacePayloadBase64 均缺）send → 409
 	// push_rule_empty_payload：空指令在 SDK 侧 makePacket 失败且永不 ack，会卡成
-	// 永久「待下发」（修复 2026-10-15：PUT 整体覆盖曾把模板 payload 清空）。
+	// 永久「待下发」（PUT 整体覆盖曾把模板 payload 清空）。
 	srv := newCaptureTestAPI(t)
 	seedMockRuleDevice(t, srv)
 	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/push-mock-rules"

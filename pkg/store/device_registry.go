@@ -128,7 +128,7 @@ func (m *CaptureManager) RegisterDeviceWithPairing(ctx context.Context, d *captu
 	existing.OSVersion = d.OSVersion
 	existing.SDKVersion = d.SDKVersion
 	existing.AppVersion = d.AppVersion
-	// v0.9.0: app display name is metadata — refreshed on reuse (D7: name/
+	// app display name is metadata — refreshed on reuse (name/
 	// owner untouched, only metadata + LastSeenAt).
 	existing.AppName = d.AppName
 	existing.Platform = d.Platform

@@ -23,7 +23,7 @@ func ruleBody(method, path string, enabled bool) map[string]any {
 		},
 		//  Step1: existing HTTP tests model capture-originated rules
 		// ("Mock 此请求") — they carry a source snapshot and may omit the
-		// note (D6 exempts source-bearing creates).
+		// note (source-bearing creates are exempt).
 		"source": map[string]any{"method": method, "path": path},
 	}
 }
@@ -320,7 +320,7 @@ func TestMockRuleAPI_HandAuthoredRules(t *testing.T) {
 	seedMockRuleDevice(t, srv)
 	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
 
-	// Hand-authored body: no "source" key (D6 path), always with a note unless
+	// Hand-authored body: no "source" key (no-source path), always with a note unless
 	// the test deliberately omits it.
 	handBody := func(method, path, note string) map[string]any {
 		return map[string]any{

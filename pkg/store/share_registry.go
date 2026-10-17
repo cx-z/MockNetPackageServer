@@ -24,7 +24,7 @@ const ShareTTL = 7 * 24 * time.Hour
 // — clearing or deleting the session does not affect the share. The shareId
 // is an unguessable UUID; no signature is needed because the link contains
 // only the opaque ID and all data lives server-side.
-// 能力线 L1: LongConn 可选承载一条长连接日志快照（与 Entry 二选一；长连接
+// LongConn 可选承载一条长连接日志快照（与 Entry 二选一；长连接
 // 分享复用同一 share 通道与 7 天 TTL）。
 type ShareSnapshot struct {
 	ShareID   string                     `json:"shareId"`
@@ -77,7 +77,7 @@ func (m *CaptureManager) CreateShare(ctx context.Context, trafficID string) (*Sh
 }
 
 // CreateLongConnShare copies the long-connection record identified by
-// longConnID into a new independent share snapshot (能力线 L1, 方案 A: 单条
+// longConnID into a new independent share snapshot (单条
 // 分享). No longconn ID index exists (per-session cap 1000), so the lookup
 // scans the in-memory slices — bounded and acceptable at this scale.
 // Returns ErrNotFound if the record is gone (e.g. rolling-window trimmed or

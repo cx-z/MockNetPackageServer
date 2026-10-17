@@ -12,11 +12,11 @@ import (
 )
 
 // ============================================================================
-// Push mock rules (能力线 L7) — store 层 + CaptureManager 层
+// Push mock rules — store 层 + CaptureManager 层
 // ============================================================================
 
 // newPushManager wires a CaptureManager with the push rule store injected
-// (L7 决策 D3：SetPushMockRules 注入模式；NewCaptureManager 签名不变)。
+// (SetPushMockRules 注入模式；NewCaptureManager 签名不变)。
 // 同时接线 LongConn store 以便 mocked 数据流（UploadLongConn → 命中统计）可测。
 func newPushManager(t *testing.T) (*store.CaptureManager, *FileStore) {
 	t.Helper()
@@ -29,7 +29,7 @@ func newPushManager(t *testing.T) (*store.CaptureManager, *FileStore) {
 }
 
 // pushInput builds a create payload. Capture-originated creates ("一键建规则")
-// carry a source snapshot and may omit the note (对齐 HTTP MockRule D6 豁免)。
+// carry a source snapshot and may omit the note (对齐 HTTP MockRule 的 source 豁免)。
 func pushInput(channelID, bizType string, enabled bool) *capture.PushMockRuleInput {
 	return &capture.PushMockRuleInput{
 		ChannelID:      channelID,
@@ -161,8 +161,8 @@ func TestPushMockRule_CreateVersionAndEffective(t *testing.T) {
 		t.Fatalf("version after first create = %d, want 1", version)
 	}
 
-	// 2026-10-16（用户拍板）：push mock 模板池允许多条同域（channelId+bizType）
-	// enabled 模板共存——同域再开一条 enabled 不再 409，两条都 Effective=true。
+	// push mock 模板池允许多条同域（channelId+bizType）enabled 模板共存——
+	// 同域再开一条 enabled 不再 409，两条都 Effective=true。
 	// （模拟推送按规则 ID 快照成指令下发，无域内匹配歧义。）
 	v2, _, err := m.CreatePushMockRule(ctx, "app", "d1", pushInput("xcpush_tcp", "1", true), caller)
 	if err != nil {
@@ -226,8 +226,8 @@ func TestPushMockRule_UpdateSemantics(t *testing.T) {
 		t.Fatal("toggled rule must be enabled and effective")
 	}
 
-	// 未提供 channelId/bizType（指针 nil）= 保持原匹配键域（2026-10-16 放开
-	// 匹配键编辑后，迁移域需显式携带指针字段）。
+	// 未提供 channelId/bizType（指针 nil）= 保持原匹配键域（迁移域需显式
+	// 携带指针字段）。
 	if upd.ChannelID != "xcpush_tcp" || upd.BizType != "1" {
 		t.Fatalf("match key mutated without explicit domain fields: %+v", upd.PushMockRule)
 	}
@@ -312,7 +312,7 @@ func TestPushMockRule_ListActiveSinceVersion(t *testing.T) {
 	if active[0].ChannelID != "xcpush_tcp" || active[0].BizType != "1" {
 		t.Fatalf("pulled rule mismatch: %+v", active[0])
 	}
-	// owner 等 Web-only 字段的裁剪在 handler 线格式层（L7.1b toSDKRules，
+	// owner 等 Web-only 字段的裁剪在 handler 线格式层（toSDKRules，
 	// 对齐 HTTP sdkRuleView）——manager 层返回完整 view 与 HTTP 一致。
 	// PushRuleVersion 与 HTTP RuleVersion 独立。
 	if pv, _ := m.PushRuleVersion(ctx, "app", "d1"); pv != v {

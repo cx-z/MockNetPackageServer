@@ -111,10 +111,10 @@ type HeartbeatResponse struct {
 	ServerConfig capture.ServerConfig    `json:"serverConfig"`
 	Session      *capture.CaptureSession `json:"session"`
 	RulesVersion int                     `json:"rulesVersion"`
-	// PushRulesVersion 是 push mock 规则版本（能力线 L7）：SDK 心跳后按此
+	// PushRulesVersion 是 push mock 规则版本：SDK 心跳后按此
 	// 增量拉取 push mock 规则快照；与 RulesVersion 同模式、独立版本号。
 	PushRulesVersion int `json:"pushRulesVersion"`
-	// PushCommands 是 pending「模拟推送」指令（能力线 L7 模拟推送形态 D0）：
+	// PushCommands 是 pending「模拟推送」指令：
 	// SDK 心跳即拉取未消费指令，构造注入完成后经 push-rule-commands/ack 回报
 	// 消费。无指令时为空数组（nil 序列化为 null，SDK 端容错）。
 	PushCommands []capture.PushRuleCommandView `json:"pushCommands,omitempty"`
@@ -255,7 +255,7 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 // shareRequest is the POST /shares body: which traffic entry to snapshot.
 type shareRequest struct {
 	TrafficID string `json:"trafficId"`
-	// LongConnID 能力线 L1: 长连接日志单条分享（与 trafficId 二选一）。
+	// LongConnID 长连接日志单条分享（与 trafficId 二选一）。
 	LongConnID string `json:"longConnId"`
 }
 

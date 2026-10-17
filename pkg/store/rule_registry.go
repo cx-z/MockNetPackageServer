@@ -136,7 +136,7 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 // nil caller (--no-auth smoke mode) always passes, mirroring the requireAuth
 // bypass; admins pass; otherwise only the owner passes. An empty owner is a
 // legacy rule (pre-) — admin-manageable only . Shared by HTTP mock rules
-// (canManageRule) and push mock rules (L7, push_rule_registry.go).
+// (canManageRule) and push mock rules (push_rule_registry.go).
 func canManageOwner(caller *RuleCaller, owner string) bool {
 	if caller == nil {
 		return true

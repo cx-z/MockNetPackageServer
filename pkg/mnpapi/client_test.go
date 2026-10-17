@@ -294,7 +294,7 @@ func TestClient_ShareRoundTrip(t *testing.T) {
 	assert.Equal(t, "GET", snap.Entry.Method)
 }
 
-// ---- M12.8 session/viewer client methods -------------------------------------
+// ---- session/viewer client methods -------------------------------------
 
 func TestClient_ActivateAndReuseSession(t *testing.T) {
 	var activations int

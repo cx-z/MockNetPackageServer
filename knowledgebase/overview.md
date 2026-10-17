@@ -1,7 +1,7 @@
 # MockNetPack Server — Overview (L1)
 
 > KB layer L1. Next: [`architecture.md`](architecture.md) → [`code-map.md`](code-map.md).
-> Product source of truth: `tasks/需求文档.md` v1.4, contract `openapi/mocknetpack.yaml` v0.12.0.
+> Product source of truth: `tasks/需求文档.md`, contract `openapi/mocknetpack.yaml`.
 
 ## What the server is
 
@@ -25,8 +25,8 @@ The server **never proxies business traffic**: it only records and manages. Requ
 | `pkg/account` | User + AuthSession model, PBKD password hashing, session token primitives | custom |
 | `pkg/admin` (subset) | `/api/v1` capture handlers, auth handlers/middleware, mock-rule handlers, share handlers, API Key handlers, Web static serving | custom (rest of `pkg/admin` is upstream) |
 | `pkg/cli/start.go` | `mockd start` wiring for capture config, `--no-auth`, `--create-admin`, `--web-dir` | modified |
-| `pkg/mnpapi` / `cmd/mocknetpack-mcp` / `cmd/mocknetpack` + `pkg/mnpcli` | AI access layer: shared HTTP client for MCP/CLI, MCP gateway (HTTP remote /mcp, 12 tools, per-key Bearer passthrough validation), CLI (10 leaf commands) — machine-native channels | custom |
-| `openapi/mocknetpack.yaml` | The `/api/v1` contract (currently v0.12.0) | custom |
+| `pkg/mnpapi` / `cmd/mocknetpack-mcp` / `cmd/mocknetpack` + `pkg/mnpcli` | AI access layer: shared HTTP client for MCP/CLI, MCP gateway (HTTP remote /mcp, 26 tools, per-key Bearer passthrough validation), CLI (10 leaf commands) — machine-native channels | custom |
+| `openapi/mocknetpack.yaml` | The `/api/v1` contract (currently v0.14.0) | custom |
 
 > How to tell custom from upstream quickly: custom code references `mocknetpack` or the `capture`/`account` packages, or appears in the git log as ``…`` commits. Upstream code is everything else (engine, mcp, matching, proxy, …).
 
@@ -48,7 +48,7 @@ The server **never proxies business traffic**: it only records and manages. Requ
 
 | Item | Value |
 |---|---|
-| Contract | `server/openapi/mocknetpack.yaml` **v0.12.0**, base path `/api/v1` |
+| Contract | `server/openapi/mocknetpack.yaml` **v0.14.0**, base path `/api/v1` |
 | Heartbeat interval / timeout | 20s / 60s defaults; SDK gets dynamic interval (3s capturing / 5s idle) from the server |
 | Viewer lease TTL | 120s (web renews at ~60s) |
 | Mock rule retention | 7 days sliding (since last use); janitor hourly |

@@ -129,12 +129,12 @@ func authGateway(next http.Handler) http.Handler {
 	})
 }
 
-// registerTools wires the 16 MCP tools. Handlers build a per-request admin
+// registerTools wires the 26 MCP tools. Handlers build a per-request admin
 // client from the caller's bearer key (base is the mockd API base URL). Every
 // tool's description documents WHEN to use it, key parameter meanings, and
 // error handling — the tool contract itself is the model-facing doc ( §三 E).
 func registerTools(srv *server.MCPServer, base string) {
-	// Capture session lifecycle (M12.8): status → start/reuse → renew → release.
+	// Capture session lifecycle: status → start/reuse → renew → release.
 	srv.AddTool(toolGetCaptureStatus(), mcpGetCaptureStatus(base))
 	srv.AddTool(toolStartCapture(), mcpStartCapture(base))
 	srv.AddTool(toolListSessions(), mcpListSessions(base))
@@ -154,7 +154,7 @@ func registerTools(srv *server.MCPServer, base string) {
 	srv.AddTool(toolGetMockRule(), mcpGetMockRule(base))
 	srv.AddTool(toolDeleteMockRule(), mcpDeleteMockRule(base))
 
-	// push mock（长连接模拟推送，L7）：模板 CRUD + 一次性下发 + 日志骨架参考。
+	// push mock（长连接模拟推送）：模板 CRUD + 一次性下发 + 日志骨架参考。
 	srv.AddTool(toolListPushMockRules(), mcpListPushMockRules(base))
 	srv.AddTool(toolCreatePushMockRule(), mcpCreatePushMockRule(base))
 	srv.AddTool(toolUpdatePushMockRule(), mcpUpdatePushMockRule(base))
