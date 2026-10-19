@@ -93,7 +93,7 @@ func (m *CaptureManager) EnqueuePushRuleCommand(ctx context.Context, app, did, r
 		RuleID:        rule.ID,
 		ChannelID:     rule.ChannelID,
 		BizType:       rule.BizType,
-		Payload:       rule.ReplacePayload,
+		Payload:       capture.RotateFakePlaceholders(rule.ReplacePayload),
 		PayloadBase64: rule.ReplacePayloadBase64,
 		CreatedAt:     time.Now(),
 	}

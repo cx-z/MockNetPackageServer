@@ -76,7 +76,8 @@ func TestMCPServer_CreatePushMockRuleTool(t *testing.T) {
 	assert.True(t, got.Enabled, "created template must be enabled so send works immediately")
 	body := resultText(res)
 	assert.Contains(t, body, `"ruleId": "pr-new"`)
-	assert.Contains(t, body, "已创建且启用")
+	// hint 有两条路径（继承成功 / 无真实包），都以 send 调用提示结尾。
+	assert.Contains(t, body, "send_push_mock_rule(ruleId)")
 
 	// missing channelId → usage error before any HTTP call.
 	res = callTool(t, srv, "create_push_mock_rule", map[string]any{

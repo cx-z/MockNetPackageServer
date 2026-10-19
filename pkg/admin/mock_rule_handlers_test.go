@@ -335,12 +335,19 @@ func TestMockRuleAPI_HandAuthoredRules(t *testing.T) {
 		}
 	}
 
-	// S2': path not starting with '/' -> 400.
-	resp := doJSON(t, http.MethodPost, base, handBody("GET", "api/login", "memo"), nil)
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "path without leading '/' must be rejected")
-	// S2': path containing '?' (query string pasted in) -> 400.
-	resp = doJSON(t, http.MethodPost, base, handBody("GET", "/api/login?x=1", "memo"), nil)
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "path with query string must be rejected")
+	// S2': path not starting with '/' -> 自动补斜杠，201，存储 path 应为 "/api/login"。
+	var created1 capture.MockRuleView
+	resp := doJSON(t, http.MethodPost, base, handBody("GET", "api/login", "memo"), &created1)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode, "path without leading '/' should be auto-corrected")
+	assert.Equal(t, "/api/login", created1.Path, "stored path should have leading '/' prepended")
+	// S2': path containing '?' -> 自动剥 query string，201，存储 path 应为 "/api/ping"。
+	var created2 capture.MockRuleView
+	resp = doJSON(t, http.MethodPost, base, handBody("GET", "/api/ping?x=1", "memo"), &created2)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode, "path with query string should be auto-truncated")
+	assert.Equal(t, "/api/ping", created2.Path, "stored path should strip query string")
+	// 空 path（纯 ?）应 400。
+	resp = doJSON(t, http.MethodPost, base, handBody("GET", "?x=1", "memo"), nil)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "empty-after-strip path must be rejected")
 	// S2: hand-authored create with no note key -> 400 .
 	nosrc := handBody("GET", "/api/hello", "")
 	delete(nosrc, "note")

@@ -143,6 +143,12 @@ func (a *API) handleCreatePushMockRule(w http.ResponseWriter, r *http.Request) {
 		writeJSONDecodeError(w, err, a.logger())
 		return
 	}
+	// payload 别名 fallback：用户写 "payload" 时自动当 replacePayload 用。
+	// 优先级：显式 replacePayload 优先；两者同时提供时 replacePayload 生效，
+	// payload 被静默忽略（canonical field wins）。
+	if in.ReplacePayload == "" && in.PayloadAlias != "" {
+		in.ReplacePayload = in.PayloadAlias
+	}
 	if !validatePushMockRuleInput(w, &in) {
 		return
 	}
@@ -169,6 +175,10 @@ func (a *API) handleUpdatePushMockRule(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSONDecodeError(w, err, a.logger())
 		return
+	}
+	// payload 别名 fallback：同 create，显式 replacePayload 优先。
+	if in.ReplacePayload == "" && in.PayloadAlias != "" {
+		in.ReplacePayload = in.PayloadAlias
 	}
 	if !validateUpdatePushMockRuleInput(w, &in) {
 		return

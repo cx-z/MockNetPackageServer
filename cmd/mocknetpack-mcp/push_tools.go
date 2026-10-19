@@ -22,6 +22,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -42,6 +43,90 @@ func pushPayloadPreview(p string) string {
 	return p[:max] + "…"
 }
 
+// identityFields 是「凭空构造兜底」时从真实包继承的身份字段白名单。
+// 这些是账号/会话维度字段（不是业务维度），同设备同账号任意一条真实包都能提供。
+var identityFields = []string{
+	"touser", "fromuser", "from", "name",
+	"session_id", "session_type", "avatar", "gender", "official",
+}
+
+// stripSummaryHeader 剥掉长连接日志 payloadText 前面的摘要头。
+// LongConnHook 拼的格式是 "<summary> payload=<JSON body>"（summary 由业务方
+// 拼装，如 "type=Packet... msgId=... bizType=1"）。MCP 层做 JSON 解析前必须剥掉，
+// 否则 json.Unmarshal 在开头就失败，身份继承/占位符转换静默不生效。
+// 找不到 " payload=" 分隔符时原样返回（payload 本就是纯 JSON 的情况）。
+func stripSummaryHeader(payloadText string) string {
+	const marker = " payload="
+	idx := strings.Index(payloadText, marker)
+	if idx < 0 {
+		return payloadText
+	}
+	return strings.TrimSpace(payloadText[idx+len(marker):])
+}
+
+// rewriteRealPayloadToTemplate 把从真实日志复制的 payload 转成带占位符的模板：
+// 顶层 msgid/session_id/time 数字字段的值换成 "${fake_*}" 字符串占位符。
+// 入队时 capture.RotateFakePlaceholders 会把带引号占位符替换成裸数字，保持
+// IM payload 的数字类型。非 JSON / 字段缺失时原样返回。
+func rewriteRealPayloadToTemplate(payload string) string {
+	body := stripSummaryHeader(payload)
+	var m map[string]any
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		return payload
+	}
+	changed := false
+	for k, ph := range map[string]string{
+		"msgid":      capture.FakePlaceholderMsgID,
+		"session_id": capture.FakePlaceholderSessionID,
+		"time":       capture.FakePlaceholderTime,
+	} {
+		if _, ok := m[k]; ok {
+			m[k] = ph
+			changed = true
+		}
+	}
+	if !changed {
+		return payload
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return payload
+	}
+	return string(out)
+}
+
+// inheritIdentityFields 从真实包 realPayload 提取身份字段，shallow merge 进
+// 用户手写的 userPayload。用户已显式提供的字段不覆盖，只补缺失的。
+// 返回合并后的 payload 文本，以及实际补了哪些字段（用于 hint 审计）。
+// 任一 payload 非 JSON 时返回原 userPayload（不强行合并）。
+func inheritIdentityFields(userPayload, realPayload string) (string, []string) {
+	var user, real map[string]any
+	if err := json.Unmarshal([]byte(userPayload), &user); err != nil {
+		return userPayload, nil
+	}
+	if err := json.Unmarshal([]byte(stripSummaryHeader(realPayload)), &real); err != nil {
+		return userPayload, nil
+	}
+	var filled []string
+	for _, k := range identityFields {
+		if _, userHas := user[k]; userHas {
+			continue
+		}
+		if v, ok := real[k]; ok {
+			user[k] = v
+			filled = append(filled, k)
+		}
+	}
+	if len(filled) == 0 {
+		return userPayload, nil
+	}
+	out, err := json.Marshal(user)
+	if err != nil {
+		return userPayload, nil
+	}
+	return string(out), filled
+}
+
 // ---- tool definitions (schemas) -------------------------------------------------
 
 func toolListPushMockRules() mcp.Tool {
@@ -57,16 +142,17 @@ func toolListPushMockRules() mcp.Tool {
 
 func toolCreatePushMockRule() mcp.Tool {
 	return mcp.NewTool("create_push_mock_rule",
-		mcp.WithDescription("凭空创建推送模板（无日志来源）：channelId 必填 + replacePayload 必填（payload 模板快照，SDK 构造假 Packet 时写入 bizData）+ note 必填（服务端要求无 source 快照的规则必须带备注）。创建即启用（enabled=true），可直接 send_push_mock_rule。"+
-			"何时用：模拟一条未抓包过的推送。"+
-			"重要——payload 不要凭字段名从零编：先调 get_longconn_packet_samples 拉同 bizType 的真实日志作骨架，只改内层展示文本；"+
-			"msgid/session_id/time 每次下发前换成全新随机大整数（否则客户端按 id 判重，假 push 被静默丢弃）；touser/fromuser/name 必须继承当前设备登录账号的真实会话骨架，不能跨账号抄。错误处理：400 channelId/note 缺失；403 仅 owner/admin。模板池语义：同 channelId+bizType 域允许多条模板共存、全部生效——重复创建同域模板合法（用 note 区分用途）。"),
+		mcp.WithDescription("凭空创建推送模板（无日志来源）：channelId 必填 + replacePayload 必填 + note 必填。创建即启用（enabled=true），可直接 send_push_mock_rule。"+
+			"何时用：模拟一条未抓包过的推送（冷启动场景）。"+
+			"平台已兜底两件事（无需手动处理）：①身份字段自动继承——本工具会从该设备最近一条真实 packet 自动补全 touser/fromuser/from/name/session_id 等你没写的字段（你显式写的不覆盖）；②判重 id 自动轮换——模板里写 \"msgid\": \"${fake_msgid}\"、\"time\": \"${fake_time}\" 等占位符，send 时自动换新值防判重（不写占位符则原样下发，重复 send 会被客户端判重吞掉）。"+
+			"你只需要关心业务内层内容（如 content/say_content 里的展示文本、mtype/mtype2 等业务分支字段）。"+
+			"错误处理：400 channelId/note 缺失；403 仅 owner/admin。模板池语义：同 channelId+bizType 域允许多条模板共存、全部生效。"),
 		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
 		mcp.WithString("channelId", mcp.Required(), mcp.Description("通道标识（必填，如 xcpush_tcp）")),
 		mcp.WithString("bizType", mcp.Description("业务类型（可选，如 1=IM 聊天；空=不限定）")),
-		mcp.WithString("replacePayload", mcp.Required(), mcp.Description("推送 payload 模板（必填；建议来自 get_longconn_packet_samples 的真实骨架，仅改内层展示文本）")),
-		mcp.WithString("note", mcp.Required(), mcp.Description("规则备注（必填且非空白——服务端要求无 source 快照的手动模板必须带备注，如\"复现压测\"）")),
+		mcp.WithString("replacePayload", mcp.Required(), mcp.Description("推送 payload 模板（JSON 文本；身份字段缺省会自动补全，msgid/time 用 ${fake_msgid}/${fake_time} 占位符自动轮换）")),
+		mcp.WithString("note", mcp.Required(), mcp.Description("规则备注（必填且非空白——服务端要求无 source 快照的手动模板必须带备注，如\"复现 subtype=169\"）")),
 	)
 }
 
@@ -196,15 +282,58 @@ func mcpCreatePushMockRule(base string) server.ToolHandlerFunc {
 		if strings.TrimSpace(in.Note) == "" {
 			return mcp.NewToolResultError("note 必填且非空白（服务端要求无 source 快照的手动模板必须带备注）。"), nil
 		}
+
+		// 凭空构造兜底：手写模板无 Source，自动从该设备最近一条真实 packet
+		// 继承身份字段（touser/fromuser/from/name/session_id 等），用户已显式
+		// 提供的字段不覆盖。best-effort：拉不到真实包不阻塞创建。
+		var filledFields []string
+		if sample, ok := latestRealPacketForIdentity(ctx, c, app, did); ok {
+			merged, filled := inheritIdentityFields(in.ReplacePayload, sample)
+			in.ReplacePayload = merged
+			filledFields = filled
+		}
+
 		rule, err := c.CreatePushMockRule(ctx, app, did, in)
 		if err != nil {
 			return toolErr(err), nil
 		}
+		hint := "推送模板已创建且启用（enabled=true）。模拟推送请调用 send_push_mock_rule(ruleId)。"
+		if len(filledFields) > 0 {
+			hint = "已从设备最近真实 packet 自动补全身份字段：" + strings.Join(filledFields, ", ") +
+				"（你显式提供的字段未覆盖）。模板里 ${fake_msgid}/${fake_time} 会在 send 时自动轮换。" +
+				"模拟推送请调用 send_push_mock_rule(ruleId)。"
+		} else {
+			hint = "未找到该设备真实 packet 可继承身份字段——请自行确保 touser/fromuser/from/session_id 正确，否则业务 ChatMessageService 会判定无会话丢弃。模拟推送请调用 send_push_mock_rule(ruleId)。"
+		}
 		return jsonText(map[string]any{
-			"rule": pushRuleSummary(rule),
-			"hint": "推送模板已创建且启用（enabled=true）。模拟推送请调用 send_push_mock_rule(ruleId)。",
+			"rule":   pushRuleSummary(rule),
+			"hint":   hint,
+			"filled": filledFields,
 		}), nil
 	}
+}
+
+// latestRealPacketForIdentity 拉该设备最近一条真实（mocked=false）packet 的 payloadText，
+// 用于手写模板身份字段继承。不限 bizType（身份字段是账号/会话维度，不挑业务）。
+// 拉不到（无会话/无 packet/全是 fake 包）返回 ok=false，调用方按 best-effort 跳过。
+func latestRealPacketForIdentity(ctx context.Context, c *mnpapi.Client, app, did string) (string, bool) {
+	q := capture.LongConnectionQuery{
+		EventType: capture.LongConnectionEventPacket,
+		Limit:     50,
+	}
+	res, err := c.GetDeviceLongConn(ctx, app, did, q)
+	if err != nil || res.SessionID == "" {
+		return "", false
+	}
+	for _, e := range res.Entries {
+		if e.Mocked {
+			continue
+		}
+		if strings.TrimSpace(e.PayloadText) != "" {
+			return e.PayloadText, true
+		}
+	}
+	return "", false
 }
 
 func mcpUpdatePushMockRule(base string) server.ToolHandlerFunc {
@@ -627,7 +756,8 @@ func mcpCreatePushMockRuleFromLog(base string) server.ToolHandlerFunc {
 		if payload := mustString(p, "replacePayload"); payload != "" {
 			in.ReplacePayload = payload
 		} else if rec.PayloadText != "" {
-			in.ReplacePayload = rec.PayloadText
+			// 自动把真实包的 msgid/session_id/time 转占位符，send 时自动轮换防判重。
+			in.ReplacePayload = rewriteRealPayloadToTemplate(rec.PayloadText)
 		} else {
 			in.ReplacePayloadBase64 = rec.PayloadBase64
 		}
@@ -640,7 +770,7 @@ func mcpCreatePushMockRuleFromLog(base string) server.ToolHandlerFunc {
 		}
 		return jsonText(map[string]any{
 			"rule": pushRuleSummary(rule),
-			"hint": "已从日志一键建模板并启用（enabled=true）。模拟推送请调用 send_push_mock_rule(ruleId)。",
+			"hint": "已从日志一键建模板并启用（enabled=true）。msgid/session_id/time 已自动转为 ${fake_*} 占位符，send 时自动换新值防判重。模拟推送请调用 send_push_mock_rule(ruleId)。",
 		}), nil
 	}
 }

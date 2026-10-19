@@ -1,6 +1,12 @@
 package capture
 
-import "time"
+import (
+	crand "crypto/rand"
+	"encoding/binary"
+	"strconv"
+	"strings"
+	"time"
+)
 
 // ============================================================================
 // Push mock rules (push mock 完整规则体系)
@@ -98,9 +104,12 @@ type PushMockRuleInput struct {
 	Match                PushMockMatch   `json:"match,omitempty"`
 	ReplacePayload       string          `json:"replacePayload,omitempty"`
 	ReplacePayloadBase64 string          `json:"replacePayloadBase64,omitempty"`
-	Enabled              bool            `json:"enabled"`
-	Note                 string          `json:"note,omitempty"`
-	Source               *PushMockSource `json:"source,omitempty"`
+	// PayloadAlias 是 `replacePayload` 的便捷别名（`payload`），方便手写模板时
+	// 不用记长字段名。服务端在 validate 时自动 fallback 到 ReplacePayload。
+	PayloadAlias string `json:"payload,omitempty"`
+	Enabled      bool     `json:"enabled"`
+	Note         string   `json:"note,omitempty"`
+	Source       *PushMockSource `json:"source,omitempty"`
 }
 
 // UpdatePushMockRuleInput 是编辑 payload（对齐 UpdateMockRuleInput）。
@@ -117,6 +126,7 @@ type UpdatePushMockRuleInput struct {
 	Match                PushMockMatch `json:"match,omitempty"`
 	ReplacePayload       string        `json:"replacePayload,omitempty"`
 	ReplacePayloadBase64 string        `json:"replacePayloadBase64,omitempty"`
+	PayloadAlias         string        `json:"payload,omitempty"`
 	Note                 *string       `json:"note,omitempty"`
 	Enabled              *bool         `json:"enabled,omitempty"`
 }
@@ -169,4 +179,60 @@ type PushRuleCommandView struct {
 	BizType       string `json:"bizType"`
 	Payload       string `json:"payload,omitempty"`
 	PayloadBase64 string `json:"payloadBase64,omitempty"`
+}
+
+// ============================================================================
+// Fake placeholder rotation（凭空构造兜底：判重 id 自动轮换）
+// ============================================================================
+//
+// 模板 payload 里允许出现三个占位符，入队（EnqueuePushRuleCommand）时
+// 替换为新生成的值，避免重复 send 被 IM 客户端按 id 判重静默丢弃：
+//
+//   ${fake_msgid}      → 新随机大整数（时间戳高位 + 随机低位，snowflake 形态）
+//   ${fake_session_id}→ 新随机大整数（同上）
+//   ${fake_time}       → 当前 unix 秒（十进制）
+//
+// 纯字符串替换，不 parse JSON——占位符可能出现在 content 内层 JSON 字符串里。
+// 无占位符时原样返回（向后兼容旧模板）。base64 二进制 payload 不经过本函数。
+// 设计取舍：不做"服务端猜哪个字段是判重 id"（不同 app schema 不同），
+// 只认显式占位符，模板作者知道自己在做什么。
+
+const (
+	FakePlaceholderMsgID      = "${fake_msgid}"
+	FakePlaceholderSessionID  = "${fake_session_id}"
+	FakePlaceholderTime       = "${fake_time}"
+)
+
+// newFakeUint64 生成一个近似 snowflake 形态的 63 位正整数：毫秒时间戳
+// 高 47 位 + 低 16 位随机。与 Dokimo msgid/session_id（~19 位十进制）量级一致。
+func newFakeUint64() uint64 {
+	var b [8]byte
+	_, _ = crand.Read(b[:])
+	ts := uint64(time.Now().UnixMilli()) << 16
+	return ts | uint64(binary.BigEndian.Uint16(b[:2]))
+}
+
+// RotateFakePlaceholders 把 payload 里的 fake 占位符替换为新生成的值。
+// 占位符支持两种写法（自动识别）：
+//   - 带引号字符串：`"msgid": "${fake_msgid}"` → `"msgid": 1578813554578165063`
+//   - 裸字面量：   `"ct": ${fake_time}`     → `"ct": 1784033521`
+// 两种写法都替换成裸数字，保持 IM payload 的数字类型语义（客户端强类型
+// decode，string 会崩）。无占位符时原样返回。同一次调用内所有 ${fake_msgid}
+// 替换为同一个值。
+func RotateFakePlaceholders(payload string) string {
+	if payload == "" || !strings.Contains(payload, "${fake_") {
+		return payload
+	}
+	msgID := strconv.FormatUint(newFakeUint64(), 10)
+	sessionID := strconv.FormatUint(newFakeUint64(), 10)
+	now := strconv.FormatInt(time.Now().Unix(), 10)
+	// 带引号的模式（更长）排在前面，NewReplacer 做最长匹配；同值复用。
+	return strings.NewReplacer(
+		`"`+FakePlaceholderMsgID+`"`, msgID,
+		FakePlaceholderMsgID, msgID,
+		`"`+FakePlaceholderSessionID+`"`, sessionID,
+		FakePlaceholderSessionID, sessionID,
+		`"`+FakePlaceholderTime+`"`, now,
+		FakePlaceholderTime, now,
+	).Replace(payload)
 }

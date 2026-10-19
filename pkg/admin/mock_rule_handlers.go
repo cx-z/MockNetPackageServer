@@ -211,12 +211,14 @@ func (a *API) handleDeleteMockRule(w http.ResponseWriter, r *http.Request) {
 // method, path, response.statusCode). Returns false and writes a 400 when
 // invalid.
 //
-//	Step1: path must start with '/' and must not contain '?' — matching is
+// Path normalization (forgiving hand-authoring):
+//   - strip everything from the first '?' onward (query strings never participate
+//     in matching; pasting a full URL path with ?x=1 should still work)
+//   - prepend '/' if missing (user may write "inbox/list" instead of "/inbox/list")
+//   - reject empty path after normalization
 //
-// an exact Method+path comparison (), so a query string pasted into
-// path could never hit and would silently drift. Applies uniformly to both
-// creation paths (评审结论 #2): capture-originated paths come from URL.path
-// and already satisfy this, so there is no regression.
+// Capture-originated paths come from URL.path and already satisfy this, so there
+// is no regression on the capture flow.
 func validateMockRuleInput(w http.ResponseWriter, in *capture.MockRuleInput) bool {
 	if in.Method == "" {
 		writeError(w, http.StatusBadRequest, "missing_field", "method is required")
@@ -226,9 +228,17 @@ func validateMockRuleInput(w http.ResponseWriter, in *capture.MockRuleInput) boo
 		writeError(w, http.StatusBadRequest, "missing_field", "path is required")
 		return false
 	}
-	if !strings.HasPrefix(in.Path, "/") || strings.Contains(in.Path, "?") {
-		writeError(w, http.StatusBadRequest, "invalid_field", "path must start with '/' and must not contain '?' (query strings do not participate in matching)")
+	// Strip query string, then prepend leading slash if missing.
+	if idx := strings.Index(in.Path, "?"); idx >= 0 {
+		in.Path = in.Path[:idx]
+	}
+	in.Path = strings.TrimSpace(in.Path)
+	if in.Path == "" {
+		writeError(w, http.StatusBadRequest, "invalid_field", "path is empty after stripping query string")
 		return false
+	}
+	if !strings.HasPrefix(in.Path, "/") {
+		in.Path = "/" + in.Path
 	}
 	if !validStatusCode(in.Response.StatusCode) {
 		writeInvalidStatusCode(w, in.Response.StatusCode)
