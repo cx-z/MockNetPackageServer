@@ -297,7 +297,7 @@ func mcpCreatePushMockRule(base string) server.ToolHandlerFunc {
 		if err != nil {
 			return toolErr(err), nil
 		}
-		hint := "推送模板已创建且启用（enabled=true）。模拟推送请调用 send_push_mock_rule(ruleId)。"
+		var hint string
 		if len(filledFields) > 0 {
 			hint = "已从设备最近真实 packet 自动补全身份字段：" + strings.Join(filledFields, ", ") +
 				"（你显式提供的字段未覆盖）。模板里 ${fake_msgid}/${fake_time} 会在 send 时自动轮换。" +

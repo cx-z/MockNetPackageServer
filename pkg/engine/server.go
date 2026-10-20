@@ -31,6 +31,12 @@ import (
 // findFreePort finds a free port starting from the given port.
 // It checks up to 100 ports from the starting port.
 //
+// The probe binds 127.0.0.1 specifically, matching how the engine control API
+// binds its listener (127.0.0.1 only). Probing the wildcard address instead
+// would miss loopback-only listeners on macOS — IPv6 wildcard and IPv4
+// loopback are separate bind spaces there, so a port occupied on 127.0.0.1 can
+// still probe "free" on ":port" and the caller then fails to bind.
+//
 // NOTE: There is an inherent TOCTOU race here — the port is verified free by
 // opening and closing a listener, but another process could bind it before
 // the caller's ListenAndServe. Ideally this would return the net.Listener
@@ -39,15 +45,14 @@ import (
 // In practice the window is very small and the management port is local-only.
 func findFreePort(startPort int) int {
 	for port := startPort; port < startPort+100; port++ {
-		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err == nil {
 			_ = listener.Close()
 			return port
 		}
 	}
-	// Fallback to a random port if no port in range is available
-	//nolint:gosec // G102: binding to all interfaces is intentional for mock server
-	listener, err := net.Listen("tcp", ":0")
+	// Fallback to a random free port on loopback if no port in range is available
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return startPort // Return start port as last resort
 	}
