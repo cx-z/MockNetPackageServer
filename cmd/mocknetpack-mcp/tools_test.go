@@ -454,6 +454,97 @@ func TestMCPServer_UpdateMockRule_ClearBodyBase64(t *testing.T) {
 	assert.Contains(t, resultText(res), `"responseMode": "binary"`)
 }
 
+// TestMCPServer_CreateMockRule_WithDelayMs asserts create_mock_rule passes
+// delayMs through to the response body.
+func TestMCPServer_CreateMockRule_WithDelayMs(t *testing.T) {
+	var in capture.MockRuleInput
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/devices/com.a/d1/mock-rules", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		writeResp(w, 201, capture.MockRuleView{MockRule: &capture.MockRule{
+			ID: "r-delay", Method: "GET", Path: "/api/slow", Response: in.Response, Enabled: false,
+		}, Effective: false})
+	})
+	_, base := setupFake(t, mux)
+	srv := server.NewMCPServer("mocknetpack", "0.12.0")
+	registerTools(srv, base)
+
+	res := callTool(t, srv, "create_mock_rule", map[string]any{
+		"app": "com.a", "did": "d1", "method": "GET", "path": "/api/slow",
+		"body": `{"ok":true}`, "delayMs": 5000.0, "note": "slow response test",
+	})
+	assert.False(t, res.IsError, resultText(res))
+	assert.Equal(t, 5000, in.Response.DelayMs, "delayMs must be passed through")
+	assert.Contains(t, resultText(res), `"delayMs": 5000`)
+}
+
+// TestMCPServer_UpdateMockRule_DelayMsPreservesNote asserts that when only
+// delayMs is updated (note omitted), the existing note is preserved — this
+// matches set_mock_rule_enabled behavior and avoids ErrNoteRequired.
+func TestMCPServer_UpdateMockRule_DelayMsPreservesNote(t *testing.T) {
+	ruleJSON := `{"id":"r1","method":"GET","path":"/api/feed",
+		"response":{"statusCode":200,"body":"ok"},
+		"enabled":true,"note":"original-note","effective":true}`
+	var got capture.UpdateMockRuleInput
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/devices/com.a/d1/mock-rules", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeResp(w, 200, map[string]any{"version": 3, "rules": []json.RawMessage{json.RawMessage(ruleJSON)}})
+			return
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	})
+	mux.HandleFunc("/api/v1/devices/com.a/d1/mock-rules/r1", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		writeResp(w, 200, capture.MockRuleView{MockRule: &capture.MockRule{
+			ID: "r1", Method: "GET", Path: "/api/feed",
+			Response: got.Response, Note: got.Note, Enabled: true,
+		}, Effective: true})
+	})
+	_, base := setupFake(t, mux)
+	srv := server.NewMCPServer("mocknetpack", "0.12.0")
+	registerTools(srv, base)
+
+	// Only update delayMs, no note provided.
+	res := callTool(t, srv, "update_mock_rule", map[string]any{
+		"app": "com.a", "did": "d1", "ruleId": "r1",
+		"delayMs": 3000.0,
+	})
+	assert.False(t, res.IsError, resultText(res))
+	assert.Equal(t, 3000, got.Response.DelayMs, "delayMs must be updated")
+	assert.Equal(t, "original-note", got.Note, "note must be preserved when omitted")
+}
+
+// TestMCPServer_CreateMockRuleFromTraffic_WithDelayMs asserts
+// create_mock_rule_from_traffic passes delayMs through to the rule.
+func TestMCPServer_CreateMockRuleFromTraffic_WithDelayMs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/traffic/t1", func(w http.ResponseWriter, r *http.Request) {
+		writeResp(w, 200, capture.TrafficEntry{
+			ID: "t1", Method: "POST", Path: "/api/login", StatusCode: 200,
+			ResponseBody: `{"token":"abc"}`, Timestamp: time.Now(),
+		})
+	})
+	var in capture.MockRuleInput
+	mux.HandleFunc("/api/v1/devices/com.a/d1/mock-rules", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		writeResp(w, 201, capture.MockRuleView{MockRule: &capture.MockRule{
+			ID: "r-from-traffic", Method: "POST", Path: "/api/login",
+			Response: in.Response, Enabled: false,
+		}})
+	})
+	_, base := setupFake(t, mux)
+	srv := server.NewMCPServer("mocknetpack", "0.12.0")
+	registerTools(srv, base)
+
+	res := callTool(t, srv, "create_mock_rule_from_traffic", map[string]any{
+		"app": "com.a", "did": "d1", "trafficId": "t1",
+		"note": "slow login", "delayMs": 2000.0,
+	})
+	assert.False(t, res.IsError, resultText(res))
+	assert.Equal(t, 2000, in.Response.DelayMs, "delayMs must be passed through")
+}
+
 // TestMCPServer_DeleteMockRuleTool asserts P1-2: delete_mock_rule issues DELETE
 // and reports success.
 func TestMCPServer_DeleteMockRuleTool(t *testing.T) {

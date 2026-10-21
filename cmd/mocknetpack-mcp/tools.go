@@ -371,6 +371,7 @@ func mcpCreateMockRule(base string) server.ToolHandlerFunc {
 			"rule":      rule,
 			"enabled":   rule.Enabled,
 			"effective": rule.Effective,
+			"delayMs":   rule.Response.DelayMs,
 			"hint":      "规则已创建且默认停用。命中该接口请调用 set_mock_rule_enabled(enabled=true)。",
 		}), nil
 	}
@@ -486,6 +487,11 @@ func mcpUpdateMockRule(base string) server.ToolHandlerFunc {
 			resp.BodyBase64 = ""
 		}
 		note, _ := p["note"].(string)
+		// 只在用户显式传了非空 note 时才覆盖；否则保留原 note（与 set_mock_rule_enabled 一致），
+		// 避免"只改 delayMs/statusCode/body 但没传 note"时被 server 以 ErrNoteRequired 拒绝。
+		if note == "" {
+			note = existing.Note
+		}
 		in := &capture.UpdateMockRuleInput{Response: resp, Note: note}
 		rule, err := c.UpdateMockRule(ctx, app, did, ruleID, in)
 		if err != nil {

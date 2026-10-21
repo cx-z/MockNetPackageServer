@@ -394,9 +394,7 @@ func (c *Client) CreateMockRuleFromTraffic(ctx context.Context, app, did, traffi
 	if e.ResponseBodyBase64 != "" {
 		resp.BodyBase64 = e.ResponseBodyBase64
 	}
-	if delayMs > 0 {
-		resp.DelayMs = delayMs
-	}
+	resp.DelayMs = delayMs
 	src := &capture.MockRuleSource{
 		Method:              e.Method,
 		Path:                e.Path,
