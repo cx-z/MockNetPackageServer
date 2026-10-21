@@ -186,6 +186,11 @@ function renderRuleDetail(r) {
       '<div class="d-kv"><span class="d-k">备注</span><span class="d-v">' +
         (r.note ? esc(r.note) : '<span style="color:var(--muted)">（未填写）</span>') + "</span></div>" +
       '<div class="d-kv"><span class="d-k">回包状态码</span><span class="d-v">' + (resp.statusCode ?? "—") + "</span></div>" +
+      '<div class="d-kv"><span class="d-k">回包延迟</span><span class="d-v">' +
+        ((resp.delayMs && resp.delayMs > 0)
+          ? resp.delayMs + " ms（模拟慢响应）"
+          : '<span style="color:var(--muted)">0（立即回包）</span>') +
+      "</span></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(resp.headers) || '<div class="d-v">—</div>') + "</div>" +
       '<div class="d-block"><div class="d-title">回包体</div>' + bodyHtml(bodyDisp, { contentType: headerValue(resp.headers, "Content-Type"), base64: resp.bodyBase64 }) + bodyReplayNote + "</div>";
 
@@ -280,7 +285,9 @@ function openEditRuleForm(r) {
       '<div class="edit-row"><label>回包状态码（100–599）</label>' +
         '<input id="editStatusCode" type="number" min="100" max="599" class="filter-input" value="' + esc(String(resp.statusCode ?? 200)) + '" /></div>' +
       '<div class="edit-row"><label>响应头（每行 Key: Value，可留空）</label>' +
-        '<textarea id="editHeaders" class="filter-input" rows="3">' + esc(headersToText(resp.headers)) + '</textarea></div>';
+        '<textarea id="editHeaders" class="filter-input" rows="3">' + esc(headersToText(resp.headers)) + '</textarea></div>' +
+      '<div class="edit-row"><label>回包延迟（毫秒；0 = 立即回包，输入 3000 = 模拟 3 秒慢响应）</label>' +
+        '<input id="editDelayMs" type="number" min="0" max="30000" step="500" class="filter-input" value="' + esc(String(resp.delayMs || 0)) + '" /></div>';
   const respTab =
       '<div class="edit-pane">' +
       metaFields +
@@ -369,6 +376,8 @@ function openEditRuleForm(r) {
           headers: flatHeaders(src.responseHeaders),
           body: decText || src.responseBody || "",
           ...((src.responseBodyBase64 && !decText) ? { bodyBase64: src.responseBodyBase64 } : {}),
+          // 回退不改延迟：delayMs 是 mock 模拟参数、不在抓包快照里，保留用户当前配置。
+          ...(resp.delayMs ? { delayMs: resp.delayMs } : {}),
         };
         // 回退不改备注：服务端在响应变化时要求 note 非空，取表单当前备注兜底。
         const note = ($("editNote") && $("editNote").value.trim()) || r.note || "";
@@ -445,6 +454,11 @@ async function saveRuleEdit(rule) {
       response.bodyBase64 = storedResp.bodyBase64;
     }
   }
+  // 回包延迟：parseInt 容错（空/NaN → 0），clamp 到 0–30000；>0 才写字段，
+  // =0 时省略让后端 omitempty 处理（与 SDK optional 语义一致：缺 key = 0）。
+  const delayRaw = $("editDelayMs") ? parseInt($("editDelayMs").value, 10) : 0;
+  const delayMs = Number.isFinite(delayRaw) ? Math.max(0, Math.min(30000, delayRaw)) : 0;
+  if (delayMs > 0) response.delayMs = delayMs;
 
   try {
     const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
@@ -605,6 +619,8 @@ function openCreateRuleForm() {
           '<input id="createStatus" type="number" min="100" max="599" class="filter-input" value="200" /></div>' +
         '<div class="edit-row"><label>响应头（每行 Key: Value，可留空）</label>' +
           '<textarea id="createHeaders" class="filter-input" rows="3" placeholder="Content-Type: application/json"></textarea></div>' +
+        '<div class="edit-row"><label>回包延迟（毫秒；0 = 立即回包，输入 3000 = 模拟 3 秒慢响应）</label>' +
+          '<input id="createDelayMs" type="number" min="0" max="30000" step="500" class="filter-input" value="0" /></div>' +
         '<div class="edit-row"><label>备注（必填：这条规则测什么）</label>' +
           '<input id="createNote" class="filter-input" placeholder="例如：联调期模拟 /api/hello 的成功回包" /></div>' +
         '<div class="edit-row edit-body-row"><label>回包体（UTF-8 文本；以 { 或 [ 开头时按 JSON 校验）</label>' +
@@ -674,6 +690,12 @@ async function submitCreateRule() {
   // 响应头：每行 "Key: Value"，空行/无冒号行跳过。
   const headers = parseHeadersText($("createHeaders") && $("createHeaders").value);
 
+  // 回包延迟：与编辑表单同款 parse/clamp；>0 才写入 response（=0 省略，后端 omitempty）。
+  const delayRaw = $("createDelayMs") ? parseInt($("createDelayMs").value, 10) : 0;
+  const delayMs = Number.isFinite(delayRaw) ? Math.max(0, Math.min(30000, delayRaw)) : 0;
+  const createResp = { statusCode: statusCode, headers: headers, body: bodyText };
+  if (delayMs > 0) createResp.delayMs = delayMs;
+
   try {
     const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
       encodeURIComponent(detail.did) + "/mock-rules", {
@@ -683,7 +705,7 @@ async function submitCreateRule() {
       body: JSON.stringify({
         method: method,
         path: path,
-        response: { statusCode: statusCode, headers: headers, body: bodyText },
+        response: createResp,
         note: note,
         enabled: false,
       }),

@@ -2467,6 +2467,12 @@ components:
         bodyBase64:
           type: string
           description: 二进制回包体的 base64；存在时 SDK 按原始字节回包，body 仅作展示
+        delayMs:
+          type: integer
+          minimum: 0
+          maximum: 30000
+          default: 0
+          description: Mock 回包延迟毫秒数。SDK 命中规则后等待该时长再回包。0=立即回包（默认）。老 SDK 不识别此字段时忽略。
 
     MockRule:
       type: object

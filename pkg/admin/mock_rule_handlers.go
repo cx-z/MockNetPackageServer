@@ -183,6 +183,10 @@ func (a *API) handleUpdateMockRule(w http.ResponseWriter, r *http.Request) {
 		writeInvalidStatusCode(w, in.Response.StatusCode)
 		return
 	}
+	if !validDelayMs(in.Response.DelayMs) {
+		writeInvalidDelayMs(w, in.Response.DelayMs)
+		return
+	}
 
 	if !a.authorizeDeviceAccess(w, r, r.PathValue("app"), r.PathValue("did")) {
 		return
@@ -244,7 +248,23 @@ func validateMockRuleInput(w http.ResponseWriter, in *capture.MockRuleInput) boo
 		writeInvalidStatusCode(w, in.Response.StatusCode)
 		return false
 	}
+	if !validDelayMs(in.Response.DelayMs) {
+		writeInvalidDelayMs(w, in.Response.DelayMs)
+		return false
+	}
 	return true
+}
+
+// validDelayMs reports whether delayMs is within the contract range 0..30000.
+// The zero value means "no delay" and is the default for legacy rules.
+func validDelayMs(delayMs int) bool {
+	return delayMs >= 0 && delayMs <= 30000
+}
+
+// writeInvalidDelayMs returns a 400 naming the out-of-range delayMs value.
+func writeInvalidDelayMs(w http.ResponseWriter, delayMs int) {
+	writeError(w, http.StatusBadRequest, "invalid_field",
+		"response.delayMs="+strconv.Itoa(delayMs)+" 不在合法范围 0–30000（毫秒）")
 }
 
 // writeInvalidStatusCode returns a 400 with a diagnosis that names the failing

@@ -277,6 +277,10 @@ type MockResponse struct {
 	// was binary (e.g. application/xcp). When present the SDK replays these
 	// exact bytes; Body is then only a display placeholder.
 	BodyBase64 string `json:"bodyBase64,omitempty"`
+	// DelayMs is the mock response delay in milliseconds (0 = immediate, 0..30000).
+	// It lives inside response (not on the rule root) so old rules without it
+	// default to 0 and behaviour is unchanged.
+	DelayMs int `json:"delayMs,omitempty"`
 }
 
 // MockRuleSource is the persistent snapshot of the real request a rule was

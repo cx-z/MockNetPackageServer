@@ -234,6 +234,17 @@ async function clearTrafficLog() {
   }
 }
 
+/** mockDelayNote：流量是 Mock 命中时，按 matchedRuleId 从规则列表查配置的
+ *  delayMs，>0 时返回「 · 延迟 Xms（规则配置）」小字后缀；否则返回空串。
+ *  规则列表未加载/无匹配规则/未配置延迟时静默不展示。 */
+function mockDelayNote(e) {
+  if (!e || !e.mocked || !e.matchedRuleId) return "";
+  const rules = (typeof ruleStore !== "undefined" && ruleStore) || [];
+  const mr = rules.find((x) => x.id === e.matchedRuleId);
+  const d = mr && mr.response && mr.response.delayMs;
+  return (d && d > 0) ? ' · 延迟 ' + d + 'ms（规则配置）' : "";
+}
+
 /** 请求详情面板（列表数据已含完整字段，无需再查详情接口）。 */
 /** 渲染请求详情（headers/body/页签/Mock/分享）。默认输出到主详情区
  *  #trafficDetail；history.js 可传入 historyDetail 目标，把同一渲染复用进
@@ -257,7 +268,8 @@ function renderTrafficDetail(e, target) {
       "</span></div>" +
       '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + e.durationMs + " ms</span></div>" +
       '<div class="d-kv"><span class="d-k">时间</span><span class="d-v">' + esc(e.timestamp || "—") + "</span></div>" +
-      (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是</span></div>' : "") +
+      (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是' +
+        (mockDelayNote(e) || "") + '</span></div>' : "") +
       '<div class="d-block"><div class="d-title">响应头</div>' +
         (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
       '<div class="d-block"><div class="d-title">响应体</div>' + bodyHtml(e.responseBodyDecoded || e.responseBody, { contentType: headerValue(e.responseHeaders, "Content-Type"), base64: e.responseBodyBase64 }) + "</div>";

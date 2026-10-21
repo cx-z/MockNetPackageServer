@@ -186,6 +186,106 @@ func TestMockRuleAPI_InvalidStatusDiagnosis(t *testing.T) {
 	assert.Contains(t, errResp.Message, "99")
 }
 
+// TestMockRuleAPI_DelayMsValidation exercises the response.delayMs range
+// (0..30000) on both POST (create) and PUT (update), plus the round-trip:
+// a valid value must flow through create → Web list → SDK pull unchanged,
+// while an out-of-range value is rejected with a 400 invalid_field.
+func TestMockRuleAPI_DelayMsValidation(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
+
+	var errResp struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+
+	// 1) Out-of-range values rejected on POST.
+	resp := doJSON(t, http.MethodPost, base, map[string]any{
+		"method": "GET", "path": "/neg",
+		"response": map[string]any{"statusCode": 200, "delayMs": -1},
+	}, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, "invalid_field", errResp.Error)
+	assert.Contains(t, errResp.Message, "delayMs")
+
+	resp = doJSON(t, http.MethodPost, base, map[string]any{
+		"method": "GET", "path": "/over",
+		"response": map[string]any{"statusCode": 200, "delayMs": 30001},
+	}, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, "invalid_field", errResp.Error)
+	assert.Contains(t, errResp.Message, "delayMs")
+
+	// 2) Boundary values accepted on POST: 0 (default) and 30000.
+	var created capture.MockRuleView
+	resp = doJSON(t, http.MethodPost, base, map[string]any{
+		"method":  "GET",
+		"path":    "/api/delay-0",
+		"enabled": false,
+		"response": map[string]any{"statusCode": 200, "delayMs": 0},
+		"source":  map[string]any{"method": "GET", "path": "/api/delay-0"},
+	}, &created)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Equal(t, 0, created.Response.DelayMs, "delayMs=0 must round-trip as 0")
+
+	var created30k capture.MockRuleView
+	resp = doJSON(t, http.MethodPost, base, map[string]any{
+		"method":  "GET",
+		"path":    "/api/delay-30k",
+		"enabled": true,
+		"response": map[string]any{"statusCode": 200, "delayMs": 30000},
+		"source":  map[string]any{"method": "GET", "path": "/api/delay-30k"},
+	}, &created30k)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Equal(t, 30000, created30k.Response.DelayMs)
+
+	// 3) PUT rejects out-of-range delayMs.
+	resp = doJSON(t, http.MethodPut, base+"/"+created30k.ID, map[string]any{
+		"response": map[string]any{"statusCode": 200, "delayMs": 99999},
+	}, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, errResp.Message, "delayMs")
+
+	// 4) SDK incremental pull carries delayMs through to the wire format.
+	var pull sdkRuleListResponse
+	doJSON(t, http.MethodGet, base+"?sinceVersion=0", nil, &pull)
+	require.NotEmpty(t, pull.Rules)
+	var seen30k bool
+	for _, r := range pull.Rules {
+		if r.Path == "/api/delay-30k" {
+			seen30k = true
+			assert.Equal(t, 30000, r.Response.DelayMs, "SDK pull must carry delayMs")
+		}
+		if r.Path == "/api/delay-0" {
+			assert.Equal(t, 0, r.Response.DelayMs)
+		}
+	}
+	assert.True(t, seen30k, "expected /api/delay-30k in SDK pull")
+
+	// 5) Missing delayMs field → accepted, defaults to 0 (backward compat with old rules).
+	var noDelay capture.MockRuleView
+	resp = doJSON(t, http.MethodPost, base, map[string]any{
+		"method":  "GET",
+		"path":    "/api/no-delay",
+		"enabled": false,
+		"response": map[string]any{"statusCode": 200}, // no delayMs key
+		"source":  map[string]any{"method": "GET", "path": "/api/no-delay"},
+	}, &noDelay)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Equal(t, 0, noDelay.Response.DelayMs, "missing delayMs must default to 0")
+
+	// 6) String-typed delayMs → rejected with decode error (400).
+	resp = doJSON(t, http.MethodPost, base, map[string]any{
+		"method":  "GET",
+		"path":    "/api/string-delay",
+		"enabled": false,
+		"response": map[string]any{"statusCode": 200, "delayMs": "2000"},
+		"source":  map[string]any{"method": "GET", "path": "/api/string-delay"},
+	}, &errResp)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "string delayMs must fail JSON decode")
+}
+
 func TestMockRuleAPI_HeartbeatCarriesRulesVersion(t *testing.T) {
 	srv := newCaptureTestAPI(t)
 	seedMockRuleDevice(t, srv)
