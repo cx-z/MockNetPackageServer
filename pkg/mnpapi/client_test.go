@@ -185,7 +185,7 @@ func TestClient_CreateMockRuleFromTraffic(t *testing.T) {
 	defer f.ts.Close()
 
 	c := newTestClient(t, f)
-	rule, err := c.CreateMockRuleFromTraffic(context.Background(), "com.a", "d1", "t1", "my note")
+	rule, err := c.CreateMockRuleFromTraffic(context.Background(), "com.a", "d1", "t1", "my note", 0)
 	require.NoError(t, err)
 	assert.Equal(t, "r1", rule.ID)
 }

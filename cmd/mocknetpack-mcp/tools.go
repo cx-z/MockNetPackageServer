@@ -85,19 +85,22 @@ func toolGetTraffic() mcp.Tool {
 func toolCreateMockRuleFromTraffic() mcp.Tool {
 	return mcp.NewTool("create_mock_rule_from_traffic",
 		mcp.WithDescription("从一条真实请求日志创建 Mock 规则（一键创建）：以该请求的 method/path 为匹配键、真实回包为模板，并把原始请求快照（source）随规则持久化。"+
-			"何时用：让某接口按真实回包 mock。注意：note 必填且不能为空白；创建后规则默认停用，需 set_mock_rule_enabled 启用。"+
+			"何时用：让某接口按真实回包 mock，或在真实回包基础上加延迟模拟超时。注意：note 必填且不能为空白；创建后规则默认停用，需 set_mock_rule_enabled 启用。"+
+			"delayMs 可在真实回包基础上叠加延迟（如设 5000 表示真实回包内容 + 5 秒延迟，用于测试客户端超时）。"+
 			"错误处理：409 说明同接口已有启用规则（先停用旧的）。"),
 		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
 		mcp.WithString("trafficId", mcp.Required(), mcp.Description("流量条目 ID")),
 		mcp.WithString("note", mcp.Required(), mcp.Description("规则备注（必填、非空白；建议写明用途）")),
+		mcp.WithNumber("delayMs", mcp.Description("回包延迟毫秒数（0-30000，默认 0=立即回包）。在真实回包基础上叠加延迟")),
 	)
 }
 
 func toolCreateMockRule() mcp.Tool {
 	return mcp.NewTool("create_mock_rule",
 		mcp.WithDescription("凭空创建一条 Mock 规则（手写回包）：method+path 为匹配键（不含 Query/Body），返回自定义回包。"+
-			"何时用：需要模拟一个未抓包过的接口（如异常返回、固定数据）。note 必填且非空白；创建后默认停用，需 set_mock_rule_enabled 启用。"+
+			"何时用：需要模拟一个未抓包过的接口（如异常返回、固定数据、慢响应/超时场景）。note 必填且非空白；创建后默认停用，需 set_mock_rule_enabled 启用。"+
+			"delayMs 用于模拟网络延迟/超时（如设 3000 表示回包等待 3 秒，可触发客户端超时）。"+
 			"错误处理：409 同接口已有启用规则。"),
 		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
@@ -106,6 +109,7 @@ func toolCreateMockRule() mcp.Tool {
 		mcp.WithNumber("statusCode", mcp.Description("Mock 回包状态码（默认 200）")),
 		mcp.WithObject("headers", mcp.Description("Mock 回包响应头，JSON 对象（字符串值）")),
 		mcp.WithString("body", mcp.Description("Mock 回包体（UTF-8 文本）")),
+		mcp.WithNumber("delayMs", mcp.Description("回包延迟毫秒数（0-30000，默认 0=立即回包）。用于模拟慢响应/超时场景")),
 		mcp.WithString("note", mcp.Required(), mcp.Description("规则备注（必填、非空白）")),
 	)
 }
@@ -139,8 +143,9 @@ func toolSetMockRuleEnabled() mcp.Tool {
 
 func toolUpdateMockRule() mcp.Tool {
 	return mcp.NewTool("update_mock_rule",
-		mcp.WithDescription("编辑一条 Mock 规则的回包（statusCode/headers/body）或备注。匹配键 method/path 不可改。"+
+		mcp.WithDescription("编辑一条 Mock 规则的回包（statusCode/headers/body/delayMs）或备注。匹配键 method/path 不可改。"+
 			"实现为：读现有规则 → 合并修改字段 → 覆盖式更新（只传要改的字段即可）。"+
+			"delayMs 可用于动态调整延迟（如从 1000 改成 5000 模拟更慢的响应）；设为 0 表示清除延迟。"+
 			"二进制规则改文本：设 clearBodyBase64=true（清掉原始二进制字节，body 将以文本回放）；结果含 responseMode=text|binary 标注最终形态。"+
 			"编辑回包内容时 note 必填（服务端校验，空/纯空白 400）；纯启停请用 set_mock_rule_enabled。"+
 			"错误处理：403 仅 owner/admin 可编辑；404 规则不存在。"),
@@ -150,6 +155,7 @@ func toolUpdateMockRule() mcp.Tool {
 		mcp.WithNumber("statusCode", mcp.Description("新的 Mock 回包状态码")),
 		mcp.WithObject("headers", mcp.Description("新的响应头（JSON 对象）")),
 		mcp.WithString("body", mcp.Description("新的回包体（UTF-8 文本；配合 clearBodyBase64=true 可把二进制快照改为文本 JSON）")),
+		mcp.WithNumber("delayMs", mcp.Description("新的回包延迟毫秒数（0-30000；设为 0 表示清除延迟、立即回包）")),
 		mcp.WithBoolean("clearBodyBase64", mcp.Description("true=显式清除原有二进制回包体（bodyBase64），规则改为以 body 文本回放；结果 responseMode 将变为 text")),
 		mcp.WithString("note", mcp.Description("规则备注（改动回包内容时必填、非空白）")),
 	)
@@ -302,8 +308,12 @@ func mcpCreateMockRuleFromTraffic(base string) server.ToolHandlerFunc {
 			return toolErr(err), nil
 		}
 		p := req.GetArguments()
+		delayMs := 0
+		if v, ok := p["delayMs"].(float64); ok {
+			delayMs = int(v)
+		}
 		rule, err := c.CreateMockRuleFromTraffic(ctx,
-			mustString(p, "app"), mustString(p, "did"), mustString(p, "trafficId"), mustString(p, "note"))
+			mustString(p, "app"), mustString(p, "did"), mustString(p, "trafficId"), mustString(p, "note"), delayMs)
 		if err != nil {
 			return toolErr(err), nil
 		}
@@ -311,6 +321,7 @@ func mcpCreateMockRuleFromTraffic(base string) server.ToolHandlerFunc {
 			"rule":      rule,
 			"enabled":   rule.Enabled,
 			"effective": rule.Effective,
+			"delayMs":   rule.Response.DelayMs,
 			"hint":      "规则已创建且默认停用。命中该接口请调用 set_mock_rule_enabled(enabled=true)。",
 		}), nil
 	}
@@ -342,6 +353,9 @@ func mcpCreateMockRule(base string) server.ToolHandlerFunc {
 		}
 		if v, ok := p["body"].(string); ok {
 			resp.Body = v
+		}
+		if v, ok := p["delayMs"].(float64); ok {
+			resp.DelayMs = int(v)
 		}
 		in := &capture.MockRuleInput{
 			Method:   mustString(p, "method"),
@@ -462,6 +476,9 @@ func mcpUpdateMockRule(base string) server.ToolHandlerFunc {
 		}
 		if v, ok := p["body"].(string); ok {
 			resp.Body = v
+		}
+		if v, ok := p["delayMs"].(float64); ok {
+			resp.DelayMs = int(v)
 		}
 		// clearBodyBase64=true: drop the binary snapshot so the rule replays the
 		// text body (binary → text JSON migration,  P0-3).

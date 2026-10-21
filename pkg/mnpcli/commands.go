@@ -371,7 +371,7 @@ func runRuleCreateFromTraffic(ctx context.Context, args []string, stdout, stderr
 	if code != 0 {
 		return code
 	}
-	rule, err := c.CreateMockRuleFromTraffic(ctx, *app, *did, fs.Arg(0), *note)
+	rule, err := c.CreateMockRuleFromTraffic(ctx, *app, *did, fs.Arg(0), *note, 0)
 	if err != nil {
 		return bizErr(stderr, err)
 	}

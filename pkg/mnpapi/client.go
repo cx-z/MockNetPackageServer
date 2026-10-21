@@ -379,7 +379,8 @@ func (c *Client) CreateMockRule(ctx context.Context, app, did string, in *captur
 // CreateMockRuleFromTraffic implements the two-step orchestration
 // GET /traffic/{id} → POST /devices/{app}/{did}/mock-rules with a source
 // snapshot frozen from the captured entry ( "Mock 此请求").
-func (c *Client) CreateMockRuleFromTraffic(ctx context.Context, app, did, trafficID, note string) (*capture.MockRuleView, error) {
+// delayMs=0 means no extra delay; >0 sets the mock response delay in milliseconds (0–30000).
+func (c *Client) CreateMockRuleFromTraffic(ctx context.Context, app, did, trafficID, note string, delayMs int) (*capture.MockRuleView, error) {
 	e, err := c.GetTraffic(ctx, trafficID)
 	if err != nil {
 		return nil, err
@@ -392,6 +393,9 @@ func (c *Client) CreateMockRuleFromTraffic(ctx context.Context, app, did, traffi
 	}
 	if e.ResponseBodyBase64 != "" {
 		resp.BodyBase64 = e.ResponseBodyBase64
+	}
+	if delayMs > 0 {
+		resp.DelayMs = delayMs
 	}
 	src := &capture.MockRuleSource{
 		Method:              e.Method,
