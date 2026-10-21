@@ -146,8 +146,8 @@ func toolUpdateMockRule() mcp.Tool {
 		mcp.WithDescription("编辑一条 Mock 规则的回包（statusCode/headers/body/delayMs）或备注。匹配键 method/path 不可改。"+
 			"实现为：读现有规则 → 合并修改字段 → 覆盖式更新（只传要改的字段即可）。"+
 			"delayMs 可用于动态调整延迟（如从 1000 改成 5000 模拟更慢的响应）；设为 0 表示清除延迟。"+
+			"note 省略时自动保留原备注；传非空 note 可更新备注。纯启停请用 set_mock_rule_enabled。"+
 			"二进制规则改文本：设 clearBodyBase64=true（清掉原始二进制字节，body 将以文本回放）；结果含 responseMode=text|binary 标注最终形态。"+
-			"编辑回包内容时 note 必填（服务端校验，空/纯空白 400）；纯启停请用 set_mock_rule_enabled。"+
 			"错误处理：403 仅 owner/admin 可编辑；404 规则不存在。"),
 		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
@@ -501,6 +501,7 @@ func mcpUpdateMockRule(base string) server.ToolHandlerFunc {
 			"rule":         rule,
 			"enabled":      rule.Enabled,
 			"effective":    rule.Effective,
+			"delayMs":      rule.Response.DelayMs,
 			"responseMode": responseMode(rule.Response),
 		}), nil
 	}

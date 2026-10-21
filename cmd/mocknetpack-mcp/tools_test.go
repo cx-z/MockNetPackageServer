@@ -545,6 +545,40 @@ func TestMCPServer_CreateMockRuleFromTraffic_WithDelayMs(t *testing.T) {
 	assert.Equal(t, 2000, in.Response.DelayMs, "delayMs must be passed through")
 }
 
+// TestMCPServer_CreateMockRule_NegativeDelayMsPassesThrough asserts negative
+// delayMs is not silently dropped at MCP layer — it passes through to server
+// validation, which returns 400. This pins the F1 fix (from-traffic used to
+// silently drop negatives; now all three tools behave consistently).
+func TestMCPServer_CreateMockRule_NegativeDelayMsPassesThrough(t *testing.T) {
+	var in capture.MockRuleInput
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/devices/com.a/d1/mock-rules", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		// Simulate server-side validation rejecting out-of-range delayMs.
+		if in.Response.DelayMs < 0 || in.Response.DelayMs > 30000 {
+			writeResp(w, 400, map[string]any{
+				"error":   "invalid_field",
+				"message": "response.delayMs=-1000 不在合法范围 0–30000（毫秒）",
+			})
+			return
+		}
+		writeResp(w, 201, capture.MockRuleView{MockRule: &capture.MockRule{
+			ID: "r-neg", Method: "GET", Path: "/api/slow", Response: in.Response, Enabled: false,
+		}, Effective: false})
+	})
+	_, base := setupFake(t, mux)
+	srv := server.NewMCPServer("mocknetpack", "0.12.0")
+	registerTools(srv, base)
+
+	res := callTool(t, srv, "create_mock_rule", map[string]any{
+		"app": "com.a", "did": "d1", "method": "GET", "path": "/api/slow",
+		"body": `{"ok":true}`, "delayMs": -1000.0, "note": "negative test",
+	})
+	assert.True(t, res.IsError, "negative delayMs should surface as tool error")
+	assert.Contains(t, resultText(res), "delayMs", "error message should mention delayMs")
+	assert.Equal(t, -1000, in.Response.DelayMs, "negative value must be passed through, not silently clamped to 0")
+}
+
 // TestMCPServer_DeleteMockRuleTool asserts P1-2: delete_mock_rule issues DELETE
 // and reports success.
 func TestMCPServer_DeleteMockRuleTool(t *testing.T) {
