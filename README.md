@@ -31,7 +31,7 @@ Pairing QR codes must contain the externally reachable Platform API base URL, su
 
 ## Deploy from source
 
-Go **1.26.9 or later** is required; CI uses Go 1.26.9. The scripts support macOS and Linux and use `ss` or `lsof` for port inspection. Run the following commands on the deployment server:
+Go **1.26.10 or later** is required; CI uses Go 1.26.10 to include the crypto/x509 security fix for [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809). If using Go 1.27, use **1.27.3 or later** for the same fix. The scripts support macOS and Linux and use `ss` or `lsof` for port inspection. Run the following commands on the deployment server:
 
 ```bash
 git clone https://github.com/cx-z/MockNetPackageServer.git
