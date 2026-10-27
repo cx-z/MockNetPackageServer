@@ -109,8 +109,10 @@ button.mini.active { background: var(--primary); color: #fff; }
 .detail-panel .img-preview img { max-width: 100%; max-height: 420px; border: 1px solid var(--border);
                       border-radius: 6px; background: #f6f7f9; object-fit: contain; }
 
-/* JSON 树查看器：请求体/响应体花括号展开/折叠（默认展开，折叠显示 { … }） */
-.detail-panel .d-block:has(.jv-tree) { flex: 1; }
+/* JSON 树查看器：请求体/响应体花括号展开/折叠（默认展开，折叠显示 { … }）
+   flex: 1 1 auto（basis=auto 而非 0）：正文块以真实内容高度参与面板高度计算，
+   内容超高时面板整体滚动、正文完整展开，不会被挤压成小窗口。 */
+.detail-panel .d-block:has(.jv-tree) { flex: 1 1 auto; }
 .detail-panel .d-block .jv-tree { flex: 1; }
 .jv-tree { background: #f6f7f9; border: 1px solid var(--border); border-radius: 6px;
            padding: 8px 10px; font-size: 12px; font-family: ui-monospace, Menlo, monospace;
@@ -138,7 +140,9 @@ button.mini.active { background: var(--primary); color: #fff; }
              color: var(--muted); border-bottom: 2px solid transparent; border-radius: 0; }
 .tabs .tab:hover { background: transparent; color: var(--text); }
 .tabs .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
-.tab-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+/*  详情页签：只增长不收缩（flex: 1 0 auto）。内容超高时由外层 .detail-panel
+   整体滚动，而不是页签自身被 flex 压缩把内容裁剪掉；内容不足时仍撑满剩余高度。 */
+.tab-pane { flex: 1 0 auto; display: flex; flex-direction: column; min-height: 0; overflow: visible; }
 
 /* CSP 合规视图切换：初始隐藏详情视图（不用内联 style，避免被 default-src 'self' 拦截）。
    !important：.auth-wrap 等后定义的 display 规则会覆盖普通 .hidden，必须强制隐藏。 */
@@ -272,17 +276,26 @@ button.mini.active { background: var(--primary); color: #fff; }
 .col-right { display: flex; flex-direction: column; overflow: hidden; }
 .col-right > .section-title { margin-top: 0; flex: none; }
 #ruleDetail, #trafficDetail, #longconnDetail { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-.detail-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.detail-panel .d-block { display: flex; flex-direction: column; min-height: 0; }
-.detail-panel .d-block:has(pre) { flex: 1; }
-.detail-panel .d-block pre { flex: 1; }
+/*  详情内容超高时面板整体纵向滚动：overflow-y: auto 只在放不下时出现滚动条，
+   高度够用时不出现；配合 .tab-pane 不收缩，保证下方内容可达不被裁剪。
+   加固：非正文块（请求头/元信息等 d-kv 行）flex: 0 0 auto 禁止收缩，
+   任何状态下都不会被压缩裁剪；正文块（含 pre/jv-tree）flex: 1 1 auto
+   以真实内容高度参与布局，超高时面板滚动、正文完整展开。 */
+.detail-panel { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
+.detail-panel .d-block { display: flex; flex-direction: column; min-height: 0; flex: 0 0 auto; }
+.detail-panel .d-block:has(pre) { flex: 1 1 auto; }
+/* 注意：不再声明 `.detail-panel .d-block pre { flex: 1; }`（base 规则 102-104 行已含 flex: 1）；
+   重复声明且位于 CM 兜底（.edit-body-wrap pre.CodeMirror-line, flex: none）之后，
+   会让编辑表单内 pre.CodeMirror-line 计算值翻转为 flex: 1，击穿兜底保护。 */
 .rule-row.active { border-color: var(--primary); background: #f4f8ff; }
 @media (max-width: 900px) {
   .detail-grid { grid-template-columns: 1fr; grid-template-rows: auto; }  /*  窄布局恢复内容自适应，避免 1fr 行把左列挤没 */
   .col-right { position: static; }
   /*  窄布局（整页滚动）：解除右列/面板的 overflow 裁剪，让编辑表单自然撑高；
-     编辑器固定一个舒适高度，替代双列下"贴底"的弹性高度。 */
-  .col-right, #ruleDetail, #trafficDetail, .detail-panel, .tab-pane, .edit-pane { overflow: visible; }
+     编辑器固定一个舒适高度，替代双列下"贴底"的弹性高度。
+     #longconnDetail 与 #ruleDetail/#trafficDetail 同结构（flex 列），一并解除裁剪，
+     保持三个详情面板在窄屏下行为一致（内容自适应，不裁剪）。 */
+  .col-right, #ruleDetail, #trafficDetail, #longconnDetail, .detail-panel, .tab-pane, .edit-pane { overflow: visible; }
   .edit-pane .edit-body-row { flex: none; height: min(60vh, 520px); min-height: 240px; }
 }
 
