@@ -35,6 +35,9 @@ async function renderShareView(shareId) {
       }
       box.innerHTML =
         '<div class="detail-panel">' +
+          '<div class="d-actions">' +
+            '<button id="copyShareBtn" class="small ghost">复制</button>' +
+          "</div>" +
           '<div style="margin-bottom:8px;color:var(--muted);font-size:12px">MockNetPack 长连接日志分享 · 有效期至 ' + esc(expDate.toLocaleString()) + "</div>" +
           row("eventType", e.eventType) +
           row("channelId", e.channelId) +
@@ -45,6 +48,7 @@ async function renderShareView(shareId) {
           row("status", e.status) +
           payloadBlock +
         "</div>";
+      bindShareCopy(box, buildLongConnShareText(e));
       return;
     }
 
@@ -68,6 +72,9 @@ async function renderShareView(shareId) {
     const expDate = new Date(snap.expiresAt);
     box.innerHTML =
       '<div class="detail-panel">' +
+        '<div class="d-actions">' +
+          '<button id="copyShareBtn" class="small ghost">复制</button>' +
+        "</div>" +
         '<div style="margin-bottom:8px;color:var(--muted);font-size:12px">MockNetPack 请求分享 · 有效期至 ' + esc(expDate.toLocaleString()) + "</div>" +
         '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
         '<div class="tabs">' +
@@ -88,6 +95,8 @@ async function renderShareView(shareId) {
       };
     });
     bindJsonTree(box);
+    // 与日志详情页「复制」一致：重建为完整 HTTP 报文交换后复制。
+    bindShareCopy(box, buildRawTrafficText(e));
   } catch (err) {
     box.innerHTML = '<div class="empty">加载失败：' + esc(err.message) + "</div>";
   }
@@ -110,4 +119,41 @@ async function shareRequest(e) {
   } catch (err) {
     alert("分享失败：" + err.message);
   }
+}
+
+// 长连接日志分享的复制文本：逐字段 "k: v" 文本行 + payload 原文，
+// 与页面渲染内容一致（空字段跳过）。
+function buildLongConnShareText(e) {
+  const lines = [];
+  const push = (k, v) => {
+    if (v === undefined || v === null || v === "") return;
+    lines.push(k + ": " + String(v));
+  };
+  push("eventType", e.eventType);
+  push("channelId", e.channelId);
+  push("ts", e.ts);
+  push("msgId", e.msgId);
+  push("bizType", e.bizType);
+  push("receiver", e.receiver);
+  push("status", e.status);
+  const payload = e.payloadText || e.payloadBase64 || e.payloadPreview;
+  if (payload) lines.push("payload: " + payload);
+  return lines.join("\n");
+}
+
+// 分享页复制按钮：与日志详情页「复制」一致——整条内容重建为纯文本复制，
+// 成功后按钮短暂显示「已复制」，避免高频操作被 alert 打断。
+function bindShareCopy(box, text) {
+  const copyBtn = box.querySelector("#copyShareBtn");
+  if (!copyBtn) return;
+  copyBtn.onclick = async () => {
+    const ok = await copyTextToClipboard(text);
+    if (ok) {
+      copyBtn.textContent = "已复制";
+      copyBtn.disabled = true;
+      setTimeout(() => { copyBtn.textContent = "复制"; copyBtn.disabled = false; }, 1500);
+    } else {
+      alert("复制失败：请手动选择复制");
+    }
+  };
 }
