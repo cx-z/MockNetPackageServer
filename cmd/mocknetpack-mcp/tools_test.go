@@ -148,6 +148,54 @@ func TestMCPServer_GetDeviceTrafficTool(t *testing.T) {
 	assert.Contains(t, resultText(res), `"mocked": true`)
 }
 
+// TestMCPServer_GetDeviceTrafficTool_ExplicitSession asserts the sessionId
+// branch: with an explicit sessionId the tool must hit GET /sessions/{id}/traffic
+// directly and echo that session ID — no two-step device session resolution.
+func TestMCPServer_GetDeviceTrafficTool_ExplicitSession(t *testing.T) {
+	mux := http.NewServeMux()
+	// Any /api/v1/sessions list hit would mean the orchestration leaked in.
+	mux.HandleFunc("/api/v1/sessions", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("explicit sessionId must bypass device session resolution (hit %s)", r.URL.Path)
+	})
+	mux.HandleFunc("/api/v1/sessions/s-hist/traffic", func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.RawQuery, "projection=compact")
+		assert.Contains(t, r.URL.RawQuery, "keyword=users")
+		writeResp(w, 200, map[string]any{
+			"entries": []capture.TrafficEntry{{ID: "t9", Method: "GET", URL: "https://a.com/h", Seq: 9, Mocked: true}},
+			"total":   1,
+		})
+	})
+	_, base := setupFake(t, mux)
+	srv := server.NewMCPServer("mocknetpack", "0.12.0")
+	registerTools(srv, base)
+
+	res := callTool(t, srv, "get_device_traffic", map[string]any{
+		"app": "com.a", "did": "d1", "sessionId": "s-hist", "keyword": "users",
+	})
+	assert.False(t, res.IsError, resultText(res))
+	assert.Contains(t, resultText(res), `"sessionId": "s-hist"`)
+	assert.Contains(t, resultText(res), `"seq": 9`)
+}
+
+// TestMCPServer_GetDeviceTrafficTool_ExplicitSession_404 asserts the
+// explicit-session error path: a foreign or expired session surfaces the
+// server's 404 guidance as a tool error.
+func TestMCPServer_GetDeviceTrafficTool_ExplicitSession_404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/sessions/s-gone/traffic", func(w http.ResponseWriter, r *http.Request) {
+		writeResp(w, 404, map[string]string{"error": "session_not_found", "message": "会话不存在或已过 48h 保留期"})
+	})
+	_, base := setupFake(t, mux)
+	srv := server.NewMCPServer("mocknetpack", "0.12.0")
+	registerTools(srv, base)
+
+	res := callTool(t, srv, "get_device_traffic", map[string]any{
+		"app": "com.a", "did": "d1", "sessionId": "s-gone",
+	})
+	assert.True(t, res.IsError)
+	assert.Contains(t, resultText(res), "48h")
+}
+
 // TestMCPServer_CreateRuleFromTrafficTool asserts the two-step create tool and
 // its "default disabled" hint.
 func TestMCPServer_CreateRuleFromTrafficTool(t *testing.T) {

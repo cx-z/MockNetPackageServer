@@ -140,6 +140,47 @@ func TestClient_GetDeviceTraffic_NoSession(t *testing.T) {
 	assert.Empty(t, res.Entries)
 }
 
+// TestClient_ListSessionTraffic asserts the explicit-session path: it must hit
+// GET /sessions/{id}/traffic directly (no device session resolution), echo the
+// requested session ID, carry the same filter parameters, and surface a 404
+// (foreign / expired session) as an APIError.
+func TestClient_ListSessionTraffic(t *testing.T) {
+	f := &fakeServer{handler: func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/sessions/s-hist/traffic"):
+			writeJSON(w, 200, map[string]any{
+				"entries": []capture.TrafficEntry{{ID: "t1", Method: "GET", URL: "https://x.com/h", Seq: 9}},
+				"total":   1,
+			})
+		case strings.HasPrefix(r.URL.Path, "/api/v1/sessions/s-gone/traffic"):
+			writeErr(w, 404, "session_not_found", "会话不存在或已过 48h 保留期")
+		default:
+			writeErr(w, 404, "not_found", "unexpected "+r.URL.Path)
+		}
+	}}
+	f.ts = httptest.NewServer(f)
+	defer f.ts.Close()
+
+	c := newTestClient(t, f)
+	res, err := c.ListSessionTraffic(context.Background(), "s-hist", TrafficQuery{Compact: true, Keyword: "users", Since: 4, Limit: 50})
+	require.NoError(t, err)
+	assert.Equal(t, "s-hist", res.SessionID)
+	require.Len(t, res.Entries, 1)
+	assert.Equal(t, int64(9), res.Entries[0].Seq)
+	assert.True(t, f.hasQuery("projection=compact"), "traffic query must carry projection=compact")
+	assert.True(t, f.hasQuery("keyword=users"), "traffic query must carry keyword=users")
+	assert.True(t, f.hasQuery("since=4"), "traffic query must carry since=4")
+	assert.True(t, f.hasQuery("limit=50"), "traffic query must carry limit=50")
+	assert.False(t, f.hasQuery("app=com.a"), "explicit-session path must NOT do device session resolution")
+
+	_, err = c.ListSessionTraffic(context.Background(), "s-gone", TrafficQuery{})
+	require.Error(t, err)
+	ae, ok := err.(*APIError)
+	require.True(t, ok, "404 must surface as *APIError")
+	assert.Equal(t, 404, ae.Status)
+	assert.Contains(t, ae.Message, "48h")
+}
+
 func TestClient_CreateMockRuleFromTraffic(t *testing.T) {
 	f := &fakeServer{}
 	f.handler = func(w http.ResponseWriter, r *http.Request) {

@@ -260,33 +260,10 @@ type TrafficResult struct {
 	Total int
 }
 
-// GetDeviceTraffic implements the two-step orchestration
-// GET /sessions?app&did → GET /sessions/{id}/traffic?<query>.
-// The most recent session wins (capturing sessions first); a device with no
-// session yields an empty result rather than an error — an Agent should read
-// this as "no capture data yet, start a session first".
-func (c *Client) GetDeviceTraffic(ctx context.Context, app, did string, q TrafficQuery) (*TrafficResult, error) {
-	query := url.Values{}
-	query.Set("app", app)
-	query.Set("did", did)
-	var sessions struct {
-		Sessions []capture.CaptureSession `json:"sessions"`
-		Total    int                      `json:"total"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions", query, nil, &sessions); err != nil {
-		return nil, err
-	}
-	if len(sessions.Sessions) == 0 {
-		return &TrafficResult{}, nil
-	}
-	sid := sessions.Sessions[0].ID
-	for _, s := range sessions.Sessions {
-		if s.Status == capture.SessionStatusCapturing {
-			sid = s.ID
-			break
-		}
-	}
-
+// buildTrafficQuery renders the traffic list query parameters (mirrors
+// handleListSessionTraffic parsing; projection=compact for the machine-facing
+// field set).
+func buildTrafficQuery(q TrafficQuery) url.Values {
 	p := url.Values{}
 	if q.Method != "" {
 		p.Set("method", q.Method)
@@ -318,14 +295,60 @@ func (c *Client) GetDeviceTraffic(ctx context.Context, app, did string, q Traffi
 	if q.Compact {
 		p.Set("projection", "compact")
 	}
+	return p
+}
+
+// GetDeviceTraffic implements the two-step orchestration
+// GET /sessions?app&did → GET /sessions/{id}/traffic?<query>.
+// The most recent session wins (capturing sessions first); a device with no
+// session yields an empty result rather than an error — an Agent should read
+// this as "no capture data yet, start a session first".
+func (c *Client) GetDeviceTraffic(ctx context.Context, app, did string, q TrafficQuery) (*TrafficResult, error) {
+	query := url.Values{}
+	query.Set("app", app)
+	query.Set("did", did)
+	var sessions struct {
+		Sessions []capture.CaptureSession `json:"sessions"`
+		Total    int                      `json:"total"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions", query, nil, &sessions); err != nil {
+		return nil, err
+	}
+	if len(sessions.Sessions) == 0 {
+		return &TrafficResult{}, nil
+	}
+	sid := sessions.Sessions[0].ID
+	for _, s := range sessions.Sessions {
+		if s.Status == capture.SessionStatusCapturing {
+			sid = s.ID
+			break
+		}
+	}
+
 	var out struct {
 		Entries []capture.TrafficEntry `json:"entries"`
 		Total   int                    `json:"total"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions/"+sid+"/traffic", p, nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions/"+sid+"/traffic", buildTrafficQuery(q), nil, &out); err != nil {
 		return nil, err
 	}
 	return &TrafficResult{SessionID: sid, Entries: out.Entries, Total: out.Total}, nil
+}
+
+// ListSessionTraffic reads one explicit session's traffic (including an ended
+// session inside its 48h retention window), bypassing the most-recent-session
+// resolution of GetDeviceTraffic. The server still enforces session ownership
+// (owner/admin), so a foreign or expired session surfaces as 404 with the
+// AI-facing guidance.
+func (c *Client) ListSessionTraffic(ctx context.Context, sessionID string, q TrafficQuery) (*TrafficResult, error) {
+	var out struct {
+		Entries []capture.TrafficEntry `json:"entries"`
+		Total   int                    `json:"total"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/sessions/"+url.PathEscape(sessionID)+"/traffic", buildTrafficQuery(q), nil, &out); err != nil {
+		return nil, err
+	}
+	return &TrafficResult{SessionID: sessionID, Entries: out.Entries, Total: out.Total}, nil
 }
 
 // GetTraffic returns a single traffic entry (full detail) by ID.

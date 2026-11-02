@@ -56,13 +56,14 @@ func toolListDevices() mcp.Tool {
 
 func toolGetDeviceTraffic() mcp.Tool {
 	return mcp.NewTool("get_device_traffic",
-		mcp.WithDescription("查某台设备的最近请求日志（默认 compact 投影：id/timestamp/method/url/path/statusCode/durationMs/mocked；"+
+		mcp.WithDescription("查某台设备的请求日志（默认 compact 投影：id/timestamp/method/url/path/statusCode/durationMs/mocked；"+
 			"用 since 增量拉取上次之后的新条目，用 method/scheme/keyword/statusCode 过滤）。"+
-			"实现为两步编排：取该设备最近会话（capturing 优先）→ 查其流量。"+
+			"sessionId 可显式指定历史会话（ended 会话 48h 保留期内；先 list_sessions 拿 sessionId 再传入）；缺省自动解析：capturing 优先 → 最近 ended 保留期内。"+
 			"何时用：查流量/验证 Mock 命中（mocked=true 表示命中规则）。"+
 			"错误处理：401 配置 API Key；404 说明 id/资源无效。"),
 		mcp.WithString("app", mcp.Required(), mcp.Description("应用标识（bundle id）")),
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
+		mcp.WithString("sessionId", mcp.Description("会话 ID（可选；缺省自动解析：capturing 优先 → 最近 ended 保留期内；查历史会话流量请先 list_sessions 拿 sessionId 再显式传入）")),
 		mcp.WithString("method", mcp.Description("HTTP 方法过滤（GET/POST/PUT/DELETE 等，大小写不敏感）")),
 		mcp.WithString("scheme", mcp.Description("URL scheme 过滤（http/https/自定义，按 URL 前缀匹配）")),
 		mcp.WithString("keyword", mcp.Description("URL 子串过滤（大小写不敏感）")),
@@ -274,7 +275,12 @@ func mcpGetDeviceTraffic(base string) server.ToolHandlerFunc {
 		if v, ok := p["limit"].(float64); ok {
 			q.Limit = int(v)
 		}
-		res, err := c.GetDeviceTraffic(ctx, app, did, q)
+		var res *mnpapi.TrafficResult
+		if sid := mustString(p, "sessionId"); sid != "" {
+			res, err = c.ListSessionTraffic(ctx, sid, q)
+		} else {
+			res, err = c.GetDeviceTraffic(ctx, app, did, q)
+		}
 		if err != nil {
 			return toolErr(err), nil
 		}
