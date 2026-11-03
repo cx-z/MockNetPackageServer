@@ -444,11 +444,12 @@ func (c *Client) CreateMockRuleFromTraffic(ctx context.Context, app, did, traffi
 	src.ResponseBody = respBody
 
 	in := &capture.MockRuleInput{
-		Method:   e.Method,
-		Path:     e.Path,
-		Response: resp,
-		Note:     note,
-		Source:   src,
+		Method:          e.Method,
+		Path:            e.Path,
+		Response:        resp,
+		Note:            note,
+		Source:          src,
+		OriginTrafficID: trafficID,
 	}
 	return c.CreateMockRule(ctx, app, did, in)
 }

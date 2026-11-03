@@ -230,6 +230,12 @@ type TrafficEntry struct {
 	// ResponseBodyBase64 carries the raw response body bytes (base64) when it is
 	// not UTF-8 text, so a rule can replay the exact original bytes ( fix).
 	ResponseBodyBase64 string `json:"responseBodyBase64,omitempty"`
+	// ResponseStaticKind marks a whitelisted static resource (video) whose
+	// bytes are deliberately NOT stored ( 方案 D): ResponseBody holds a
+	// display placeholder and ResponseBodyBase64 is empty; the original URL
+	// (entry.URL) is the browser replay pointer. Empty = business API, bytes
+	// kept via the normal UTF-8/base64 path.
+	ResponseStaticKind StaticKind `json:"responseStaticKind,omitempty"`
 	// ResponseBodyDecoded is the UTF-8 text decoded by the app-injected protocol
 	// decoder , for Web display only; never used for replay.
 	ResponseBodyDecoded string `json:"responseBodyDecoded,omitempty"`
@@ -321,6 +327,17 @@ type MockRule struct {
 	Response  MockResponse    `json:"response"`
 	Enabled   bool            `json:"enabled"`
 	Source    *MockRuleSource `json:"source,omitempty"`
+	// OriginTrafficID records the traffic entry this rule was created from via
+	// "Mock 此请求" (empty for hand-authored rules). The server stamps it from
+	// MockRuleInput.OriginTrafficID and uses it to resolve the captured
+	// response when building the initial 302 redirect for video rules.
+	OriginTrafficID string `json:"originTrafficId,omitempty"`
+	// Edited marks that the user has saved a modification to the rule (any
+	// PUT save, including a pure toggle). An unedited rule created from a
+	// video entry replays as a 302 redirect to the original URL; once Edited
+	// the canned response is whatever the user configured (empty body / 500 /
+	// corrupt bytes …).
+	Edited bool `json:"edited,omitempty"`
 	CreatedAt time.Time       `json:"createdAt"`
 	UpdatedAt time.Time       `json:"updatedAt"`
 	// LastUsedAt is the sliding-window cleanup baseline .
@@ -357,6 +374,12 @@ type MockRuleInput struct {
 	Enabled  bool            `json:"enabled"`
 	Note     string          `json:"note,omitempty"`
 	Source   *MockRuleSource `json:"source,omitempty"`
+	// OriginTrafficID is set by "Mock 此请求" callers (Web / MCP) to the
+	// traffic entry ID the rule is created from. The server stamps
+	// MockRule.OriginTrafficID from it and, when the entry is a whitelisted
+	// video, builds the initial 302-redirect response (Location=original URL).
+	// Empty for hand-authored rules.
+	OriginTrafficID string `json:"originTrafficId,omitempty"`
 }
 
 // UpdateMockRuleInput is the edit payload (contract UpdateMockRuleInput).

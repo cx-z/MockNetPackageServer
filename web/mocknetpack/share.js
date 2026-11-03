@@ -67,7 +67,14 @@ async function renderShareView(shareId) {
         '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + (e.durationMs || 0) + " ms</span></div>" +
         '<div class="d-kv"><span class="d-k">时间</span><span class="d-v">' + esc(e.timestamp || "—") + "</span></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">响应体</div>' + bodyHtml(e.responseBodyDecoded || e.responseBody, { contentType: headerValue(e.responseHeaders, "Content-Type"), base64: e.responseBodyBase64 }) + "</div>";
+      '<div class="d-block"><div class="d-title">响应体</div>' + bodyHtml(e.responseBodyDecoded || e.responseBody, {
+        contentType: headerValue(e.responseHeaders, "Content-Type"),
+        base64: e.responseBodyBase64,
+        staticKind: e.responseStaticKind,
+        url: e.url,
+        contentLength: headerValue(e.responseHeaders, "Content-Length"),
+        contentRange: headerValue(e.responseHeaders, "Content-Range"),
+      }) + "</div>";
 
     const expDate = new Date(snap.expiresAt);
     box.innerHTML =

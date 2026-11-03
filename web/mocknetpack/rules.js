@@ -548,6 +548,9 @@ async function mockThisRequest(e) {
       ...(e.responseBodyBase64 ? { bodyBase64: e.responseBodyBase64 } : {}),
     },
     enabled: false,
+    // 方案 D：标注来源流量 ID。视频规则由服务端据此初始化为 302 → 原 URL
+    // （未编辑即跳转、不存字节）；非视频仅作来源溯源。
+    originTrafficId: e.id || "",
     source: {
       method: e.method,
       path: e.path,

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"net/http"
 	"reflect"
 	"strings"
 	"time"
@@ -85,6 +86,25 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 	if in.Source == nil && strings.TrimSpace(in.Note) == "" {
 		return nil, 0, ErrNoteRequired
 	}
+
+	// 方案 D：从视频流量一键创建（"Mock 此请求"带 OriginTrafficID）时，初始
+	// 回包为 302 → 原 URL（未编辑即跳转、不存字节）。规则一旦被编辑（PUT 置
+	// Edited=true）就脱离该快路径，回包由用户内容决定。非视频流量仍记录
+	// OriginTrafficID 作来源溯源，但回包原样保留。
+	var videoRedirect *capture.MockResponse
+	if in.OriginTrafficID != "" {
+		origin, err := m.GetTraffic(ctx, in.OriginTrafficID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if origin.ResponseStaticKind == capture.StaticVideo && origin.URL != "" {
+			videoRedirect = &capture.MockResponse{
+				StatusCode: http.StatusFound,
+				Headers:    map[string]string{"Location": origin.URL},
+			}
+		}
+	}
+
 	now := time.Now()
 	var created *capture.MockRule
 	version, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
@@ -100,20 +120,24 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 			owner = caller.Username
 		}
 		created = &capture.MockRule{
-			ID:         id.ULID(),
-			App:        app,
-			Did:        did,
-			Method:     in.Method,
-			Path:       in.Path,
-			Response:   in.Response,
-			Enabled:    in.Enabled,
-			Note:       in.Note,
-			Source:     in.Source,
-			CreatedAt:  now,
-			UpdatedAt:  now,
-			LastUsedAt: now,
-			Owner:      owner,
-			UpdatedBy:  owner,
+			ID:              id.ULID(),
+			App:             app,
+			Did:             did,
+			Method:          in.Method,
+			Path:            in.Path,
+			Response:        in.Response,
+			Enabled:         in.Enabled,
+			Note:            in.Note,
+			Source:          in.Source,
+			OriginTrafficID: in.OriginTrafficID,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+			LastUsedAt:      now,
+			Owner:           owner,
+			UpdatedBy:       owner,
+		}
+		if videoRedirect != nil {
+			created.Response = *videoRedirect
 		}
 		return append(rules, created), true, nil
 	})
@@ -205,6 +229,10 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 		c := *existing
 		c.Response = in.Response
 		c.Note = in.Note
+		// 方案 D：任何一次保存（含仅开关切换）都视为已编辑，使该规则脱离
+		// "未编辑视频规则 → 302 跳转"快路径；此后回包由用户内容决定
+		// （测空 body / 500 / 损坏字节等边界 case）。
+		c.Edited = true
 		if in.Enabled != nil {
 			c.Enabled = *in.Enabled
 		}

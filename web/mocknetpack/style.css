@@ -415,3 +415,34 @@ pre.raw { white-space: pre-wrap; word-break: break-all; font-size: 12px; backgro
 
 /* push mock 规则区块（置于日志上方） */
 .lc-push-rule-title { margin-bottom: 8px; }
+
+/* ===== 方案 D：视频响应卡片（静态资源不存字节，原 URL 回放） ===== */
+.media-card {
+  display: flex; gap: 12px; padding: 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--card); max-width: 560px; cursor: pointer;
+  align-items: flex-start;
+}
+.media-card:hover { border-color: var(--primary); }
+.media-cover {
+  width: 160px; aspect-ratio: 16 / 9; flex: none;
+  background: #000; border-radius: 6px; object-fit: contain;
+  display: block; cursor: pointer;
+}
+/* onerror 降级：▶ 占位（背景 SVG 走 data:，已含在 img-src data: 白名单内） */
+.media-cover-fallback {
+  background: #1f2329 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath fill='%238a9099' d='M18 14l16 10-16 10z'/%3E%3C/svg%3E") center / 44px no-repeat;
+}
+.media-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.media-name { font-size: 13px; font-weight: 600; word-break: break-all; }
+.media-sub {
+  font-size: 12px; color: var(--muted); word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.media-actions { display: flex; gap: 8px; margin-top: 4px; }
+.media-open {
+  display: inline-block; padding: 3px 10px; font-size: 12px;
+  background: var(--primary); color: #fff; border-radius: 6px;
+  text-decoration: none; line-height: 1.5;
+}
+.media-open:hover { background: var(--primary-hover); }

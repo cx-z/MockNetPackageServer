@@ -31,8 +31,10 @@ func (a *API) registerMockNetPackWeb(mux *http.ServeMux) {
 	// MockNetPack Web 覆盖为放行 data: 图片的 CSP；style 放行 inline
 	// （前端细节样式内联），font 放行 data:（图标字体），其余保持同源。
 	mux.Handle("GET /mocknetpack/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 方案 D：media-src * —— 视频卡片直接用抓到的原 URL 回放（任意 CDN /
+		// 内网地址），浏览器只拉首帧元数据，不转发字节；img 仍限 self+data:。
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:")
+			"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src *")
 		fileServer.ServeHTTP(w, r)
 	}))
 }

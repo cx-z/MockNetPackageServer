@@ -2005,6 +2005,15 @@ components:
         responseBodyBase64:
           type: string
           description: 二进制响应体的 base64（无法 UTF-8 解码时填充），供"Mock 此请求"回放原始字节；请求失败时为空
+        responseStaticKind:
+          type: string
+          enum: ["", "video"]
+          description: |
+            静态资源分类（ 方案 D：视频响应预览与大Body存储治理）。
+            空串=业务 API（字节按 UTF-8/base64 原路径保存）；
+            video=命中 video/* 白名单，服务端 ingestion 时丢弃 base64、写占位
+            ResponseBody，仅保留元信息 + 原 URL（entry.url）供浏览器/302 回放。
+            后续 audio/pdf/image 分类在此扩展，Web 卡片分支按该值分发。
         responseBodyDecoded:
           type: string
           description: |
@@ -2507,6 +2516,20 @@ components:
           $ref: '#/components/schemas/MockRuleSource'
           nullable: true
           description: 规则所依据的真实请求快照（只读；"Mock 此请求"创建时固化，手动创建为 null）
+        originTrafficId:
+          type: string
+          description: |
+            该规则由哪条流量记录一键创建（"Mock 此请求"），空=手动创建。
+            纯溯源字段：视频规则据此判定初始 302 跳转；不回发 SDK（SDK 只关心
+            method/path/response/enabled/effective）。
+        edited:
+          type: boolean
+          default: false
+          description: |
+            是否已被用户编辑过（ 方案 D）。任何一次 PUT 保存（含仅开关切换）
+            都置 true。未编辑的视频规则回放为 302 → 原 URL；已编辑后回包由
+            用户内容决定（测空 body / 500 / 损坏字节等边界 case）。
+            纯服务端字段：不回发 SDK。
         createdAt:
           type: string
           format: date-time
@@ -2624,6 +2647,12 @@ components:
           description: |
             "Mock 此请求"时由 Web 传入的原始真实请求/回包快照（以真实回包 b1 为模板）。
             手动创建规则可省略；服务端原样持久化，不参与匹配。
+        originTrafficId:
+          type: string
+          description: |
+            "Mock 此请求"时传入的来源流量记录 ID（e.id）。服务端据此固化
+            MockRule.originTrafficId；当该条目为 video 静态资源时，初始回包
+            为 302 → 原 URL（未编辑即跳转、不存字节）。手动创建可省略。
 
     UpdateMockRuleInput:
       type: object

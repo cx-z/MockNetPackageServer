@@ -71,15 +71,65 @@ const IMAGE_PREVIEW_TYPES = new Set([
   "image/bmp", "image/avif", "image/x-icon", "image/heic", "image/heif",
 ]);
 
-/** 请求/响应体展示入口：图片响应（Content-Type 白名单 + base64）→ 内联预览；
+/** 请求/响应体展示入口：视频静态资源（opts.staticKind === "video"）→ 原 URL
+ *  卡片；图片响应（Content-Type 白名单 + base64）→ 内联预览；
  *  能生成 JSON 树用树，否则美化文本 <pre>（空态显示「（空）」）。
- *  opts = { contentType, base64 }：二进制图片渲染；其余情况回退原逻辑。 */
+ *  opts = { staticKind, url, contentType, contentLength, contentRange, base64 }。 */
 function bodyHtml(text, opts) {
+  const media = staticResourceHtml(opts);
+  if (media) return media;
   const img = imagePreviewHtml(opts);
   if (img) return img;
   const tree = jsonTreeHtml(text);
   if (tree) return tree;
   return "<pre>" + (esc(formatBody(text)) || "（空）") + "</pre>";
+}
+
+// 方案 D：视频响应预览 —— 静态资源（video 白名单）不存字节，浏览器直接用原
+// URL 回放（不引入新 UI 框架；首版只做 video，audio/pdf/image 分支后续按需
+// 加，bodyHtml 按 opts.staticKind 分发，不依赖具体 MIME 串）。
+
+/** 视频响应卡片 HTML：<video preload="metadata"> 只拉前几百 KB 自动出首帧当
+ *  封面，不下载整段；加载失败由 bindJsonTree 挂 onerror 降级 ▶ 占位。
+ *  非 video / 缺 url → null（回退原有文本/JSON 路径）。
+ *  opts = { staticKind, url, contentType, contentLength, contentRange }。 */
+function staticResourceHtml(opts) {
+  if (!opts || opts.staticKind !== "video" || !opts.url) return null;
+  const url = opts.url;
+  const name = fileNameFromUrl(url);
+  const sub = [opts.contentType || "video/*"]
+    .concat(opts.contentLength ? [humanSize(Number(opts.contentLength))] : [])
+    .concat(opts.contentRange ? ["Range " + opts.contentRange] : [])
+    .join(" · ");
+  return '<div class="media-card" data-media-url="' + esc(url) + '">' +
+      '<video class="media-cover" preload="metadata" src="' + esc(url) + '" muted playsinline></video>' +
+      '<div class="media-meta">' +
+        '<div class="media-name">' + esc(name) + "</div>" +
+        '<div class="media-sub">' + esc(sub) + "</div>" +
+        '<div class="media-actions">' +
+          '<a class="media-open" href="' + esc(url) + '" target="_blank" rel="noopener">新页签打开</a>' +
+          '<button type="button" class="ghost small" data-copy-url>复制链接</button>' +
+        "</div>" +
+      "</div>" +
+    "</div>";
+}
+
+/** URL 最后一段路径作为展示名（解码；空则回退 host+path，仍空回退原串）。 */
+function fileNameFromUrl(url) {
+  try {
+    const u = new URL(url);
+    const last = decodeURIComponent(u.pathname.split("/").filter(Boolean).pop() || "");
+    if (last) return last;
+    return u.host + u.pathname;
+  } catch (_) { return url; }
+}
+
+/** 字节数 → 人类可读（与 Go 端 HumanBytes 口径一致）；非正数返回空串。 */
+function humanSize(n) {
+  if (!(n > 0)) return "";
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
 }
 
 /** 图片内联预览：优先按 base64 字节嗅探真实格式（上游 Content-Type 可能与实际
@@ -110,13 +160,36 @@ function sniffImageType(b64) {
   return null;
 }
 
-/** 事件委托：点击箭头/花括号切换节点折叠。绑定在渲染容器（赋值覆盖，不累积监听器）。 */
+/** 事件委托：点击箭头/花括号切换节点折叠；视频卡片点击 → 新页签打开原 URL，
+ *  复制按钮仅复制不打开。绑定在渲染容器（赋值覆盖，不累积监听器）。 */
 function bindJsonTree(root) {
   if (!root) return;
   root.onclick = (ev) => {
     const t = ev.target && ev.target.closest ? ev.target.closest("[data-jv-toggle]") : null;
-    if (!t) return;
-    const node = t.closest(".jv-node");
-    if (node) { ev.preventDefault(); node.classList.toggle("jv-collapsed"); }
+    if (t) {
+      const node = t.closest(".jv-node");
+      if (node) { ev.preventDefault(); node.classList.toggle("jv-collapsed"); }
+      return;
+    }
+    // 方案 D：媒体卡片交互（复制按钮 / 整卡打开）。
+    if (ev.target && ev.target.closest) {
+      const copyBtn = ev.target.closest("[data-copy-url]");
+      if (copyBtn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const card = copyBtn.closest(".media-card");
+        if (card && card.dataset.mediaUrl) copyTextToClipboard(card.dataset.mediaUrl);
+        return;
+      }
+      const card = ev.target.closest(".media-card");
+      if (card && !ev.target.closest("a") && card.dataset.mediaUrl) {
+        window.open(card.dataset.mediaUrl, "_blank", "noopener");
+      }
+    }
   };
+  // 视频封面加载失败（原 URL 内网不可达等）→ 降级 ▶ 占位，页面不报错。
+  // error 事件不冒泡，故在绑定处逐个挂载。
+  root.querySelectorAll("video.media-cover").forEach((v) => {
+    v.onerror = () => v.classList.add("media-cover-fallback");
+  });
 }

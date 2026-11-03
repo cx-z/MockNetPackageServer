@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,6 +90,15 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 		c := *e
 		c.ID = id.ULID()
 		c.SessionID = sessionID
+		// 方案 D：静态资源（video/* 白名单）不存字节——命中时写占位文本、
+		// 丢弃 base64，仅保留元信息 + 原 URL（浏览器/302 回放用）。SDK 端仍
+		// 会完整上报字节（现有协议不改），服务端在此判定后直接不落盘。
+		ct := capture.ResponseContentType(e.ResponseHeaders)
+		if kind := capture.ClassifyResponse(ct); kind != capture.StaticNone {
+			c.ResponseStaticKind = kind
+			c.ResponseBody = capture.StaticPlaceholder(kind, ct, staticResponseSize(e))
+			c.ResponseBodyBase64 = ""
+		}
 		stored = append(stored, &c)
 	}
 	if len(stored) == 0 {
@@ -188,6 +199,31 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 		m.touchHitRules(ctx, app, did, hits)
 	}
 	return len(stored), nil
+}
+
+// binarySizeRE matches the SDK's non-UTF-8 display placeholder
+// "[binary N bytes]" so the static-resource placeholder can reuse the exact
+// captured size.
+var binarySizeRE = regexp.MustCompile(`\[binary (\d+) bytes\]`)
+
+// staticResponseSize returns the captured byte size of a response for the
+// static-resource placeholder: it prefers the "[binary N bytes]" placeholder
+// already recorded by the SDK (exact captured size), then the Content-Length
+// header; 0 when neither is available (placeholder omits the size).
+func staticResponseSize(e *capture.TrafficEntry) int64 {
+	if m := binarySizeRE.FindStringSubmatch(e.ResponseBody); m != nil {
+		if n, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+			return n
+		}
+	}
+	for k, vs := range e.ResponseHeaders {
+		if strings.EqualFold(k, "Content-Length") && len(vs) > 0 {
+			if n, err := strconv.ParseInt(vs[0], 10, 64); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // indexTraffic records the runtime location of each entry in the ID index
