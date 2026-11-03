@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
@@ -93,6 +94,15 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 	// OriginTrafficID 作来源溯源，但回包原样保留。
 	var videoRedirect *capture.MockResponse
 	if in.OriginTrafficID != "" {
+		// 跨设备权限隔离：先校验 OriginTrafficID 属于当前 (app, did)，
+		// 防止跨设备引用其他设备的视频 URL 作为 302 Location。
+		originApp, originDid, err := m.GetTrafficWithOwner(ctx, in.OriginTrafficID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if originApp != app || originDid != did {
+			return nil, 0, fmt.Errorf("origin traffic %s does not belong to device %s/%s", in.OriginTrafficID, app, did)
+		}
 		origin, err := m.GetTraffic(ctx, in.OriginTrafficID)
 		if err != nil {
 			return nil, 0, err
