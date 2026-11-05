@@ -135,8 +135,11 @@ type LongConnectionRecordInput struct {
 	// PayloadBase64 is the base64 of a binary payload that cannot be
 	// textified; one of the payload triplet.
 	PayloadBase64 string `json:"payloadBase64,omitempty"`
-	// PayloadPreview is the truncated preview kept when the full payload
-	// exceeds 10KB (≤1KB); one of the payload triplet.
+	// PayloadPreview is the legacy truncated preview kept when the full
+	// payload exceeded the old 10KB limit (≤1KB). Current SDKs no longer
+	// emit it: over-limit payloads keep a 50KB prefix in
+	// PayloadText/PayloadBase64. Retained for old-log compatibility; one of
+	// the payload triplet.
 	PayloadPreview string `json:"payloadPreview,omitempty"`
 	// Duplicate marks a duplicate packet (aligned with KK record-point
 	// semantics).

@@ -74,7 +74,8 @@ info:
       GET /sessions/{id}/longconn（查询）。长连接日志不占用 HTTP 流量额度：独立存档
       mockd-data/longconn/<sessionID>.json、独立上限（--capture-session-longconn-max-entries，默认 1000，
       超限丢最旧）、48h 保留并入会话语义（ended 会话保留期内可查、期满 404）；payload 截断
-      （完整保留 ≤10KB，超限仅存预览 ≤1KB）；仅 in 方向 + 生命周期事件；snapshot 连接状态变化时
+      （≤50KB 原样保留，超限保留前 50KB 前缀并写入原 payloadText/payloadBase64 字段，
+      不再降级为 1KB 预览）；仅 in 方向 + 生命周期事件；snapshot 连接状态变化时
       立即上报 + 30s 兜底；SDK 上传条目必填字段 ≤4（channelId/eventType/ts + payload 三选一），
       其余全可选带默认。既有 /traffic 契约零改动。
 
@@ -807,7 +808,9 @@ paths:
         长连接日志不占用 HTTP 流量额度：独立上限 MaxSessionLongConnEntries
         （--capture-session-longconn-max-entries，默认 1000），超限丢最旧（rolling window）；
         独立存档 mockd-data/longconn/<sessionID>.json，48h 保留并入会话语义。
-        payload 截断：完整保留 ≤10KB，超限仅存预览（≤1KB，payloadPreview）；
+        payload 截断：≤50KB（51200 字节）原样保留，超限保留前 50KB 前缀
+        （文本取有效 UTF-8 前缀仍存 payloadText；二进制按解码后前 51200 字节
+        重新编码仍存 payloadBase64），不再生成 1KB 预览；
         snapshot 连接状态变化时立即上报 + 30s 兜底；仅 in 方向 + 生命周期事件，out 不记录。
       operationId: uploadLongConnection
       requestBody:
@@ -2221,7 +2224,7 @@ components:
         payloadPreview:
           type: string
           maxLength: 1024
-          description: 截断预览（payload 超 10KB 时仅存预览，不保留完整内容；≤1KB；三选一之一，规则同上）
+          description: 旧版截断预览（历史日志兼容：旧策略下 payload 超 10KB 时仅存 ≤1KB 预览；当前 SDK 不再生成，超 50KB 保留前缀写入 payloadText/payloadBase64；三选一之一，规则同上）
         duplicate:
           type: boolean
           default: false
@@ -2373,7 +2376,7 @@ components:
         payloadPreview:
           type: string
           maxLength: 1024
-          description: 截断预览（payload 超 10KB 时仅存预览，不保留完整内容；≤1KB；三选一之一，规则同上）
+          description: 旧版截断预览（历史日志兼容：旧策略下 payload 超 10KB 时仅存 ≤1KB 预览；当前 SDK 不再生成，超 50KB 保留前缀写入 payloadText/payloadBase64；三选一之一，规则同上）
         duplicate:
           type: boolean
           default: false
