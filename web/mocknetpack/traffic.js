@@ -180,7 +180,8 @@ function renderTraffic(entries) {
     el.innerHTML =
       '<span class="method ' + methodCls(e.method) + '">' + esc(e.method || "?") + "</span>" +
       '<span class="t-url">' + esc(e.path || e.url) + (e.query ? "?" + esc(e.query) : "") + "</span>" +
-      '<span class="t-status ' + statusCls + '">' + (e.statusCode ?? "ERR") + "</span>" +
+      '<span class="t-status ' + statusCls + '" title="' + esc(failureStageText(e)) + '">' +
+        (e.statusCode ?? (e.terminalStage ? failureBadge(e) : "ERR")) + "</span>" +
       '<span class="t-dur">' + e.durationMs + "ms</span>" +
       '<span class="t-time">' + clockTime(e.timestamp) + "</span>" +
       '<button class="t-del" title="删除该日志（不影响已创建的 Mock 规则）">✕</button>';
@@ -245,6 +246,32 @@ function mockDelayNote(e) {
   return (d && d > 0) ? ' · 延迟 ' + d + 'ms（规则配置）' : "";
 }
 
+/**
+ * 失败终态的中文标签；无结构化字段的旧数据回退为通用文案。
+ * @param {object} e 流量条目
+ * @returns {string} 展示用阶段文案
+ */
+function failureStageText(e) {
+  const stage = e && e.terminalStage;
+  if (stage === "clientTimeout") return e.timeoutInferred ? "超时（推断）" : "请求超时";
+  if (stage === "clientCancelled") return "客户端取消";
+  if (stage === "transportError") return "传输层错误";
+  if (stage === "httpResponse") return "HTTP 响应";
+  return "请求失败";
+}
+
+/**
+ * 列表状态列的短标签（保持固定列宽）；旧数据仍显示 ERR。
+ * @param {object} e 流量条目
+ * @returns {string} 短标签
+ */
+function failureBadge(e) {
+  const stage = e && e.terminalStage;
+  if (stage === "clientTimeout") return "超时";
+  if (stage === "clientCancelled") return "取消";
+  return "ERR";
+}
+
 /** 请求详情面板（列表数据已含完整字段，无需再查详情接口）。 */
 /** 渲染请求详情（headers/body/页签/Mock/分享）。默认输出到主详情区
  *  #trafficDetail；history.js 可传入 historyDetail 目标，把同一渲染复用进
@@ -264,8 +291,19 @@ function renderTrafficDetail(e, target) {
       '<div class="d-block"><div class="d-title">请求体</div>' + bodyHtml(e.requestBodyDecoded || e.requestBody, { contentType: headerValue(e.requestHeaders, "Content-Type"), base64: e.requestBodyBase64 }) + "</div>";
   const respTab =
       '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
-        (e.statusCode != null ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "") : "请求失败： " + esc(e.error || "")) +
+        (e.statusCode != null
+          ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "")
+          : "无 HTTP 响应（" + esc(failureStageText(e)) + "）" +
+            (e.error ? "：" + esc(e.error) : "")) +
       "</span></div>" +
+      (e.statusCode == null && (e.errorDomain || e.errorCode != null)
+        ? '<div class="d-kv"><span class="d-k">错误域/码</span><span class="d-v">' +
+            esc(e.errorDomain || "—") + " / " + esc(String(e.errorCode != null ? e.errorCode : "—")) +
+            (e.timeoutInferred ? "（推断）" : "") + "</span></div>"
+        : "") +
+      (e.statusCode == null && e.errorDescription
+        ? '<div class="d-kv"><span class="d-k">错误描述</span><span class="d-v">' + esc(e.errorDescription) + "</span></div>"
+        : "") +
       '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + e.durationMs + " ms</span></div>" +
       '<div class="d-kv"><span class="d-k">时间</span><span class="d-v">' + esc(e.timestamp || "—") + "</span></div>" +
       (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是' +

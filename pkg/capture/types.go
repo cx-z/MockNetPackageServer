@@ -241,6 +241,27 @@ type TrafficEntry struct {
 	ResponseBodyDecoded string `json:"responseBodyDecoded,omitempty"`
 	// Error is the error message when the request failed.
 	Error string `json:"error,omitempty"`
+	// ErrorDomain is the structured error domain (e.g. NSURLErrorDomain);
+	// empty for HTTP responses and older SDK versions.
+	ErrorDomain string `json:"errorDomain,omitempty"`
+	// ErrorCode is the structured error code (e.g. -1001 timeout, -999
+	// cancelled); omitted for older SDK versions.
+	ErrorCode int `json:"errorCode,omitempty"`
+	// ErrorDescription is the human-readable terminal error description: usually
+	// NSError localizedDescription, synthesized deadline text for timeouts.
+	ErrorDescription string `json:"errorDescription,omitempty"`
+	// TerminalStage classifies the terminal state: httpResponse,
+	// transportError, clientTimeout or clientCancelled. Empty for older SDKs.
+	TerminalStage string `json:"terminalStage,omitempty"`
+	// ClientAbort marks a request ended by the client (timeout or explicit
+	// cancel) instead of a transport or HTTP error.
+	ClientAbort bool `json:"clientAbort,omitempty"`
+	// ClientAbortReason is timeout or cancelled; set only when ClientAbort.
+	ClientAbortReason string `json:"clientAbortReason,omitempty"`
+	// TimeoutInferred marks a -1001 timeout code inferred from
+	// request.timeoutInterval and the abort instant, not observed directly.
+	// Omitted when the forwarder actually observed -1001.
+	TimeoutInferred bool `json:"timeoutInferred,omitempty"`
 	// DurationMs is the request duration in milliseconds.
 	DurationMs int `json:"durationMs"`
 	// Mocked marks whether this request hit a mock rule ( onward; the Web

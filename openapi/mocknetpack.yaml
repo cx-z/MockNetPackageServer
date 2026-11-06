@@ -2026,7 +2026,40 @@ components:
         error:
           type: string
           nullable: true
-          description: 错误信息（请求失败时；成功时为空）
+          description: 错误信息的人类可读摘要（请求失败时；成功时为空）
+        errorDomain:
+          type: string
+          description: 结构化错误域（如 NSURLErrorDomain）；HTTP 响应成功/旧 SDK 缺省
+        errorCode:
+          type: integer
+          description: 结构化错误码（如 -1001 超时、-999 取消）；旧 SDK 缺省
+        errorDescription:
+          type: string
+          description: |
+            终态错误描述（面向人读）：一般取 NSError.localizedDescription；
+            超时终态为合成的截止点说明（推断时前缀"请求超时（推断）"），与 error 摘要互补
+        terminalStage:
+          type: string
+          enum: [httpResponse, transportError, clientTimeout, clientCancelled]
+          description: |
+            终态阶段：httpResponse=收到 HTTP 响应（含 4xx/5xx）；
+            transportError=连接失败/中断等传输层错误；
+            clientTimeout=客户端在 request.timeoutInterval 截止点中止
+            （含会话级超时短于请求超时、由转发任务观测到 -1001 的情形）；
+            clientCancelled=客户端主动取消。旧 SDK 缺省。
+        clientAbort:
+          type: boolean
+          description: 是否由客户端中止（超时或主动取消）结束；仅新 SDK 上报
+        clientAbortReason:
+          type: string
+          enum: [timeout, cancelled]
+          description: 客户端中止原因；仅 clientAbort=true 时存在
+        timeoutInferred:
+          type: boolean
+          description: |
+            超时错误码是否为推断值：true 表示 errorCode=-1001 由
+            request.timeoutInterval 与中止时刻推断，Web 展示须标注"推断"；
+            转发任务实际观测到 -1001 时该字段缺省（错误码为真实观测）。
         durationMs:
           type: integer
           description: 请求耗时（毫秒，请求发起至收到完成回调）
