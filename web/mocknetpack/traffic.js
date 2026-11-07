@@ -288,7 +288,15 @@ function renderTrafficDetail(e, target) {
   const reqTab =
       '<div class="d-block"><div class="d-title">请求头</div>' +
         (headRows(e.requestHeaders) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">请求体</div>' + bodyHtml(e.requestBodyDecoded || e.requestBody, { contentType: headerValue(e.requestHeaders, "Content-Type"), base64: e.requestBodyBase64 }) + "</div>";
+      '<div class="d-block"><div class="d-title">请求体</div>' + bodyHtml(e.requestBodyDecoded || e.requestBody, {
+        contentType: headerValue(e.requestHeaders, "Content-Type"),
+        base64: e.requestBodyBase64,
+        staticKind: e.requestStaticKind,
+        url: e.url,
+        contentLength: headerValue(e.requestHeaders, "Content-Length"),
+        contentRange: headerValue(e.requestHeaders, "Content-Range"),
+        isRequest: true,
+      }) + "</div>";
   const respTab =
       '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
         (e.statusCode != null

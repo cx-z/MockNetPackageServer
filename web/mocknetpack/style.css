@@ -446,3 +446,36 @@ pre.raw { white-space: pre-wrap; word-break: break-all; font-size: 12px; backgro
   text-decoration: none; line-height: 1.5;
 }
 .media-open:hover { background: var(--primary-hover); }
+
+/* ===== M15 方案 D 阶段二：大图预览卡片 / 截断徽标 / 灯箱 ===== */
+.media-note { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.img-media-cover {
+  display: flex; align-items: center; justify-content: center;
+  background: #f6f7f9; color: var(--muted); font-size: 12px;
+  border: 1px dashed var(--border); cursor: zoom-in;
+}
+/* 加载完成后的 <img> 同时带 media-cover 与 img-media-full（见 json-tree.js 的
+   loadCardImage），祖先不再有 .img-media-cover —— 选择器直接命中类名，
+   否则这条规则永不匹配（曾写成 .img-media-cover.img-media-full）。 */
+img.img-media-full { cursor: zoom-in; }
+.img-trunc-badge {
+  margin-bottom: 6px; padding: 4px 8px; border-radius: 6px;
+  background: #fff7e6; border: 1px solid #f0c36d; color: #8a6d1a;
+  font-size: 12px; line-height: 1.5;
+}
+.img-preview { flex-direction: column; align-items: flex-start; gap: 4px; }
+.img-preview img { cursor: zoom-in; }
+.img-lightbox {
+  position: fixed; inset: 0; z-index: 60; display: none;
+  align-items: center; justify-content: center; padding: 32px;
+  background: rgba(15, 18, 22, .86);
+}
+.img-lightbox.open { display: flex; }
+.img-lightbox img {
+  max-width: 100%; max-height: 100%; border-radius: 6px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .55);
+}
+.img-lightbox-close {
+  position: fixed; top: 16px; right: 22px; color: #fff; font-size: 28px;
+  line-height: 1; cursor: pointer; user-select: none;
+}

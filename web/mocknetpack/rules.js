@@ -6,6 +6,13 @@
 // Mock 规则
 // ============================================================================
 
+// M15：编辑表单里回包体的「打开表单时的原文」。media 规则的回包字节在服务端
+// blob 里，回包体表单本身是空的；保存时若原样回传 media，服务端才保留图片，
+// 漏传就清 blob。因此「只改状态码/响应头/延迟/备注」必须保留 media，改过回包体
+// 才丢弃。用原文比对而不是监听编辑器事件：换编辑器、或事件没挂上时都不会把
+// 「改过」误判成「没改」，代价仅是纯空白改动也算改过。
+let ruleBodyBaseline = "";
+
 async function loadRules() {
   if (!detail) return;
   const { app, did } = detail;
@@ -89,7 +96,11 @@ function renderRules(data) {
     // 抓包解码文本片段（ 解码，仅展示），无解码时才显示 "[二进制 N 字节]"。
     const respL = r.response || {};
     let bodySnippet = "";
-    if (respL.bodyBase64) {
+    if (respL.media) {
+      // M15：大图规则的回包字节在服务端 blob 里，列表只给体积摘要。
+      // humanSize 对 0 / 缺字段返回空串，与详情块一样兜底「未知大小」。
+      bodySnippet = " · [原图 " + (humanSize(respL.media.size) || "未知大小") + "，回放时按需拉取]";
+    } else if (respL.bodyBase64) {
       const decText = (r.source && r.source.responseBodyDecoded) || "";
       bodySnippet = decText
         ? " · " + esc(String(decText).slice(0, 80))
@@ -158,7 +169,25 @@ function renderRuleDetail(r) {
   // 的规则无需进入编辑即可看到 JSON 详情；无解码文本时才回退二进制占位。
   let bodyDisp = resp.body || "";
   let bodyReplayNote = "";
-  if (resp.bodyBase64) {
+  // M15：media 规则不在规则行里存字节——详情给"预览原图"入口，直接请求
+  // media 端点（open 路由，无需 token），加载后点图进灯箱。
+  let mediaBlock = "";
+  if (resp.media) {
+    const mediaUrl = API + "/devices/" + encodeURIComponent(r.app) + "/" +
+      encodeURIComponent(r.did) + "/mock-rules/" + encodeURIComponent(r.id) + "/media";
+    mediaBlock =
+      '<div class="d-block"><div class="d-title">回包体</div>' +
+        '<div class="media-note">回放来自服务端存储的原图（' + esc(humanSize(resp.media.size) || "未知大小") +
+          '，sha256 ' + esc(String(resp.media.sha256 || "").slice(0, 12)) + '…）。' +
+          'SDK 命中规则时按此字节回包；规则行不带字节。</div>' +
+        '<div class="media-card img-media-card" data-media-url="' + esc(mediaUrl) + '">' +
+          '<div class="media-cover img-media-cover" data-load-image>点击加载</div>' +
+          '<div class="media-meta"><div class="media-actions">' +
+            '<button type="button" class="ghost small" data-load-image>预览原图</button>' +
+          '</div></div>' +
+        '</div>' +
+      '</div>';
+  } else if (resp.bodyBase64) {
     if (src && src.responseBodyDecoded) {
       bodyDisp = src.responseBodyDecoded;
       bodyReplayNote = '<div class="sub" style="margin-top:6px">（原始回包为二进制，以上为抓包解码文本，仅用于展示；Mock 回放仍为原始字节）</div>';
@@ -192,7 +221,8 @@ function renderRuleDetail(r) {
           : '<span style="color:var(--muted)">0（立即回包）</span>') +
       "</span></div>" +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(resp.headers) || '<div class="d-v">—</div>') + "</div>" +
-      '<div class="d-block"><div class="d-title">回包体</div>' + bodyHtml(bodyDisp, { contentType: headerValue(resp.headers, "Content-Type"), base64: resp.bodyBase64 }) + bodyReplayNote + "</div>";
+      (mediaBlock || ('<div class="d-block"><div class="d-title">回包体</div>' +
+        bodyHtml(bodyDisp, { contentType: headerValue(resp.headers, "Content-Type"), base64: resp.bodyBase64 }) + bodyReplayNote + "</div>"));
 
   box.innerHTML =
     '<div class="detail-panel">' +
@@ -266,6 +296,7 @@ function openEditRuleForm(r) {
   const src = r.source;
   const hasOriginal = !!src;   // 有抓包快照即可一键回退整个响应
   const isBinary = !!resp.bodyBase64;
+  const isMedia = !!resp.media;
 
   // 请求页签：只读展示原始请求头 + 请求体
   const editReqHeadersRows = (src && src.requestHeaders) ? Object.entries(src.requestHeaders)
@@ -308,6 +339,12 @@ function openEditRuleForm(r) {
             '清除旧二进制回包（clearBodyBase64），以文本回放</label>' +
             '<div class="sub" style="margin:-2px 0 6px">取消勾选则保留原始二进制字节，回包体文本仅作展示、回放仍为二进制</div>'
           : '') +
+        (isMedia
+          ? '<div class="sub media-edit-hint" style="margin:-2px 0 6px">' +
+            '本条规则的回包是服务端存储的原图（' + esc(humanSize(resp.media.size) || "未知大小") + '，回放时按需拉取）。' +
+            '只改状态码/响应头/延迟/备注会保留原图；改动下面的回包体，保存时会丢弃原图并删除服务端 blob。' +
+            '</div>'
+          : '') +
         '<div class="edit-body-wrap"><textarea id="editBody" class="filter-input">' + esc(formatBody(bodyDefault)) + '</textarea></div>' +
       '</div>' +
       '</div>';
@@ -343,8 +380,9 @@ function openEditRuleForm(r) {
     };
   });
 
-  // ：回包体 JSON 折叠编辑器（vendored CodeMirror，同源加载见 lib/codemirror/README.md）。
+  // 回包体 JSON 折叠编辑器（vendored CodeMirror，同源加载见 lib/codemirror/README.md）。
   // fromTextArea 会把 textarea 隐藏并替换为编辑器；保存前 cm.save() 回写 textarea 统一取值。
+  // 记下打开表单时的原文，保存时比对它判断「回包体是否被改过」（media 规则据此保留原图）。
   ruleBodyEditor = CodeMirror.fromTextArea($("editBody"), {
     mode: { name: "javascript", json: true },
     lineNumbers: true,
@@ -360,6 +398,11 @@ function openEditRuleForm(r) {
     },
   });
   ruleBodyEditor.refresh();
+  // 基线取自编辑器内容（save() 也回写同一份），避免 CodeMirror 规范化换行后
+  // 与 textarea 原值比对出「假改动」。
+  ruleBodyBaseline = typeof ruleBodyEditor.getValue === "function"
+    ? ruleBodyEditor.getValue()
+    : $("editBody").value;
 
   // 一键回退：回滚到抓包快照。状态码/响应头恢复原始值；回包体回滚为抓包
   // 解码 JSON 原文（source.responseBodyDecoded）并保持文本回放——有解码文本
@@ -369,6 +412,11 @@ function openEditRuleForm(r) {
   if (revertBtn) {
     revertBtn.onclick = async () => {
       if (!src) return;
+      // media 规则的回包是服务端 blob；回退会用抓包文本替换它并删 blob，先确认。
+      // 大图字节在入库时已丢弃、抓包快照的 responseBody 通常是空串，所以回退后
+      // 多半是「状态码 + 图片 Content-Type + 空体」，并不会恢复出原图。
+      if (resp.media && !confirm("一键回退会把回包换成抓包记录的文本，并删除服务端已存的原图。" +
+        "大图字节在入库时已丢弃，回退后通常是空体回包，不能恢复原图。继续？")) return;
       try {
         const decText = (src.responseBodyDecoded) || "";
         const newResp = {
@@ -454,6 +502,18 @@ async function saveRuleEdit(rule) {
       response.bodyBase64 = storedResp.bodyBase64;
     }
   }
+  // M15：media 规则的字节在服务端 blob 里，表单里的回包体是空的。服务端 PUT
+  // 只在 response.media 缺失时才清 Media 并删 blob，所以：
+  // - 回包体与打开表单时一致 → 原样带回 media，改备注/延迟/状态码/响应头不会毁原图；
+  // - 回包体被改过 → 用户确实要用文本替换，先确认再丢失原图（否则一次误存
+  //   就把大图规则降级成「200 空体」）。
+  if (storedResp.media) {
+    if (bodyText === ruleBodyBaseline) {
+      response.media = storedResp.media;
+    } else if (!confirm("回包体已改动，保存会丢弃已存储的原图（服务端会删除 blob，规则改为文本回放）。继续保存？")) {
+      return;
+    }
+  }
   // 回包延迟：parseInt 容错（空/NaN → 0），clamp 到 0–30000；>0 才写字段，
   // =0 时省略让后端 omitempty 处理（与 SDK optional 语义一致：缺 key = 0）。
   const delayRaw = $("editDelayMs") ? parseInt($("editDelayMs").value, 10) : 0;
@@ -535,6 +595,28 @@ async function toggleRule(rule, enabled) {
   }
 }
 
+/** M15：把服务端 media_unfetchable 的稳定原因码翻成人话（创建大图规则失败时用）。 */
+const MEDIA_FETCH_REASONS = {
+  url_empty: "抓包记录里没有原图 URL，无法回源取字节",
+  missing_auth: "源站需要鉴权（原请求未携带可用凭证）",
+  http_4xx: "源站返回 4xx（资源不存在 / 防盗链拒绝 / 时间戳过期）",
+  http_5xx: "源站返回 5xx（临时故障，稍后重试）",
+  timeout: "回源超时（15s 内源站无响应）",
+  too_large: "原图超过 8 MB 上限，未存服务端",
+  redirect_limit: "回源重定向超过 3 次",
+  network: "网络不可达（内网地址 / DNS / TLS 失败）",
+  storage_full: "服务端图片存储已满（500 MB），请先删除旧规则",
+};
+
+/** 生成大图规则失败时的提示文案（未知 code 回退服务端 message）。 */
+function mediaFetchErrorMessage(err) {
+  if (!err || err.error !== "media_unfetchable") return "";
+  const reason = MEDIA_FETCH_REASONS[err.code];
+  return reason
+    ? "原图未能回源，规则未创建：" + reason
+    : "原图未能回源，规则未创建：" + (err.message || err.code || "");
+}
+
 /** 请求流详情里的「Mock 此请求」：把这条真实请求/回包固化为一条规则（默认停用）。 */
 async function mockThisRequest(e) {
   if (!detail) return;
@@ -577,7 +659,9 @@ async function mockThisRequest(e) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => null);
-      showError((err && err.message) || "创建规则失败（HTTP " + res.status + "）");
+      // M15：大图回源失败给出可操作原因，而不是笼统 400。
+      showError(mediaFetchErrorMessage(err) ||
+        (err && err.message) || "创建规则失败（HTTP " + res.status + "）");
       return;
     }
     showError("已创建规则（默认停用，到上方打开开关即可 Mock）");

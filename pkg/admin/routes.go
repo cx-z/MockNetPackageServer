@@ -268,6 +268,10 @@ func (a *API) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules", a.requireAuth(a.handleCreateMockRule))
 	mux.HandleFunc("PUT "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.requireAuth(a.handleUpdateMockRule))
 	mux.HandleFunc("DELETE "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}", a.requireAuth(a.handleDeleteMockRule))
+	// M15：大图规则字节。OPEN like the SDK snapshot pull — the SDK fetches this
+	// with (app, did, ruleId) and no Web Bearer token; the handler scopes the
+	// rule to the device and 404s anything else.
+	mux.HandleFunc("GET "+captureAPIPrefix+"/devices/{app}/{did}/mock-rules/{ruleId}/media", a.handleGetMockRuleMedia)
 
 	// Push mock rules: Web CRUD/toggle + SDK incremental snapshot
 	// pull。与 HTTP mock-rules 并列的独立资源（独立模型/独立版本号）。

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -143,5 +144,31 @@ func TestAuthMockNetPackNoSlashExempt(t *testing.T) {
 	// 带尾斜杠目录），此处只锁死「不被 api-key 拦截」这一不变量，不绑定 301/200。
 	if rec.Code == http.StatusUnauthorized {
 		t.Fatalf("LAN GET /mocknetpack (no slash) = 401 missing_api_key, want exempt; body=%s", rec.Body.String())
+	}
+}
+
+// TestMockNetPackWebCSP_AllowsRemoteImages guards the M15 policy: the big-image
+// card loads the captured original URL into an <img> on demand, so img-src must
+// allow http/https (media-src was already open for video cards). style-src stays
+// 'unsafe-inline' (no change), and default-src remains 'self'.
+func TestMockNetPackWebCSP_AllowsRemoteImages(t *testing.T) {
+	webDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(webDir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	api := NewAPI(0, WithDataDir(t.TempDir()), WithAPIKeyDisabled(), WithWebDir(webDir))
+	ts := httptest.NewServer(api.httpServer.Handler)
+	defer ts.Close()
+
+	res, err := http.Get(ts.URL + "/mocknetpack/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	csp := res.Header.Get("Content-Security-Policy")
+	for _, want := range []string{"img-src 'self' data: http: https:", "media-src *", "default-src 'self'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP missing %q; got %q", want, csp)
+		}
 	}
 }

@@ -212,6 +212,18 @@ func queryInt(r *http.Request, key string, def int) (int, error) {
 
 // writeCaptureError maps capture/store errors to contract error responses.
 func writeCaptureError(w http.ResponseWriter, err error) {
+	// M15：大图回源失败 → 400 media_unfetchable + 稳定原因码（url_empty /
+	// missing_auth / http_4xx / http_5xx / timeout / too_large /
+	// redirect_limit / network / storage_full）。规则不会落库。
+	var mfe *store.MediaFetchError
+	if errors.As(err, &mfe) {
+		writeJSON(w, http.StatusBadRequest, mediaFetchErrorResponse{
+			Error:   "media_unfetchable",
+			Message: mfe.Error(),
+			Code:    mfe.Code,
+		})
+		return
+	}
 	switch {
 	case errors.Is(err, store.ErrDeviceNotRegistered):
 		writeError(w, http.StatusNotFound, "device_not_registered", "Device is not registered")

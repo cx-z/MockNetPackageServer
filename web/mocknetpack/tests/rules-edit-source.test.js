@@ -56,6 +56,10 @@ ctx.renderRuleDetail = () => {};
 ctx.detail = { app: "com.example.app", did: "dev-1" };
 let lastError = null;
 ctx.showError = (m) => { lastError = m; };
+// 破坏性操作的二次确认：默认放行，用例按需改 confirmResult。
+let confirmCalls = 0;
+let confirmResult = true;
+ctx.confirm = () => { confirmCalls++; return confirmResult; };
 
 let putCall = null;
 ctx.apiFetch = async (url, opts) => {
@@ -260,6 +264,56 @@ function binaryRule(over) {
     check("W10 文本规则回退：body 回滚为解码 JSON 原文", body.response.body === '{"orig":1}', JSON.stringify(body.response));
     check("W10 文本规则回退：不携带 bodyBase64", !("bodyBase64" in body.response), JSON.stringify(body.response));
   }
+
+  // ---- 11) M15 media 规则：改备注/延迟时必须把 media 原样带回 PUT ----
+  // 服务端 PUT 只在 response.media 缺失时清 Media 并删 blob；前端漏传一次就把
+  // 大图规则静默降级成「200 空体」。
+  const mediaRef = { sha256: "sha-media-1", size: 1094829, contentType: "image/jpeg" };
+  r = {
+    id: "r-media", method: "GET", path: "/img/big", enabled: true, note: "big",
+    response: { statusCode: 200, headers: { "Content-Type": "image/jpeg" }, body: "", media: mediaRef },
+    source: null,
+  };
+  detailBox.innerHTML = "";
+  // 表单里的回包体原文即「基线」，先摆成打开时的值，再进表单。
+  values.editStatusCode = "200";
+  values.editHeaders = "Content-Type: image/jpeg";
+  values.editNote = "只改备注和延迟";
+  values.editBody = "";
+  ctx.openEditRuleForm(r);
+  html = detailBox.innerHTML;
+  check("W11 media 规则渲染保留原图提示", html.includes("本条规则的回包是服务端存储的原图"), html.slice(0, 600));
+  putCall = null;
+  await ctx.saveRuleEdit(r);
+  check("W11 未改回包体时 PUT 仍带 media", !!putCall &&
+    JSON.parse(putCall.opts.body).response.media &&
+    JSON.parse(putCall.opts.body).response.media.sha256 === "sha-media-1",
+    putCall ? putCall.opts.body : "no PUT");
+
+  // ---- 12) media 规则：改过回包体 → 先确认，确认后 PUT 丢弃 media ----
+  // 反向用例：判断写反（未改就丢 / 改过还留)会让这条或 W11 失败。
+  detailBox.innerHTML = "";
+  values.editBody = "";
+  ctx.openEditRuleForm(r);
+  values.editBody = '{"replace":1}';
+  confirmCalls = 0;
+  confirmResult = true;
+  putCall = null;
+  await ctx.saveRuleEdit(r);
+  check("W12 改回包体前先二次确认", confirmCalls === 1, "confirmCalls=" + confirmCalls);
+  check("W12 确认后 PUT 不再携带 media", !!putCall &&
+    !("media" in JSON.parse(putCall.opts.body).response), putCall ? putCall.opts.body : "no PUT");
+
+  // ---- 13) 取消确认 → 整次保存不发生，media 规则保持原样 ----
+  detailBox.innerHTML = "";
+  ctx.openEditRuleForm(r);
+  values.editBody = '{"again":1}';
+  confirmCalls = 0;
+  confirmResult = false;
+  putCall = null;
+  await ctx.saveRuleEdit(r);
+  check("W13 取消确认时不发 PUT", confirmCalls === 1 && putCall === null,
+    "confirmCalls=" + confirmCalls + " put=" + JSON.stringify(putCall));
 
   if (failures) {
     console.error("\n共 " + failures + " 项失败");

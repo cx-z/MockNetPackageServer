@@ -209,6 +209,9 @@ func NewAPI(port int, opts ...Option) *API {
 	api.captureManager.SetTrafficStore(dataStore.Traffic())
 	//  长连接日志独立存档（mockd-data/longconn/<sid>.json）。
 	api.captureManager.SetLongConnStore(dataStore.LongConn())
+	// M15 大图字节治理：规则二进制体按规则分文件存 mockd-data/media/<ruleId>.bin，
+	// 规则行只带 MediaRef；SDK 通过 GET .../mock-rules/{ruleId}/media 按需拉取。
+	api.captureManager.SetMediaStore(store.NewMediaStore(filepath.Join(dataStore.DataDir(), "media")))
 	//  push mock 规则独立存储（独立版本号，与 HTTP MockRule 互不干扰）。
 	api.captureManager.SetPushMockRules(dataStore.PushMockRules())
 	//  模拟推送形态: pending 指令队列独立存储（随 SDK ack 消费）。
@@ -535,6 +538,10 @@ func (a *API) Start() error {
 	a.captureManager.RestoreTraffic(a.ctx)
 	//  长连接日志独立存档同样跨重启恢复（48h 窗口语义同 traffic）。
 	a.captureManager.RestoreLongConn(a.ctx)
+
+	// M15：清理没有规则指向的 media blob（Put 成功但规则落库失败的崩溃残留、
+	// 停机期间被删规则的孤儿文件），避免占满目录配额。
+	a.captureManager.SweepOrphanMedia(a.ctx)
 
 	// Start the MockNetPack capture health check (device heartbeat timeout +
 	// viewer lease garbage collection)

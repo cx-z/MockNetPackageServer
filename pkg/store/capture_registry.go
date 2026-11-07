@@ -182,6 +182,12 @@ type CaptureManager struct {
 	// session, 跨重启保留). nil = memory-only behavior (existing tests).
 	longconnStore LongConnStore
 
+	// mediaStore persists mock-rule binary bodies (M15 大图治理). nil = media
+	// replay unavailable: creating a rule from a big-image capture fails loudly
+	// instead of silently writing a byte-less rule. Wired by the API server
+	// (store.NewMediaStore(<dataDir>/media)).
+	mediaStore *MediaStore
+
 	// retainedMu guards retainedTraffic: the traffic of ended sessions, kept
 	// for RetainedTrafficTTL so records the user saw on the page can still be
 	// shared after disconnect.  list semantics are unchanged — ended sessions
@@ -273,6 +279,12 @@ func (m *CaptureManager) SetTrafficStore(ts TrafficStore) {
 // long-connection logs. Nil (default) keeps the memory-only behavior.
 func (m *CaptureManager) SetLongConnStore(ls LongConnStore) {
 	m.longconnStore = ls
+}
+
+// SetMediaStore wires the blob store backing mock-rule media bodies (M15).
+// Called once from the API server; nil keeps media replay disabled.
+func (m *CaptureManager) SetMediaStore(ms *MediaStore) {
+	m.mediaStore = ms
 }
 
 // Config returns the runtime capture configuration.

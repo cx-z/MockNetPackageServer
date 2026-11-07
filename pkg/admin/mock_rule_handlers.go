@@ -15,6 +15,16 @@ import (
 	"github.com/getmockd/mockd/pkg/store"
 )
 
+// mediaFetchErrorResponse is the 400 body when a big-image rule could not
+// obtain the original bytes (M15). Code is a stable reason badge
+// (url_empty / missing_auth / http_4xx / http_5xx / timeout / too_large /
+// redirect_limit / network / storage_full) the Web dialog can explain.
+type mediaFetchErrorResponse struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
+	Code    string `json:"code,omitempty"`
+}
+
 // MockRuleListResponse is the contract MockRuleList: the device's rule set plus
 // the current monotonic version. Conflicts is only populated for the Web full
 // list (omitted on the SDK incremental pull).
@@ -287,4 +297,30 @@ func writeInvalidStatusCode(w http.ResponseWriter, code int) {
 // garbage like 99 or 700 could be stored and would never match a real response.
 func validStatusCode(code int) bool {
 	return code >= 100 && code <= 599
+}
+
+// handleGetMockRuleMedia handles
+// GET /api/v1/devices/{app}/{did}/mock-rules/{ruleId}/media (M15 方案 D 阶段二).
+//
+// The SDK fetches a media rule's bytes here instead of carrying them in the rule
+// snapshot. Same auth posture as the SDK snapshot pull: open route, identity is
+// (app, did), and the store scopes the rule to the device — a rule of another
+// device, a rule without media, or a blob that no longer hashes to its ref all
+// resolve to 404 (never a partial/foreign image).
+func (a *API) handleGetMockRuleMedia(w http.ResponseWriter, r *http.Request) {
+	data, ref, err := a.captureManager.GetRuleMedia(r.Context(), r.PathValue("app"), r.PathValue("did"), r.PathValue("ruleId"))
+	if err != nil {
+		writeCaptureError(w, err)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", ref.ContentType)
+	h.Set("Content-Length", strconv.Itoa(len(data)))
+	if ref.SHA256 != "" {
+		h.Set("ETag", `"`+ref.SHA256+`"`)
+	}
+	// SDK may cache; the ETag lets it revalidate instead of re-downloading.
+	h.Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }

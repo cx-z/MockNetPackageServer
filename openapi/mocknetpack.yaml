@@ -954,6 +954,12 @@ paths:
         创建时默认 enabled=false；同一接口（Method+Path）允许多条保存，但运行时仅一条 effective。
         note 创建时可空（null），首次编辑保存时再必填。
         "从真实回包一键创建"：Web 把整条已抓包 TrafficEntry 作为 source 快照传入（原始请求 + 真实回包 b1），服务端随规则持久化（临时流量会话结束即清空，快照保留）；手动创建可省略 source。
+        来源流量 responseStaticKind=video 时，服务端把回包整体替换为 302 → 原 URL。
+        来源流量 responseStaticKind=image 且设备 SDK 版本 ≥ 1.1.1（iOS 1.1.1 / Android 1.2.0）时，服务端按原
+        请求头回源取一次原始字节，存成 blob，回包置为 response.media（body 为空）；
+        回源失败返回 400 media_unfetchable + code（url_empty / missing_auth /
+        http_4xx / http_5xx / timeout / too_large / redirect_limit / network /
+        storage_full），规则不落库。
       operationId: createMockRule
       parameters:
         - $ref: '#/components/parameters/AppPath'
@@ -1045,6 +1051,50 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /devices/{app}/{did}/mock-rules/{ruleId}/media:
+    get:
+      tags: [mock-rules]
+      summary: 拉取规则二进制回包（M15 大图字节治理）
+      description: |
+        规则 response.media 存在时，SDK 用本接口取原始字节回包，而不是把大图
+        塞进规则快照。与 SDK 增量拉取同策略：路由开放（携带 app/did/ruleId，
+        无需 Web Bearer），服务端按 (app, did) 隔离——规则不属于该设备、规则
+        没有 media、blob 缺失或哈希与 media.sha256 不符，一律 404（不返回他人
+        或残缺的图片）。
+        响应为原始二进制，Content-Type 取回源响应头；回源未给类型时缺省
+        application/octet-stream。响应带 ETag=sha256 与 Cache-Control
+        private max-age=300 供 SDK 缓存/重验。
+      operationId: getMockRuleMedia
+      parameters:
+        - $ref: '#/components/parameters/AppPath'
+        - $ref: '#/components/parameters/DidPath'
+        - $ref: '#/components/parameters/RuleIdPath'
+      responses:
+        '200':
+          description: 规则二进制回包
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: blob 的 SHA-256（带引号），与 response.media.sha256 一致
+            Cache-Control:
+              schema:
+                type: string
+              description: private, max-age=300
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: 规则不存在 / 不属于该设备 / 无 media / blob 缺失或校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   # ==========================================================================
   # 5. Web 查询：设备
   # ==========================================================================
@@ -1071,8 +1121,6 @@ paths:
                       $ref: '#/components/schemas/Device'
                   total:
                     type: integer
-
-  /devices:
     post:
       tags: [devices]
       summary: 手动注册设备（Web）
@@ -1987,6 +2035,14 @@ components:
             请求体经 App 注入的协议解码器解出的可读 UTF-8 文本。
             仅作 Web 展示；存在时 Web 优先展示它，无则回退 requestBody 的 "[binary N bytes]" 占位。
             不参与回放；解码失败/未注入解码器时缺省。
+        requestStaticKind:
+          type: string
+          enum: ["", "image"]
+          description: |
+            请求体静态分类（M15 方案 D 阶段二：图片预览与大图字节治理）。
+            仅在本次上传成功（2xx）且请求体为大于 1 MiB 的 image/* 时置 image：
+            服务端丢弃已上传的截断字节、RequestStaticBody 写占位，Web 卡片按原 URL 预览。
+            上传失败（非 2xx）时保留截断样本以便排查，该字段保持空串。
         statusCode:
           type: integer
           nullable: true
@@ -2010,13 +2066,16 @@ components:
           description: 二进制响应体的 base64（无法 UTF-8 解码时填充），供"Mock 此请求"回放原始字节；请求失败时为空
         responseStaticKind:
           type: string
-          enum: ["", "video"]
+          enum: ["", "video", "image"]
           description: |
-            静态资源分类（ 方案 D：视频响应预览与大Body存储治理）。
+            静态资源分类（方案 D：视频响应预览与大Body存储治理 + M15 大图治理）。
             空串=业务 API（字节按 UTF-8/base64 原路径保存）；
             video=命中 video/* 白名单，服务端 ingestion 时丢弃 base64、写占位
-            ResponseBody，仅保留元信息 + 原 URL（entry.url）供浏览器/302 回放。
-            后续 audio/pdf/image 分类在此扩展，Web 卡片分支按该值分发。
+            ResponseBody，仅保留元信息 + 原 URL（entry.url）供浏览器/302 回放；
+            image=image/* 且响应字节 > 1 MiB（SDK 抓包上限），同样丢弃字节、只留
+            占位 + 原 URL；Web 走"点击加载原图"卡片，"Mock 此请求"建规则时由服务端
+            回源取原始字节存 blob（见 MockResponse.media）。
+            后续 audio/pdf 分类在此扩展，Web 卡片分支按该值分发。
         responseBodyDecoded:
           type: string
           description: |
@@ -2518,6 +2577,31 @@ components:
           maximum: 30000
           default: 0
           description: Mock 回包延迟毫秒数。SDK 命中规则后等待该时长再回包。0=立即回包（默认）。老 SDK 不识别此字段时忽略。
+        media:
+          allOf:
+            - $ref: '#/components/schemas/MediaRef'
+          description: |
+            服务端存储的二进制回包（M15 方案 D 阶段二）。存在时 SDK 必须调用
+            GET /devices/{app}/{did}/mock-rules/{ruleId}/media 取原始字节回包，
+            body/bodyBase64 为空。仅当设备 SDK 版本 ≥ 支持阈值（iOS 1.1.1 / Android 1.2.0）
+            时，"Mock 此请求"才会生成 media 规则；低版本设备保持原有回包。
+            老 SDK 不识别该字段时忽略（回包为空即 fail-open 到本地行为）。
+
+    MediaRef:
+      type: object
+      required: [sha256, size]
+      description: 服务端 blob 引用（M15）；SDK 以其 sha256 作缓存 key。
+      properties:
+        sha256:
+          type: string
+          description: blob 内容的 SHA-256（hex）；SDK 校验/缓存键
+        size:
+          type: integer
+          format: int64
+          description: 字节数
+        contentType:
+          type: string
+          description: 回放用的 Content-Type（回源响应头优先）
 
     MockRule:
       type: object

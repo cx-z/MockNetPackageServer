@@ -94,10 +94,20 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 		// 丢弃 base64，仅保留元信息 + 原 URL（浏览器/302 回放用）。SDK 端仍
 		// 会完整上报字节（现有协议不改），服务端在此判定后直接不落盘。
 		ct := capture.ResponseContentType(e.ResponseHeaders)
-		if kind := capture.ClassifyResponse(ct); kind != capture.StaticNone {
+		if kind := capture.ClassifyResponseWithSize(ct, staticResponseSize(e)); kind != capture.StaticNone {
 			c.ResponseStaticKind = kind
 			c.ResponseBody = capture.StaticPlaceholder(kind, ct, staticResponseSize(e))
 			c.ResponseBodyBase64 = ""
+		}
+		// M15：大图上传请求体同样不落盘（SDK 只会上传前 1 MiB，保留的必然是
+		// 截断字节）。仅当本次上传成功（2xx）才分流——上传失败的请求保留截断
+		// 样本，让 Web 仍能看到当时实际发出的内容（截断徽标走 E3 展示）。
+		if reqCT := capture.RequestContentType(e.RequestHeaders); isSuccessfulUpload(e) {
+			if kind := capture.ClassifyResponseWithSize(reqCT, staticRequestBodySize(e)); kind == capture.StaticImage {
+				c.RequestStaticKind = kind
+				c.RequestBody = capture.StaticPlaceholder(kind, reqCT, staticRequestBodySize(e))
+				c.RequestBodyBase64 = ""
+			}
 		}
 		stored = append(stored, &c)
 	}
@@ -224,6 +234,32 @@ func staticResponseSize(e *capture.TrafficEntry) int64 {
 		}
 	}
 	return 0
+}
+
+// staticRequestBodySize is staticResponseSize for the upload request side: the
+// "[binary N bytes]" placeholder carries the SDK's full size, Content-Length is
+// the fallback. 0 means "unknown" (keep the legacy inline path).
+func staticRequestBodySize(e *capture.TrafficEntry) int64 {
+	if m := binarySizeRE.FindStringSubmatch(e.RequestBody); m != nil {
+		if n, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+			return n
+		}
+	}
+	for k, vs := range e.RequestHeaders {
+		if strings.EqualFold(k, "Content-Length") && len(vs) > 0 {
+			if n, err := strconv.ParseInt(vs[0], 10, 64); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// isSuccessfulUpload reports whether the entry carries a 2xx HTTP response.
+// Upload-request bodies are only dropped for successful requests (M15): a
+// failed upload keeps its truncated sample for troubleshooting.
+func isSuccessfulUpload(e *capture.TrafficEntry) bool {
+	return e.StatusCode >= 200 && e.StatusCode < 300
 }
 
 // indexTraffic records the runtime location of each entry in the ID index

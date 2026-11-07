@@ -32,9 +32,11 @@ func (a *API) registerMockNetPackWeb(mux *http.ServeMux) {
 	// （前端细节样式内联），font 放行 data:（图标字体），其余保持同源。
 	mux.Handle("GET /mocknetpack/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 方案 D：media-src * —— 视频卡片直接用抓到的原 URL 回放（任意 CDN /
-		// 内网地址），浏览器只拉首帧元数据，不转发字节；img 仍限 self+data:。
+		// 内网地址），浏览器只拉首帧元数据，不转发字节。
+		// M15：img-src 追加 http:/https: —— 大图卡片按需把原 URL 塞进 <img>
+		// （用户点击「加载原图」后才请求），data: 内联预览保持不变。
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src *")
+			"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http: https:; font-src 'self' data:; media-src *")
 		fileServer.ServeHTTP(w, r)
 	}))
 }

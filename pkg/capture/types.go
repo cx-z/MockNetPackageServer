@@ -220,6 +220,13 @@ type TrafficEntry struct {
 	// never used for replay. Present when the request body is binary protocol
 	// (e.g. xcp AES+gzip) and the decoder succeeded.
 	RequestBodyDecoded string `json:"requestBodyDecoded,omitempty"`
+	// RequestStaticKind marks a large upload request body (M15): an image/*
+	// request whose body exceeds the SDK's 1 MiB capture cap. Such a body can
+	// only arrive truncated, so it is NOT stored — RequestBody holds a
+	// placeholder, RequestBodyBase64 is empty, and the original URL is the only
+	// replay pointer. Only set when the upload succeeded (2xx): a failed upload
+	// keeps the truncated inline sample so the Web can still show what was sent.
+	RequestStaticKind StaticKind `json:"requestStaticKind,omitempty"`
 	// StatusCode is the response status code (zero when the request failed).
 	StatusCode int `json:"statusCode,omitempty"`
 	// ResponseHeaders are the response headers (multi-value).
@@ -308,6 +315,20 @@ type MockResponse struct {
 	// It lives inside response (not on the rule root) so old rules without it
 	// default to 0 and behaviour is unchanged.
 	DelayMs int `json:"delayMs,omitempty"`
+	// Media points at a server-stored binary body (M15): when present the SDK
+	// must fetch GET /devices/{app}/{did}/mock-rules/{ruleId}/media instead of
+	// replaying Body/BodyBase64, which stay empty for these rules. Nil = no
+	// media, the legacy body path applies.
+	Media *MediaRef `json:"media,omitempty"`
+}
+
+// MediaRef identifies the server-side blob backing a MockResponse (M15).
+// SHA256 is the blob's content hash, used to detect a rewritten rule blob and
+// to key the SDK-side LRU cache (an edited rule gets a new hash → no stale hit).
+type MediaRef struct {
+	SHA256      string `json:"sha256"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"contentType,omitempty"`
 }
 
 // MockRuleSource is the persistent snapshot of the real request a rule was
