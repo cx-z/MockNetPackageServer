@@ -955,7 +955,7 @@ paths:
         note 创建时可空（null），首次编辑保存时再必填。
         "从真实回包一键创建"：Web 把整条已抓包 TrafficEntry 作为 source 快照传入（原始请求 + 真实回包 b1），服务端随规则持久化（临时流量会话结束即清空，快照保留）；手动创建可省略 source。
         来源流量 responseStaticKind=video 时，服务端把回包整体替换为 302 → 原 URL。
-        来源流量 responseStaticKind=image 且设备 SDK 版本 ≥ 1.1.1（iOS / Android 同为 1.1.1）时，服务端按原
+        来源流量 responseStaticKind=image 且设备 SDK 版本 ≥ 1.1.1（iOS 1.1.1；Android 尚未纳入版本，仍报 1.0.x 走 302 回落）时，服务端按原
         请求头回源取一次原始字节，存成 blob，回包置为 response.media（body 为空）；
         回源失败返回 400 media_unfetchable + code（url_empty / missing_auth /
         http_4xx / http_5xx / timeout / too_large / redirect_limit / network /
@@ -2583,7 +2583,7 @@ components:
           description: |
             服务端存储的二进制回包（M15 方案 D 阶段二）。存在时 SDK 必须调用
             GET /devices/{app}/{did}/mock-rules/{ruleId}/media 取原始字节回包，
-            body/bodyBase64 为空。仅当设备 SDK 版本 ≥ 支持阈值（iOS / Android 同为 1.1.1）
+            body/bodyBase64 为空。仅当设备 SDK 版本 ≥ 支持阈值（iOS 1.1.1；Android 尚未纳入版本）
             时，"Mock 此请求"才会生成 media 规则；低版本设备保持原有回包。
             老 SDK 不识别该字段时忽略（回包为空即 fail-open 到本地行为）。
 

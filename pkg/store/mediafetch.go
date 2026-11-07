@@ -214,7 +214,8 @@ func verifyMediaHash(data []byte, ref *capture.MediaRef) bool {
 // created from a big-image capture only become media rules for devices at or
 // above it; older SDKs keep the legacy byte-less rule.
 //
-// 首发版本：iOS 与 Android 同为 1.1.1（1.0.2 / 1.1.0 的补丁版，随 M15 一起发）。
+// 首发版本：iOS 1.1.1（1.1.0 的补丁版）。Android 侧 media 代码已入库但尚未纳入版本，
+// 运行时常量仍报 1.0.0，会被判为低版本走 302 回落；版本决策待后续任务确定。
 const MockMediaMinSDKVersion = "1.1.1"
 
 // supportsMockMedia reports whether an SDK version can replay a media rule.
