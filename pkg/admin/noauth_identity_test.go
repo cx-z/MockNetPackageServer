@@ -101,10 +101,11 @@ func TestAuthWebRuleListStillRequiresToken(t *testing.T) {
 	require.Equal(t, http.StatusOK, res.StatusCode)
 }
 
-// TestNoAuthInvalidTokenStillAnonymous（B 审缺口）：--no-auth 下带畸形或被
-// 篡改的 Bearer token 不得 401、不得 panic、不得注入错误身份——authenticate
-// 解析失败即回退匿名放行（caller=nil），创建的规则 owner 仍为空。过期 token
-// 与篡改 token 同属签名校验失败路径，这里覆盖两类代表。
+// TestNoAuthInvalidTokenStillAnonymous（B 审缺口）：--no-auth 下带无法识别的
+// Bearer token 不得 401、不得 panic、不得注入错误身份——authenticate 查
+// session 表拿到 ErrNotFound 即回退匿名放行（caller=nil），创建的规则 owner
+// 仍为空。这里覆盖两类代表：完全不合法的乱串，以及与真实 token 共享 63 个
+// 字符前缀、仅末位不同的近似串。
 func TestNoAuthInvalidTokenStillAnonymous(t *testing.T) {
 	ts := newAuthTestAPI(t) // --no-auth
 
@@ -116,21 +117,29 @@ func TestNoAuthInvalidTokenStillAnonymous(t *testing.T) {
 
 	base := ts.URL + "/api/v1/devices/com.example.integrating/noauth-bad/mock-rules"
 
-	// 畸形 token（非 JWT 结构）→ 匿名放行 201，owner 空。
+	// 畸形 token（不是合法 hex 串，也不是 API key）→ 匿名放行 201，owner 空。
 	var created capture.MockRuleView
-	res, body := doAuthJSON(t, http.MethodPost, base, "not.a.jwt", ruleBody("POST", "/api/malformed", false))
+	res, body := doAuthJSON(t, http.MethodPost, base, "not-a-session-token", ruleBody("POST", "/api/malformed", false))
 	require.Equal(t, http.StatusCreated, res.StatusCode)
 	require.NoError(t, json.Unmarshal(body, &created))
 	require.Empty(t, created.Owner)
 	require.Empty(t, created.UpdatedBy)
 
-	// 篡改签名的真实 token（末尾翻转一个字符）→ 同样匿名放行 201，owner 空。
-	flip := func(s string) string {
-		c := []rune(s)
-		c[len(c)-1] = '0'
-		return string(c)
+	// 篡改真实 token（末位换成另一个 hex 字符）→ 同样匿名放行 201，owner 空。
+	// 会话 token 是 32 字节随机数的 hex 编码（64 个字符、无分隔符），服务端按字符串
+	// 精确相等查 session，不存在签名校验；所以「篡改」必须保证字符串本身发生变化，
+	// 不能把某一位写死成固定字面值——末位写死 '0' 时若原值本就是 '0' 便是空操作，
+	// token 依然有效、身份照常注入（旧写法因此在 CI 上约 1/16 概率误报）。
+	require.Len(t, valid, 64, "session token shape changed; revisit this tamper case")
+	last := valid[len(valid)-1:]
+	repl := "0"
+	if last == "0" {
+		repl = "1"
 	}
-	res, body = doAuthJSON(t, http.MethodPost, base, flip(valid), ruleBody("POST", "/api/tampered", false))
+	tampered := valid[:len(valid)-1] + repl
+	require.NotEqual(t, valid, tampered, "tampered token must differ from the original")
+
+	res, body = doAuthJSON(t, http.MethodPost, base, tampered, ruleBody("POST", "/api/tampered", false))
 	require.Equal(t, http.StatusCreated, res.StatusCode)
 	require.NoError(t, json.Unmarshal(body, &created))
 	require.Empty(t, created.Owner)
