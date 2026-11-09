@@ -124,7 +124,7 @@ func FetchMedia(ctx context.Context, rawURL string, originHeaders map[string][]s
 	if err != nil {
 		return nil, "", classifyMediaFetchError(ctx, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		code := MediaReasonHTTP4xx

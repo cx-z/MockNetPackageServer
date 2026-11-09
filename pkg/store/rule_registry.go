@@ -89,60 +89,11 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 		return nil, 0, ErrNoteRequired
 	}
 
-	// 方案 D：从视频流量一键创建（"Mock 此请求"带 OriginTrafficID）时，初始
-	// 回包为 302 → 原 URL（未编辑即跳转、不存字节）。规则一旦被编辑（PUT 置
-	// Edited=true）就脱离该快路径，回包由用户内容决定。非视频流量仍记录
-	// OriginTrafficID 作来源溯源，但回包原样保留。
-	//
-	// M15：大图流量（responseStaticKind=image，字节已在入库时丢弃）走回源：
-	// 服务端按原请求头代表抓包设备取一次原图存成 blob，规则只带 MediaRef，
-	// SDK 收到后按 ref 拉 blob。设备 SDK 版本不支持 media 时回落 302 → 原 URL
-	// （与视频快路径同结构），绝不把「只有占位文本」的规则当成可用规则下发。
-	var (
-		videoRedirect *capture.MockResponse
-		mediaPlan     *mediaBuildPlan
-	)
-	if in.OriginTrafficID != "" {
-		// 跨设备权限隔离：先校验 OriginTrafficID 属于当前 (app, did)，
-		// 防止跨设备引用其他设备的视频 URL 作为 302 Location。
-		originApp, originDid, err := m.GetTrafficWithOwner(ctx, in.OriginTrafficID)
-		if err != nil {
-			return nil, 0, err
-		}
-		if originApp != app || originDid != did {
-			return nil, 0, fmt.Errorf("origin traffic %s does not belong to device %s/%s", in.OriginTrafficID, app, did)
-		}
-		origin, err := m.GetTraffic(ctx, in.OriginTrafficID)
-		if err != nil {
-			return nil, 0, err
-		}
-		if origin.ResponseStaticKind == capture.StaticVideo && origin.URL != "" {
-			videoRedirect = &capture.MockResponse{
-				StatusCode: http.StatusFound,
-				Headers:    map[string]string{"Location": origin.URL},
-			}
-		} else if origin.ResponseStaticKind == capture.StaticImage {
-			dev, err := m.devices.Get(ctx, app, did)
-			if err != nil {
-				return nil, 0, err
-			}
-			if supportsMockMedia(dev.SDKVersion) {
-				mediaPlan = &mediaBuildPlan{
-					url:            origin.URL,
-					contentType:    capture.ResponseContentType(origin.ResponseHeaders),
-					statusCode:     mediaReplayStatusCode(origin.StatusCode),
-					requestHeaders: origin.RequestHeaders,
-				}
-			} else if origin.URL != "" {
-				// M15 老 SDK 回落（与视频快路径同结构）：旧版本没有 media 拉取能力，
-				// 规则字节又已丢弃，只能给 302 → 原 URL 让设备自己去源站取。源站对象
-				// 可能已过期，这是「至少能试一次」的降级，不是新字节来源。
-				videoRedirect = &capture.MockResponse{
-					StatusCode: http.StatusFound,
-					Headers:    map[string]string{"Location": origin.URL},
-				}
-			}
-		}
+	// 回包来源（视频 302 / 大图回源 media / 原样保留）由 planOriginResponse 决定，
+	// 其中包含 OriginTrafficID 的跨设备归属校验。
+	videoRedirect, mediaPlan, err := m.planOriginResponse(ctx, app, did, in.OriginTrafficID)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	// 回源取数在 Mutate 之前完成：网络等待绝不能占住存储锁（Mutate 内是同步
@@ -153,31 +104,11 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 		mediaRef  *capture.MediaRef
 	)
 	if mediaPlan != nil {
-		if m.mediaStore == nil {
-			return nil, 0, ErrMediaUnavailable
-		}
 		createdID = id.ULID()
-		data, contentType, err := FetchMedia(ctx, mediaPlan.url, mediaPlan.requestHeaders)
+		mediaRef, err = m.storeMediaBlob(ctx, createdID, mediaPlan)
 		if err != nil {
 			return nil, 0, err
 		}
-		// 回源请求头是抓包设备那份白名单，可能让 CDN 回 application/octet-stream
-		//（Accept 不含 image 时会发生），而抓包当时同一 URL 明确是 image/jpeg。
-		// 回放类型优先用抓包记录的类型，只在抓包也没有时接受回源的通用类型。
-		if (contentType == "" || contentType == "application/octet-stream") && mediaPlan.contentType != "" {
-			contentType = mediaPlan.contentType
-		}
-		ref, err := m.mediaStore.Put(createdID, data, contentType)
-		if err != nil {
-			if errors.Is(err, ErrMediaTooLarge) {
-				return nil, 0, &MediaFetchError{Code: MediaReasonTooLarge, Message: err.Error()}
-			}
-			if errors.Is(err, ErrMediaQuotaExceeded) {
-				return nil, 0, &MediaFetchError{Code: MediaReasonStorageFull, Message: err.Error()}
-			}
-			return nil, 0, err
-		}
-		mediaRef = ref
 	}
 
 	now := time.Now()
@@ -253,6 +184,97 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 			"app", app, "did", did, "rule", created.ID, "error", evalErr)
 	}
 	return &capture.MockRuleView{MockRule: created, Effective: in.Enabled}, version, nil
+}
+
+// planOriginResponse decides how a rule created from captured traffic replays
+// its body, before any store write or origin fetch.
+//
+// 方案 D：从视频流量一键创建（"Mock 此请求"带 OriginTrafficID）时，初始回包
+// 为 302 → 原 URL（未编辑即跳转、不存字节）。规则一旦被编辑（PUT 置
+// Edited=true）就脱离该快路径，回包由用户内容决定。非视频流量仍记录
+// OriginTrafficID 作来源溯源，但回包原样保留。
+//
+// M15：大图流量（responseStaticKind=image）返回回源计划，由调用方取一次原图
+// 存成 blob；设备 SDK 版本不支持 media 时回落 302 → 原 URL（与视频快路径同
+// 结构），绝不把「只有占位文本」的规则当成可用规则下发。
+func (m *CaptureManager) planOriginResponse(ctx context.Context, app, did, originTrafficID string) (*capture.MockResponse, *mediaBuildPlan, error) {
+	if originTrafficID == "" {
+		return nil, nil, nil
+	}
+	// 跨设备权限隔离：先校验 OriginTrafficID 属于当前 (app, did)，
+	// 防止跨设备引用其他设备的视频 URL 作为 302 Location。
+	originApp, originDid, err := m.GetTrafficWithOwner(ctx, originTrafficID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if originApp != app || originDid != did {
+		return nil, nil, fmt.Errorf("origin traffic %s does not belong to device %s/%s", originTrafficID, app, did)
+	}
+	origin, err := m.GetTraffic(ctx, originTrafficID)
+	if err != nil {
+		return nil, nil, err
+	}
+	switch {
+	case origin.ResponseStaticKind == capture.StaticVideo && origin.URL != "":
+		return &capture.MockResponse{
+			StatusCode: http.StatusFound,
+			Headers:    map[string]string{"Location": origin.URL},
+		}, nil, nil
+	case origin.ResponseStaticKind == capture.StaticImage:
+		dev, err := m.devices.Get(ctx, app, did)
+		if err != nil {
+			return nil, nil, err
+		}
+		if supportsMockMedia(dev.SDKVersion) {
+			return nil, &mediaBuildPlan{
+				url:            origin.URL,
+				contentType:    capture.ResponseContentType(origin.ResponseHeaders),
+				statusCode:     mediaReplayStatusCode(origin.StatusCode),
+				requestHeaders: origin.RequestHeaders,
+			}, nil
+		}
+		if origin.URL != "" {
+			// M15 老 SDK 回落（与视频快路径同结构）：旧版本没有 media 拉取能力，
+			// 规则字节又已丢弃，只能给 302 → 原 URL 让设备自己去源站取。源站对象
+			// 可能已过期，这是「至少能试一次」的降级，不是新字节来源。
+			return &capture.MockResponse{
+				StatusCode: http.StatusFound,
+				Headers:    map[string]string{"Location": origin.URL},
+			}, nil, nil
+		}
+	}
+	return nil, nil, nil
+}
+
+// storeMediaBlob fetches the origin bytes for plan and persists them as the
+// blob owned by createdID, returning the ref the rule row must carry. The fetch
+// runs outside the store lock; quota/size failures map to the stable fetch
+// reason codes the Web/MCP caller shows.
+func (m *CaptureManager) storeMediaBlob(ctx context.Context, createdID string, plan *mediaBuildPlan) (*capture.MediaRef, error) {
+	if m.mediaStore == nil {
+		return nil, ErrMediaUnavailable
+	}
+	data, contentType, err := FetchMedia(ctx, plan.url, plan.requestHeaders)
+	if err != nil {
+		return nil, err
+	}
+	// 回源请求头是抓包设备那份白名单，可能让 CDN 回 application/octet-stream
+	// （Accept 不含 image 时会发生），而抓包当时同一 URL 明确是 image/jpeg。
+	// 回放类型优先用抓包记录的类型，只在抓包也没有时接受回源的通用类型。
+	if (contentType == "" || contentType == "application/octet-stream") && plan.contentType != "" {
+		contentType = plan.contentType
+	}
+	ref, err := m.mediaStore.Put(createdID, data, contentType)
+	if err != nil {
+		if errors.Is(err, ErrMediaTooLarge) {
+			return nil, &MediaFetchError{Code: MediaReasonTooLarge, Message: err.Error()}
+		}
+		if errors.Is(err, ErrMediaQuotaExceeded) {
+			return nil, &MediaFetchError{Code: MediaReasonStorageFull, Message: err.Error()}
+		}
+		return nil, err
+	}
+	return ref, nil
 }
 
 // canManageOwner reports whether caller may manage a rule owned by owner (/).

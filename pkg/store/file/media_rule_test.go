@@ -285,6 +285,44 @@ func TestMockRule_CreateFromBigImage_FetchesBlob(t *testing.T) {
 	}
 }
 
+func TestMockRule_CreateFromBigImage_NoMediaStoreReturnsUnavailable(t *testing.T) {
+	m, _ := newCaptureManager(t, 0) // 故意不 SetMediaStore：媒体能力未配置
+	ctx := context.Background()
+	s := newAppSessionWithSDK(t, m, "1.1.1")
+
+	now := time.Now()
+	// 回源地址不可达也无所谓：没有媒体存储时必须在 fetch 之前就拒绝，
+	// 而不是先花一次网络请求再失败。
+	if _, err := m.UploadTraffic(ctx, "app", "d1", s.ID,
+		[]*capture.TrafficEntry{imageWithAuth("http://origin.invalid/big.jpg", 2_000_000, now)}); err != nil {
+		t.Fatalf("UploadTraffic(image) = %v", err)
+	}
+	list, _, err := m.ListSessionTraffic(ctx, s.ID, 0, 0, store.TrafficFilter{})
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListSessionTraffic() = %d entries, %v", len(list), err)
+	}
+
+	_, _, err = m.CreateMockRule(ctx, "app", "d1", &capture.MockRuleInput{
+		Method:          "GET",
+		Path:            "/big.jpg",
+		Response:        capture.MockResponse{StatusCode: 200, Headers: map[string]string{"Content-Type": "image/jpeg"}},
+		Enabled:         true,
+		Source:          &capture.MockRuleSource{Method: "GET", Path: "/big.jpg"},
+		OriginTrafficID: list[0].ID,
+	}, nil)
+	if !errors.Is(err, store.ErrMediaUnavailable) {
+		t.Fatalf("CreateMockRule(no media store) = %v, want ErrMediaUnavailable", err)
+	}
+
+	rules, _, _, err := m.ListMockRules(ctx, "app", "d1")
+	if err != nil {
+		t.Fatalf("ListMockRules() = %v", err)
+	}
+	if len(rules) != 0 {
+		t.Fatalf("rules = %d after rejected create, want 0 (不能落一条回放不出字节的规则)", len(rules))
+	}
+}
+
 func TestMockRule_CreateFromBigImage_PrefersCapturedContentType(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)
 	ms := store.NewMediaStore(filepath.Join(t.TempDir(), "media"))

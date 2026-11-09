@@ -322,5 +322,5 @@ func (a *API) handleGetMockRuleMedia(w http.ResponseWriter, r *http.Request) {
 	// SDK may cache; the ETag lets it revalidate instead of re-downloading.
 	h.Set("Cache-Control", "private, max-age=300")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	_, _ = w.Write(data) //nolint:gosec // G705 — media blob bytes replayed with the ref's Content-Type; SecurityHeadersMiddleware sets nosniff, and this handler never renders them as HTML
 }

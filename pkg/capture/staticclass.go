@@ -36,7 +36,9 @@ const (
 // Android MockNetPack.BODY_LIMIT_BYTES = 1 MiB). The SDK never uploads more
 // than that, so a body larger than this limit could only have arrived
 // truncated — keeping a "partial" inline image would be worse than dropping it.
-// Guarded by TestImageInlineLimit_MatchesSDKBodyLimit.
+// The three repos are checked out independently, so the equality is pinned on
+// each side against the same literal (contract text lives in
+// openapi/mocknetpack.yaml); this side by TestImageInlineLimit_MatchesContract.
 const ImageInlineLimit int64 = 1 << 20
 
 // staticClassTable is the Content-Type whitelist for the always-static kinds

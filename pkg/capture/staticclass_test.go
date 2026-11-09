@@ -1,11 +1,6 @@
 package capture
 
 import (
-	"os"
-	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -104,36 +99,21 @@ func TestClassifyResponseWithSize(t *testing.T) {
 	}
 }
 
-// E1: 门限必须与 SDK 抓包上限一致——SDK 永不上传超过 1 MiB 的 body，
-// 因此“服务端见到 >1 MiB”只能是被截断的样本，必须分流而不是内联。
-// 直接解析 SDK 源文件，避免两端常量化后静默漂移。
-func TestImageInlineLimit_MatchesSDKBodyLimit(t *testing.T) {
-	const repoRoot = "../../../"
-	cases := []struct {
-		path string
-		re   string
-	}{
-		{"iOS/MockNetPackKit/Sources/MockNetPackKit/MockNetPackURLProtocol.swift",
-			`(?m)^\s*static let bodyLimit\s*=\s*([0-9_]+)`},
-		{"Android/MockNetPackAndroid/mocknetpack/src/main/java/com/mocknetpack/android/MockNetPack.kt",
-			`(?m)^\s*const val BODY_LIMIT_BYTES\s*=\s*([0-9_]+)`},
-	}
-	for _, c := range cases {
-		data, err := os.ReadFile(filepath.Join(repoRoot, c.path))
-		if err != nil {
-			t.Fatalf("read %s: %v", c.path, err)
-		}
-		m := regexp.MustCompile(c.re).FindStringSubmatch(string(data))
-		if m == nil {
-			t.Fatalf("%s: body limit literal not found", c.path)
-		}
-		n, err := strconv.ParseInt(strings.ReplaceAll(m[1], "_", ""), 10, 64)
-		if err != nil {
-			t.Fatalf("%s: parse body limit %q: %v", c.path, m[1], err)
-		}
-		if n != ImageInlineLimit {
-			t.Errorf("%s body limit = %d, want ImageInlineLimit %d (keep both in sync)",
-				c.path, n, ImageInlineLimit)
-		}
+// E1: 服务端的内联门限必须等于 SDK 抓包上限——SDK 永不上传超过 1 MiB 的 body，
+// 因此“服务端见到 >1 MiB 的 image/*”只能是被截断的样本，必须分流而不是内联。
+//
+// 三个仓库各自独立检出、独立 CI，无法在一条测试里互读源码，所以这个数字在
+// 三处各钉一次：这里、iOS MockNetPackURLProtocol.bodyLimit、Android
+// MockNetPack.BODY_LIMIT_BYTES，契约文本写在 openapi/mocknetpack.yaml
+// （“大于 1 MiB 的 image/*”/“SDK 抓包上限”）。任一端漂移，谁自己的 CI 先红。
+//
+// 注意能抓的是单边漂移：若有人把三处字面值一起改掉，本测试不会拦。
+// 机器强校验跨端一致需要一条能同时 checkout 三仓库的流水线，现在没有，
+// 三处同步靠评审把关（已确认接受该代价）。
+func TestImageInlineLimit_MatchesContract(t *testing.T) {
+	const contract int64 = 1 << 20
+	if ImageInlineLimit != contract {
+		t.Errorf("ImageInlineLimit = %d, want %d (keep server limit, openapi contract text and both SDK bodyLimit in sync)",
+			ImageInlineLimit, contract)
 	}
 }

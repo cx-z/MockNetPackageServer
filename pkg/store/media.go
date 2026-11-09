@@ -100,7 +100,7 @@ func (s *MediaStore) Put(ruleID string, data []byte, contentType string) (*captu
 		return nil, ErrMediaNotFound
 	}
 	if ruleID == "" {
-		return nil, fmt.Errorf("media: empty rule id")
+		return nil, errors.New("media: empty rule id")
 	}
 	size := int64(len(data))
 	if size == 0 {
@@ -134,16 +134,16 @@ func (s *MediaStore) Put(ruleID string, data []byte, contentType string) (*captu
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return nil, fmt.Errorf("media: write temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return nil, fmt.Errorf("media: close temp: %w", err)
 	}
 	if err := os.Rename(tmpName, s.blobPath(ruleID)); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return nil, fmt.Errorf("media: rename: %w", err)
 	}
 	s.total = s.total - existing + size
@@ -209,7 +209,7 @@ func (s *MediaStore) SweepOrphans(keep map[string]bool) {
 		if !strings.HasSuffix(name, ".bin") {
 			// 遗留的临时文件（写一半崩溃）一并清理。
 			if strings.HasSuffix(name, ".tmp") {
-				os.Remove(filepath.Join(s.dir, name))
+				_ = os.Remove(filepath.Join(s.dir, name))
 			}
 			continue
 		}
@@ -217,7 +217,7 @@ func (s *MediaStore) SweepOrphans(keep map[string]bool) {
 		if keep[ruleID] {
 			continue
 		}
-		os.Remove(filepath.Join(s.dir, name))
+		_ = os.Remove(filepath.Join(s.dir, name))
 	}
 	s.totalSet = false
 }
