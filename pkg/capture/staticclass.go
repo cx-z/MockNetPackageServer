@@ -6,7 +6,7 @@ import (
 )
 
 // StaticKind classifies a captured response as a whitelisted static resource
-// ( 方案 D：视频响应预览与大Body存储治理). Static resources are
+// based on its content type and size. Static resources are
 // immutable CDN files whose URL is a permanent pointer — the server drops
 // their bytes at ingestion and the browser replays the original URL instead.
 type StaticKind string
@@ -22,12 +22,12 @@ const (
 	// bytes are NOT stored, the entry keeps a placeholder plus the original
 	// URL for the Web preview card. Small images keep the legacy inline path.
 	StaticImage StaticKind = "image"
-	// StaticAudio / StaticPDF are reserved for a later milestone (add one
-	// staticClassTable entry each; the Web card branch keys off the returned
-	// StaticKind, not the MIME string).
+	// Audio and PDF classification would each require one additional
+	// staticClassTable entry. The Web card branch keys off the returned
+	// StaticKind rather than the MIME string.
 )
 
-// ImageInlineLimit is the inline ceiling for image bodies (M15 方案 D 阶段二):
+// ImageInlineLimit is the inline ceiling for image bodies:
 // an image response or upload request body at or below this size keeps the
 // legacy inline base64 path; above it the bytes are dropped and only metadata
 // (+ original URL) is stored.
@@ -42,7 +42,7 @@ const (
 const ImageInlineLimit int64 = 1 << 20
 
 // staticClassTable is the Content-Type whitelist for the always-static kinds
-// (video, size-independent). image 不走这张表：M15 起由
+// (video, size-independent). image 由
 // ClassifyResponseWithSize 按 ImageInlineLimit 判 StaticImage（小图仍内联）。
 // 未来加 audio / pdf 可直接加条目，ingestion 与前端卡片分支无需改动。
 var staticClassTable = map[string]StaticKind{
@@ -61,7 +61,7 @@ func ClassifyResponse(contentType string) StaticKind {
 	return staticClassTable[ct]
 }
 
-// ClassifyResponseWithSize is ClassifyResponse plus the M15 image size rule:
+// ClassifyResponseWithSize is ClassifyResponse with an additional image size rule:
 // a video stays StaticVideo regardless of size, while an image/* body becomes
 // StaticImage only when it exceeds ImageInlineLimit. sizeBytes <= 0 means "size
 // unknown" and keeps the image on the legacy inline path — dropping bytes that

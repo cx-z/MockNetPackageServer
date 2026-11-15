@@ -60,6 +60,7 @@ function render(devices) {
         '<span class="app-badge" title="App 标识（' + esc(d.app) + '）">' + esc(d.appName || d.app) + "</span>" +
         (isAdmin && d.owner ? '<span class="owner-badge" title="设备注册账号（管理视图）">账号 ' + esc(d.owner) + "</span>" : "") +
         '<span class="badge ' + st.cls + '">' + st.label + "</span>" +
+        capabilityChips(d) +
         '<span>最后活跃：' + relTime(d.lastSeenAt) + "</span>" +
         (d.currentSession ? '<span>会话：' + esc(shortId(d.currentSession.id)) + "</span>" : "") +
       "</div>";
@@ -85,6 +86,34 @@ function render(devices) {
     $("list").appendChild(card);
   }
   $("updated").textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN");
+}
+
+// 设备能力徽标——这台设备"能抓到什么"、插桩是否生效。
+// 老 SDK 不报 capabilities，则不渲染任何徽标。
+const CAP_ADAPTER_LABELS = {
+  okhttp: "OkHttp",
+  httpurlconnection: "HttpURLConnection",
+  urlprotocol: "URLProtocol",
+  business: "业务上报",
+};
+
+function capabilityLabel(adapter) {
+  return Object.hasOwn(CAP_ADAPTER_LABELS, adapter) ? CAP_ADAPTER_LABELS[adapter] : adapter;
+}
+
+function capabilityChips(d) {
+  const caps = d && d.capabilities;
+  if (!caps) return "";
+  const parts = [];
+  for (const a of caps.adapters || []) {
+    parts.push('<span class="cap-badge" title="采集来源">' + esc(capabilityLabel(a)) + "</span>");
+  }
+  parts.push(
+    caps.instrumented
+      ? '<span class="cap-badge on" title="最近一次设备声明已观测到 OkHttp 构造器执行织入调用">已观测到插桩</span>'
+      : '<span class="cap-badge off" title="最近一次设备声明尚未观测到 OkHttp 构造器执行织入调用">尚未观测到插桩</span>'
+  );
+  return parts.join("");
 }
 
 async function connect(d) {

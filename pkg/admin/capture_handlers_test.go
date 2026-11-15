@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -399,7 +400,10 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 
 	// Re-upload one entry so the end-session retention assertions have data.
-	keep := []*capture.TrafficEntry{{Timestamp: time.Now().Add(time.Millisecond), Method: "GET", URL: "http://example.com/keep", DurationMs: 1}}
+	keep := []*capture.TrafficEntry{{
+		Timestamp: time.Now().Add(time.Millisecond), Method: "GET", URL: "http://example.com/keep",
+		DurationMs: 1, Adapter: "okhttp",
+	}}
 	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
 		TrafficUploadRequest{App: "com.example.integrating", Did: "dev-1", SessionID: sessionID, Entries: keep}, &up)
 	require.Equal(t, http.StatusAccepted, resp.StatusCode)
@@ -407,6 +411,7 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic", nil, &keptList)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Len(t, keptList.Entries, 1)
+	assert.Equal(t, "okhttp", keptList.Entries[0].Adapter)
 	keptID := keptList.Entries[0].ID
 
 	// End session (48h retention): session record + traffic stay queryable.
@@ -422,6 +427,44 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/traffic/"+keptID, nil, &detail)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "http://example.com/keep", detail.URL)
+	assert.Equal(t, "okhttp", detail.Adapter)
+}
+
+func TestCaptureAPI_DropsOversizedTrafficAdapter(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+	const app, did = "com.example.integrating", "adapter-limit"
+	mustSeedDevice(t, srv, app, did)
+	var session capture.CaptureSession
+	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
+		ActivateSessionRequest{App: app, Did: did}, &session)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	entries := []*capture.TrafficEntry{
+		{Timestamp: time.Now(), Method: "GET", URL: "https://example.com/long", Adapter: strings.Repeat("界", 11)},
+		{Timestamp: time.Now(), Method: "GET", URL: "https://example.com/h5", Adapter: "wkwebview-fetch"},
+		{Timestamp: time.Now(), Method: "GET", URL: "https://example.com/bad-h5", Adapter: "wkwebview-" + strings.Repeat("x", 32), Mocked: true},
+	}
+	var up TrafficUploadResponse
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: app, Did: did, SessionID: session.ID, Entries: entries}, &up)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	require.Equal(t, len(entries), up.Count)
+
+	var list TrafficListResponse
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+session.ID+"/traffic", nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, list.Entries, len(entries))
+	byURL := make(map[string]*capture.TrafficEntry, len(list.Entries))
+	for _, entry := range list.Entries {
+		byURL[entry.URL] = entry
+	}
+	for _, entry := range entries {
+		require.Contains(t, byURL, entry.URL)
+	}
+	assert.Empty(t, byURL[entries[0].URL].Adapter)
+	assert.Equal(t, entries[1].Adapter, byURL[entries[1].URL].Adapter)
+	assert.Empty(t, byURL[entries[2].URL].Adapter)
+	assert.False(t, byURL[entries[2].URL].Mocked)
 }
 
 func TestCaptureAPI_TrafficErrors(t *testing.T) {
@@ -561,4 +604,68 @@ func TestCaptureAPI_TrafficList_FilterParams(t *testing.T) {
 	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+sessionID+"/traffic?statusCode=abc", nil, &errResp)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, "invalid_field", errResp.Error)
+}
+
+// TestCaptureAPI_DeviceCapabilities verifies that the SDK may declare
+// its capture coverage at registration; the declaration is stored on the
+// device, returned in the registration view and listed for the Web. Old SDKs
+// that never send the field keep it nil, so the Web renders no badges.
+func TestCaptureAPI_DeviceCapabilities(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+	mustSeedDevice(t, srv, "com.example.integrating", "cap-1")
+
+	var reg RegisterDeviceResponse
+	resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
+		RegisterDeviceRequest{
+			App: "com.example.integrating", Did: "cap-1", Platform: capture.Platform("android"),
+			SDKVersion: "1.0.1",
+			Capabilities: &capture.DeviceCapabilities{
+				Adapters:       []string{"okhttp", "httpurlconnection", "business"},
+				Instrumented:   true,
+				RequestBodyTee: true,
+			},
+		}, &reg)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotNil(t, reg.Device.Capabilities, "capabilities must be returned in the registration view")
+	assert.Equal(t, []string{"okhttp", "httpurlconnection", "business"}, reg.Device.Capabilities.Adapters)
+	assert.True(t, reg.Device.Capabilities.Instrumented)
+	assert.True(t, reg.Device.Capabilities.RequestBodyTee)
+
+	// Listed devices (the Web devices page) see the same declaration.
+	var list struct {
+		Devices []*capture.DeviceView `json:"devices"`
+	}
+	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/devices", nil, &list)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var found *capture.DeviceView
+	for _, d := range list.Devices {
+		if d.App == "com.example.integrating" && d.Did == "cap-1" {
+			found = d
+		}
+	}
+	require.NotNil(t, found)
+	require.NotNil(t, found.Capabilities)
+	assert.True(t, found.Capabilities.Instrumented)
+
+	// Oversized / empty adapters are dropped at the boundary (fail-open: the
+	// device still registers, just without the offending entries).
+	mustSeedDevice(t, srv, "com.example.integrating", "cap-2")
+	var reg2 RegisterDeviceResponse
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
+		RegisterDeviceRequest{
+			App: "com.example.integrating", Did: "cap-2",
+			Capabilities: &capture.DeviceCapabilities{
+				Adapters: []string{"okhttp", "", strings.Repeat("x", 40)},
+			},
+		}, &reg2)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// A legacy client re-registering without capabilities keeps the last
+	// declaration instead of silently clearing it.
+	var legacy RegisterDeviceResponse
+	resp = doJSON(t, http.MethodPost, srv.URL+"/api/v1/devices/register",
+		RegisterDeviceRequest{App: "com.example.integrating", Did: "cap-1"}, &legacy)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotNil(t, legacy.Device.Capabilities, "nil capabilities must not wipe the stored declaration")
+	assert.True(t, legacy.Device.Capabilities.Instrumented)
 }

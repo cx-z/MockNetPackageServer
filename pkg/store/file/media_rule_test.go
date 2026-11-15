@@ -15,7 +15,7 @@ import (
 	"github.com/getmockd/mockd/pkg/store"
 )
 
-// M15 方案 D 阶段二：大图规则的字节治理（blob 存储 + 回源 + media 接口）。
+// 大图规则的字节治理（blob 存储 + 回源 + media 接口）。
 // 规则：>1 MiB 的 image 响应在入库时已丢字节；"Mock 此请求"建规则时服务端按
 // 原请求头回源取一次，存成 <ruleID>.bin，规则只带 MediaRef（sha256/size/ct）。
 
@@ -393,7 +393,7 @@ func TestMockRule_CreateFromBigImage_LegacySDKKeepsResponse(t *testing.T) {
 	if view.Response.Media != nil {
 		t.Fatalf("Media = %+v on legacy SDK rule, want nil", view.Response.Media)
 	}
-	// M15：老 SDK 没有 media 拉取能力 → 回落 302 → 原 URL（与视频快路径同结构），
+	// 老 SDK 没有 media 拉取能力 → 回落 302 → 原 URL（与视频快路径同结构），
 	// 而不是下发一条「只有占位文本」的不可用规则。
 	if view.Response.StatusCode != http.StatusFound {
 		t.Fatalf("legacy status = %d, want 302", view.Response.StatusCode)

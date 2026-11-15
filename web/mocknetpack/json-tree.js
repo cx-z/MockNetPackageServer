@@ -86,11 +86,11 @@ function bodyHtml(text, opts) {
   return "<pre>" + (esc(formatBody(text)) || "（空）") + "</pre>";
 }
 
-// 方案 D：静态资源预览 —— 命中白名单的响应不存字节，浏览器直接用原
+// 静态资源预览 —— 命中白名单的响应不存字节，浏览器直接用原
 // URL 回放（不引入新 UI 框架）。bodyHtml 按 opts.staticKind 分发，不依赖
 // 具体 MIME 串；新增分类只需在此加一个分支。
 
-/** 静态资源卡片分发：video → <video> 封面卡；image → 大图占位卡（M15）。
+/** 静态资源卡片分发：video → <video> 封面卡；image → 大图占位卡。
  *  非静态 / 缺 url → null（回退原有文本/JSON 路径）。 */
 function staticResourceHtml(opts) {
   if (!opts || !opts.url) return null;
@@ -124,7 +124,7 @@ function videoResourceHtml(opts) {
     "</div>";
 }
 
-/** M15：大图响应卡片。字节未入库，默认只显示占位（不自动发起原图请求，
+/** 大图响应卡片。字节未入库，默认只显示占位（不自动发起原图请求，
  *  避免一条抓包记录就向任意内网/CDN 地址拉取大图）；用户点「加载原图」后
  *  才把原 URL 塞进 <img>，失败降级为文案。 */
 function staticImageHtml(opts) {
@@ -248,7 +248,7 @@ function bindJsonTree(root) {
     }
     if (!ev.target || !ev.target.closest) return;
 
-    // M15：内联预览图 / 已加载原图 → 灯箱放大。
+    // 内联预览图 / 已加载原图 → 灯箱放大。
     const previewImg = ev.target.closest(".img-preview img");
     if (previewImg) {
       ev.preventDefault();
@@ -262,7 +262,7 @@ function bindJsonTree(root) {
       return;
     }
 
-    // 方案 D：媒体卡片交互（复制按钮 / 加载原图 / 整卡打开）。
+    // 媒体卡片交互（复制按钮 / 加载原图 / 整卡打开）。
     const copyBtn = ev.target.closest("[data-copy-url]");
     if (copyBtn) {
       ev.preventDefault();
@@ -290,7 +290,7 @@ function bindJsonTree(root) {
   });
 }
 
-/** M15：把原 URL 加载进大图卡片的封面位。<img> 失败时降级为文案并允许重试
+/** 把原 URL 加载进大图卡片的封面位。<img> 失败时降级为文案并允许重试
  *  （data-media-loaded 回到 0）；成功后置 1，避免重复请求。 */
 function loadCardImage(card) {
   if (!card || card.dataset.mediaLoaded === "1" || card.dataset.mediaLoaded === "loading") return;

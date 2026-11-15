@@ -183,7 +183,7 @@ type CaptureManager struct {
 	// session, 跨重启保留). nil = memory-only behavior (existing tests).
 	longconnStore LongConnStore
 
-	// mediaStore persists mock-rule binary bodies (M15 大图治理). nil = media
+	// mediaStore persists mock-rule binary bodies. nil = media
 	// replay unavailable: creating a rule from a big-image capture fails loudly
 	// instead of silently writing a byte-less rule. Wired by the API server
 	// (store.NewMediaStore(<dataDir>/media)).
@@ -282,7 +282,7 @@ func (m *CaptureManager) SetLongConnStore(ls LongConnStore) {
 	m.longconnStore = ls
 }
 
-// SetMediaStore wires the blob store backing mock-rule media bodies (M15).
+// SetMediaStore wires the blob store backing mock-rule media bodies.
 // Called once from the API server; nil keeps media replay disabled.
 func (m *CaptureManager) SetMediaStore(ms *MediaStore) {
 	m.mediaStore = ms

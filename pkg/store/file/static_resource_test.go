@@ -11,7 +11,7 @@ import (
 	"github.com/getmockd/mockd/pkg/store"
 )
 
-// 方案 D：视频响应预览与大Body存储治理 —— 静态资源（video 白名单）不存字节
+// 视频响应预览与大Body存储治理 —— 静态资源（video 白名单）不存字节
 // 的 ingestion 分流、规则创建 302 回放分支与编辑置位测试。
 
 // newAppSession registers a device and activates a session, mirroring the

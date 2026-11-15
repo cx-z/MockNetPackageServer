@@ -102,15 +102,19 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The capability declaration is bounded like every other
+	// metadata field (<=8 adapters, each <=32 UTF-8 bytes); oversized entries are
+	// dropped rather than rejecting the registration.
 	d := &capture.Device{
-		App:        req.App,
-		AppName:    req.AppName,
-		Did:        req.Did,
-		Name:       req.DeviceName,
-		Platform:   req.Platform,
-		OSVersion:  req.OSVersion,
-		SDKVersion: req.SDKVersion,
-		AppVersion: req.AppVersion,
+		App:          req.App,
+		AppName:      req.AppName,
+		Did:          req.Did,
+		Name:         req.DeviceName,
+		Platform:     req.Platform,
+		OSVersion:    req.OSVersion,
+		SDKVersion:   req.SDKVersion,
+		AppVersion:   req.AppVersion,
+		Capabilities: sanitizeCapabilities(req.Capabilities),
 	}
 
 	if req.PairingToken != "" {
@@ -153,6 +157,31 @@ func (a *API) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 		Device:       view,
 		ServerConfig: idleHeartbeatConfig(a.captureManager.ServerConfig()),
 	})
+}
+
+// sanitizeCapabilities bounds the SDK capability declaration:
+// at most 8 adapters of <=32 UTF-8 bytes each; blank/oversized entries are dropped
+// so a misbehaving client cannot persist arbitrary blobs as device metadata.
+// The registration itself still succeeds (fail-open).
+func sanitizeCapabilities(in *capture.DeviceCapabilities) *capture.DeviceCapabilities {
+	if in == nil {
+		return nil
+	}
+	out := &capture.DeviceCapabilities{
+		Instrumented:   in.Instrumented,
+		RequestBodyTee: in.RequestBodyTee,
+	}
+	for _, a := range in.Adapters {
+		a = strings.TrimSpace(a)
+		if a == "" || len(a) > capture.MaxAdapterBytes {
+			continue
+		}
+		out.Adapters = append(out.Adapters, a)
+		if len(out.Adapters) == 8 {
+			break
+		}
+	}
+	return out
 }
 
 // idleHeartbeatConfig 返回 idle（未抓包）状态的心跳间隔（：5s，快速感知会话激活）。

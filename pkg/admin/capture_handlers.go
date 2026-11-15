@@ -43,6 +43,8 @@ type RegisterDeviceRequest struct {
 	// DeviceName is the optional display name for a device created via the
 	// pairing flow (fallback: platform + did prefix).
 	DeviceName string `json:"deviceName,omitempty"`
+	// Capabilities is the SDK capability declaration (optional).
+	Capabilities *capture.DeviceCapabilities `json:"capabilities,omitempty"`
 }
 
 // CreateDeviceRequest is the Web manual-registration payload : pick an
@@ -212,7 +214,7 @@ func queryInt(r *http.Request, key string, def int) (int, error) {
 
 // writeCaptureError maps capture/store errors to contract error responses.
 func writeCaptureError(w http.ResponseWriter, err error) {
-	// M15：大图回源失败 → 400 media_unfetchable + 稳定原因码（url_empty /
+	// 大图回源失败 → 400 media_unfetchable + 稳定原因码（url_empty /
 	// missing_auth / http_4xx / http_5xx / timeout / too_large /
 	// redirect_limit / network / storage_full）。规则不会落库。
 	var mfe *store.MediaFetchError

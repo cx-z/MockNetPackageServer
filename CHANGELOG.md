@@ -18,3 +18,10 @@ MockNetPack 中央 Mock 服务器（fork of getmockd/mockd），API 契约版本
 - **Web 控制台**：实时流量、历史查询（服务端过滤 + 分页）、规则管理、长连接日志页签、推送模板与模拟推送、单条分享（7 天 TTL）。
 - **QR 配对**：扫码注册设备并复用既有 did。
 - **可观测性**：Loki/Grafana 等 observability 组件与基准测试（`benchmarks/`）。
+
+### Android 抓包范围扩展
+
+- **采集来源字段 `adapter`**：`TrafficEntry.adapter`（`okhttp` / `httpurlconnection` / `business`，缺省不输出）。服务端结构体加 `Adapter string`（`omitempty`），MCP 透传自动继承；`openapi/mocknetpack.yaml` 补字段说明；Web 列表行渲染来源徽标、详情页加「采集方式」行，未知/缺失显示 `—`。
+- **设备能力声明 `capabilities`**：`Device` 加 `capabilities{adapters,instrumented,requestBodyTee}`（`omitempty`，老 SDK 不传即为空）。注册接口对声明做边界收敛（≤8 条、单条 ≤32 字符，越界丢弃不拒绝注册）；重新注册不传该字段时保留上次声明。`platform` 由 `[ios]` 扩为 `[ios, android]`，新增 `PlatformAndroid`。
+- **Web 设备页**：设备行按 `capabilities.adapters` 展示采集来源徽标，按 `instrumented` 展示「插桩生效 / 未插桩」；老设备不渲染任何徽标（不误报）。
+- **测试**：`pkg/admin` 新增设备能力声明用例（写入、列表读回、越界收敛、缺省不覆盖）；Web 新增 `tests/device-capabilities.test.js`。

@@ -63,7 +63,7 @@ func TestStaticPlaceholder(t *testing.T) {
 	}
 }
 
-// E1: 大图分类。视频不受大小影响；图片仅超门限（1 MiB）才转为静态分类，
+// 大图分类。视频不受大小影响；图片仅超门限（1 MiB）才转为静态分类，
 // 正好等于门限、未知大小（<=0）一律保留内联路径（宁可不省字节也不误杀）。
 func TestClassifyResponseWithSize(t *testing.T) {
 	cases := []struct {
@@ -99,7 +99,7 @@ func TestClassifyResponseWithSize(t *testing.T) {
 	}
 }
 
-// E1: 服务端的内联门限必须等于 SDK 抓包上限——SDK 永不上传超过 1 MiB 的 body，
+// 服务端的内联门限必须等于 SDK 抓包上限——SDK 永不上传超过 1 MiB 的 body，
 // 因此“服务端见到 >1 MiB 的 image/*”只能是被截断的样本，必须分流而不是内联。
 //
 // 三个仓库各自独立检出、独立 CI，无法在一条测试里互读源码，所以这个数字在

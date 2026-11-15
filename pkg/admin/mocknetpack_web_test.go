@@ -147,8 +147,9 @@ func TestAuthMockNetPackNoSlashExempt(t *testing.T) {
 	}
 }
 
-// TestMockNetPackWebCSP_AllowsRemoteImages guards the M15 policy: the big-image
-// card loads the captured original URL into an <img> on demand, so img-src must
+// TestMockNetPackWebCSP_AllowsRemoteImages guards the remote image preview policy.
+// The big-image card loads the captured original URL into an <img> on
+// demand, so img-src must
 // allow http/https (media-src was already open for video cards). style-src stays
 // 'unsafe-inline' (no change), and default-src remains 'self'.
 func TestMockNetPackWebCSP_AllowsRemoteImages(t *testing.T) {

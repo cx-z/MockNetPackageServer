@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 "use strict";
 
-// MockNetPack web:  Step2 从零创建规则表单测试（node，无浏览器依赖）。
+// MockNetPack web:  从零创建规则表单测试（node，无浏览器依赖）。
 // 运行：node tests/rules-create.test.js（在 web/mocknetpack 目录下）。
 // ============================================================================
-// 覆盖 W1–W4：入口按钮存在；空表单六控件渲染；前端必填/path/状态码/JSON
+// 覆盖 入口按钮存在；空表单六控件渲染；前端必填/path/状态码/JSON
 // 校验分支；提交 payload 不含 source、默认停用、method 大写化、headers 按行
-// 解析。W5/W6（201/409 真实服务端行为）由 Go 单测与端到端冒烟兜底。
+// 解析。服务端的 201/409 行为由 Go 单测与端到端冒烟兜底。
 // ============================================================================
 
 const fs = require("fs");
@@ -86,13 +86,13 @@ async function expectBlocked(name, mutate, expectHint) {
 }
 
 (async () => {
-  // ---- 1) index.html 入口按钮存在（W1） ----
+  // ---- 1) index.html 入口按钮存在 ----
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   check("index.html 含「新建 Mock 规则」按钮 #ruleCreateBtn",
     html.includes('id="ruleCreateBtn"') && html.includes("新建 Mock 规则"),
     html.slice(0, 200));
 
-  // ---- 2) openCreateRuleForm 渲染空表单（W1/W2） ----
+  // ---- 2) openCreateRuleForm 渲染空表单 ----
   ctx.openCreateRuleForm();
   const formHtml = detailBox.innerHTML;
   for (const id of ["createMethod", "createPath", "createStatus", "createHeaders", "createNote", "createBody"]) {
@@ -104,7 +104,7 @@ async function expectBlocked(name, mutate, expectHint) {
   check("只读展示生效设备", formHtml.includes("com.example.app") && formHtml.includes("dev-1"));
   check("创建/取消按钮就位", formHtml.includes('id="createCancelBtn"') && formHtml.includes('id="createSaveBtn"'));
 
-  // ---- 3) W3 必填/非法 path/状态码校验：均不发请求 ----
+  // ---- 3) 必填/非法 path/状态码校验：均不发请求 ----
   await expectBlocked("Method 为空", () => { values.createMethod = ""; }, "Method");
   await expectBlocked("Path 为空", () => { values.createMethod = "GET"; values.createPath = ""; }, "Path");
   await expectBlocked("Path 不以 / 开头", () => { values.createPath = "api/hello"; }, "/ 开头");
@@ -112,7 +112,7 @@ async function expectBlocked(name, mutate, expectHint) {
   await expectBlocked("备注为空白", () => { values.createPath = "/api/hello"; values.createNote = "  "; }, "备注");
   await expectBlocked("状态码越界", () => { values.createNote = "memo"; values.createStatus = "999"; }, "100–599");
 
-  // ---- 4) W4：坏 JSON body 阻止提交 ----
+  // ---- 4) 坏 JSON body 阻止提交 ----
   reset();
   values.createMethod = "GET";
   values.createPath = "/api/hello";
@@ -151,7 +151,7 @@ async function expectBlocked(name, mutate, expectHint) {
       fetchCalls[0].url === "/devices/com.example.app/dev-1/mock-rules", fetchCalls[0].url);
   }
 
-  // ---- 6)  Step4：命中徽章两分支（W9） ----
+  // ---- 6)  命中徽章两分支 ----
   (() => {
     const fakeRow = () => ({
       innerHTML: "", textContent: "", className: "", dataset: {}, onclick: null,

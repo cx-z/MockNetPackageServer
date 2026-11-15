@@ -23,7 +23,7 @@ function showLogPane(kind) {
   $("longconnPane").classList.toggle("hidden", !isLC);
   // 右列：切页签即复位详情归属——本域日志详情默认显示，ruleDetail 先隐藏，
   // 由各自 render 函数（renderRuleDetail / renderPushRuleDetail）按需点亮，
-  // 避免推送模板详情残留到请求流页签造成 ruleDetail+trafficDetail 双面板堆叠（N5）。
+  // 避免推送模板详情残留到请求流页签造成 ruleDetail+trafficDetail 双面板堆叠。
   $("longconnDetail").classList.toggle("hidden", !isLC);
   $("trafficDetail").classList.toggle("hidden", isLC);
   $("ruleDetail").classList.add("hidden");
@@ -470,7 +470,7 @@ $("longconnFilter").addEventListener("input", (ev) => {
 });
 
 /** 切设备/退出详情时调用：彻底重置长连接模块状态（日志数组、删除抑制名单、
- *  右栏详情、列表 DOM、快照卡），避免 A 设备日志混入 B 设备视图（P1/N3 修复）。 */
+ *  右栏详情、列表 DOM、快照卡），避免 A 设备日志混入 B 设备视图。 */
 function resetLongConnSession() {
   longConnLog = [];
   $("longconnList").innerHTML = '<div class="empty">暂无长连接日志。设备长连接事件会实时出现在这里。</div>';
@@ -479,10 +479,10 @@ function resetLongConnSession() {
   $("longconnInfo").textContent = "";
   $("pushRuleInfo").textContent = "";
   $("pushRuleList").innerHTML = '<div class="empty">暂无推送模板。点击下方一条长连接日志的「一键建推送模板」创建。</div>';
-  // N3：连接状态快照卡一并复位，否则 A 设备的连接状态会残留到 B 设备视图。
+  // 连接状态快照卡一并复位，否则 A 设备的连接状态会残留到 B 设备视图。
   const snap = $("longconnSnapshot");
   if (snap) { snap.classList.add("hidden"); snap.innerHTML = ""; }
-  // N4：detail.app/did 已就绪，自动拉一次新设备的推送模板列表，避免停留在空态。
+  // detail.app/did 已就绪，自动拉一次新设备的推送模板列表，避免停留在空态。
   refreshPushMockRules();
 }
 

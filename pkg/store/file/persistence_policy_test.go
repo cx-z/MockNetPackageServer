@@ -1,6 +1,6 @@
 package file_test
 
-// Persistence-policy tests for the P1-4.4 fix: high-frequency updates
+// Persistence-policy tests for high-frequency updates
 // (heartbeat LastSeenAt, per-batch RequestCount) must be memory-only — they
 // must never dirty the store and thus never rewrite data.json on disk.
 

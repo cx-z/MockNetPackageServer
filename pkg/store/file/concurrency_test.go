@@ -74,8 +74,7 @@ func runConcurrent(t *testing.T, name string, fnA, fnB func() error) {
 	wg.Wait()
 }
 
-// TestEndSessionPreservesUploadedTrafficForRetention locks the P0-3 +
-// semantics: entries uploaded before EndSession stay in the session (still
+// TestEndSessionPreservesUploadedTrafficForRetention verifies traffic retention: entries uploaded before EndSession stay in the session (still
 // resolvable by ID for share creation, and listable during the 48h window),
 // and an upload after the end must be rejected with ErrSessionEnded.
 func TestEndSessionPreservesUploadedTrafficForRetention(t *testing.T) {
@@ -127,7 +126,7 @@ func TestEndSessionPreservesUploadedTrafficForRetention(t *testing.T) {
 	}
 }
 
-// TestConcurrentUploadAndEndSession exercises the P0-3 serialization under
+// TestConcurrentUploadAndEndSession exercises upload and session termination under
 // contention: concurrent uploaders must only ever see success or the two
 // expected end-related errors — never a partially-committed failure or an
 // orphaned in-memory key that a later purge cannot explain.

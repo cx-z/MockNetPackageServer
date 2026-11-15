@@ -16,7 +16,7 @@ import (
 )
 
 // mediaFetchErrorResponse is the 400 body when a big-image rule could not
-// obtain the original bytes (M15). Code is a stable reason badge
+// obtain the original bytes. Code is a stable reason badge
 // (url_empty / missing_auth / http_4xx / http_5xx / timeout / too_large /
 // redirect_limit / network / storage_full) the Web dialog can explain.
 type mediaFetchErrorResponse struct {
@@ -313,7 +313,7 @@ func validStatusCode(code int) bool {
 }
 
 // handleGetMockRuleMedia handles
-// GET /api/v1/devices/{app}/{did}/mock-rules/{ruleId}/media (M15 方案 D 阶段二).
+// GET /api/v1/devices/{app}/{did}/mock-rules/{ruleId}/media.
 //
 // The SDK fetches a media rule's bytes here instead of carrying them in the rule
 // snapshot. Same auth posture as the SDK snapshot pull: open route, identity is

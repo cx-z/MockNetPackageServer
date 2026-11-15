@@ -265,7 +265,7 @@ function binaryRule(over) {
     check("W10 文本规则回退：不携带 bodyBase64", !("bodyBase64" in body.response), JSON.stringify(body.response));
   }
 
-  // ---- 11) M15 media 规则：改备注/延迟时必须把 media 原样带回 PUT ----
+  // ---- 11) media 规则：改备注/延迟时必须把 media 原样带回 PUT ----
   // 服务端 PUT 只在 response.media 缺失时清 Media 并删 blob；前端漏传一次就把
   // 大图规则静默降级成「200 空体」。
   const mediaRef = { sha256: "sha-media-1", size: 1094829, contentType: "image/jpeg" };
@@ -291,7 +291,7 @@ function binaryRule(over) {
     putCall ? putCall.opts.body : "no PUT");
 
   // ---- 12) media 规则：改过回包体 → 先确认，确认后 PUT 丢弃 media ----
-  // 反向用例：判断写反（未改就丢 / 改过还留)会让这条或 W11 失败。
+  // 反向用例：判断写反（未改就丢 / 改过还留)会让这条或保留 media 的用例失败。
   detailBox.innerHTML = "";
   values.editBody = "";
   ctx.openEditRuleForm(r);

@@ -149,6 +149,16 @@ function mergeLog(base, fresh) {
   return arr.length > LOG_CAP ? arr.slice(arr.length - LOG_CAP) : arr;
 }
 
+/** 采集方式的可读标签：老记录/老 SDK 无 adapter → "—"。
+ *  okhttp = OkHttp 应用拦截器或构建期插件注入；httpurlconnection = HUC 包装器；
+ *  其余为业务通过 reportHttp 自填的标识（如 cronet），原样展示以便排查来源。 */
+const ADAPTER_LABELS = { okhttp: "OkHttp", httpurlconnection: "HttpURLConnection", business: "业务自报" };
+function adapterLabel(e) {
+  const a = e && e.adapter;
+  if (!a) return "—";
+  return Object.hasOwn(ADAPTER_LABELS, a) ? ADAPTER_LABELS[a] : a;
+}
+
 /** 渲染页面日志（live = 当前绑定会话在抓包；断开后仅展示与过滤，不轮询）。 */
 function renderTraffic(entries) {
   if (!detail) return;
@@ -226,15 +236,18 @@ async function clearTrafficLog() {
   }
 }
 
-/** 实时和历史列表使用同一套 HTTP 状态以及 H5 来源标签。 */
+/** 实时和历史列表使用同一套 HTTP 状态和采集来源标签。 */
 function trafficRowHtml(e) {
   const h5 = h5TrafficKind(e);
   const diagnostic = h5DiagnosticStage(e);
+  const source = h5 ? '<span class="t-h5">H5 · ' + h5 + "</span>"
+    : e.adapter ? '<span class="t-adapter" title="采集方式">' + esc(adapterLabel(e)) + "</span>"
+    : "";
   const statusCls = diagnostic?.[2] ? "st-4xx" : e.statusCode == null ? (diagnostic ? "st-2xx" : "st-err")
     : e.statusCode < 300 ? "st-2xx" : e.statusCode < 400 ? "st-3xx"
     : e.statusCode < 500 ? "st-4xx" : "st-5xx";
   return '<span class="method ' + methodCls(e.method) + '">' + esc(e.method || "?") + "</span>" +
-    (h5 ? '<span class="t-h5">H5 · ' + h5 + "</span>" : "") +
+    source +
     '<span class="t-url">' + esc(e.path || e.url) + (e.query ? "?" + esc(e.query) : "") + "</span>" +
     '<span class="t-status ' + statusCls + '" title="' + esc(diagnostic ? h5ResponseStatus(e) : failureStageText(e)) + '">' +
       esc(diagnostic?.[2] ? diagnostic[0] : e.statusCode ?? diagnostic?.[0] ?? failureBadge(e)) + "</span>" +
@@ -345,7 +358,7 @@ function renderTrafficDetail(e, target) {
         '<button id="shareBtn" class="small ghost">分享</button>' +
       "</div>" +
       '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
-      (h5 ? '<div class="d-kv"><span class="d-k">采集方式</span><span class="d-v">H5 · ' + h5 + "</span></div>" : "") +
+      '<div class="d-kv"><span class="d-k">采集方式</span><span class="d-v">' + esc(h5 ? "H5 · " + h5 : adapterLabel(e)) + "</span></div>" +
       '<div class="tabs">' +
         '<button class="tab active" data-tab="req">请求</button>' +
         '<button class="tab" data-tab="resp">响应</button>' +

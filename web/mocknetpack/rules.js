@@ -6,7 +6,7 @@
 // Mock 规则
 // ============================================================================
 
-// M15：编辑表单里回包体的「打开表单时的原文」。media 规则的回包字节在服务端
+// 编辑表单里回包体的「打开表单时的原文」。media 规则的回包字节在服务端
 // blob 里，回包体表单本身是空的；保存时若原样回传 media，服务端才保留图片，
 // 漏传就清 blob。因此「只改状态码/响应头/延迟/备注」必须保留 media，改过回包体
 // 才丢弃。用原文比对而不是监听编辑器事件：换编辑器、或事件没挂上时都不会把
@@ -89,7 +89,7 @@ function renderRules(data) {
     const respL = r.response || {};
     let bodySnippet = "";
     if (respL.media) {
-      // M15：大图规则的回包字节在服务端 blob 里，列表只给体积摘要。
+      // 大图规则的回包字节在服务端 blob 里，列表只给体积摘要。
       // humanSize 对 0 / 缺字段返回空串，与详情块一样兜底「未知大小」。
       bodySnippet = " · [原图 " + (humanSize(respL.media.size) || "未知大小") + "，回放时按需拉取]";
     } else if (respL.bodyBase64) {
@@ -161,7 +161,7 @@ function renderRuleDetail(r) {
   // 的规则无需进入编辑即可看到 JSON 详情；无解码文本时才回退二进制占位。
   let bodyDisp = resp.body || "";
   let bodyReplayNote = "";
-  // M15：media 规则不在规则行里存字节——详情给"预览原图"入口，直接请求
+  // media 规则不在规则行里存字节——详情给"预览原图"入口，直接请求
   // media 端点（open 路由，无需 token），加载后点图进灯箱。
   let mediaBlock = "";
   if (resp.media) {
@@ -506,7 +506,7 @@ async function saveRuleEdit(rule) {
       response.bodyBase64 = storedResp.bodyBase64;
     }
   }
-  // M15：media 规则的字节在服务端 blob 里，表单里的回包体是空的。服务端 PUT
+  // media 规则的字节在服务端 blob 里，表单里的回包体是空的。服务端 PUT
   // 只在 response.media 缺失时才清 Media 并删 blob，所以：
   // - 回包体与打开表单时一致 → 原样带回 media，改备注/延迟/状态码/响应头不会毁原图；
   // - 回包体被改过 → 用户确实要用文本替换，先确认再丢失原图（否则一次误存
@@ -599,7 +599,7 @@ async function toggleRule(rule, enabled) {
   }
 }
 
-/** M15：把服务端 media_unfetchable 的稳定原因码翻成人话（创建大图规则失败时用）。 */
+/** 把服务端 media_unfetchable 的稳定原因码翻成人话（创建大图规则失败时用）。 */
 const MEDIA_FETCH_REASONS = {
   url_empty: "抓包记录里没有原图 URL，无法回源取字节",
   missing_auth: "源站需要鉴权（原请求未携带可用凭证）",
@@ -683,7 +683,7 @@ async function mockThisRequest(e, fromHistory = false) {
       ...(e.responseBodyBase64 ? { bodyBase64: e.responseBodyBase64 } : {}),
     },
     enabled: false,
-    // 方案 D：标注来源流量 ID。视频规则由服务端据此初始化为 302 → 原 URL
+    // 标注来源流量 ID。视频规则由服务端据此初始化为 302 → 原 URL
     // （未编辑即跳转、不存字节）；非视频仅作来源溯源。
     originTrafficId: e.id || "",
     source: captureRuleSource(e),
@@ -697,7 +697,7 @@ async function mockThisRequest(e, fromHistory = false) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => null);
-      // M15：大图回源失败给出可操作原因，而不是笼统 400。
+      // 大图回源失败给出可操作原因，而不是笼统 400。
       showError(mediaFetchErrorMessage(err) ||
         (err && err.message) || "创建规则失败（HTTP " + res.status + "）");
       return;
@@ -710,7 +710,7 @@ async function mockThisRequest(e, fromHistory = false) {
 }
 
 // ============================================================================
-//  Step2：从零创建 Mock 规则（空表单手填，无抓包背书）
+//  从零创建 Mock 规则（空表单手填，无抓包背书）
 // ============================================================================
 
 /** 打开「新建 Mock 规则」空表单（右列 ruleDetail 面板）。与 openEditRuleForm
@@ -804,7 +804,7 @@ function openCreateRuleForm(source) {
 }
 
 /** 收集新建表单 → POST /mock-rules（不带 source，默认停用）。前端先做必填/
- *  path/JSON 校验，与服务端 Step1 规则对齐；服务端 400/409 时保留表单可修正。 */
+ *  path/JSON 校验，与服务端 校验规则对齐；服务端 400/409 时保留表单可修正。 */
 async function submitCreateRule(source) {
   if (!detail) return;
   const method = ($("createMethod").value || "").trim().toUpperCase();
@@ -888,7 +888,7 @@ async function submitCreateRule(source) {
   }
 }
 
-//  Step2：规则区头部「新建 Mock 规则」入口（脚本在 body 末尾加载，DOM 已就绪）。
+//  规则区头部「新建 Mock 规则」入口（脚本在 body 末尾加载，DOM 已就绪）。
 (function () {
   const btn = document.getElementById("ruleCreateBtn");
   if (btn) btn.onclick = () => openCreateRuleForm();

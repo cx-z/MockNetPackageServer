@@ -92,7 +92,7 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 		c := *e
 		c.ID = id.ULID()
 		c.SessionID = sessionID
-		// 方案 D：静态资源（video/* 白名单）不存字节——命中时写占位文本、
+		// 静态资源（video/* 白名单）不存字节——命中时写占位文本、
 		// 丢弃 base64，仅保留元信息 + 原 URL（浏览器/302 回放用）。SDK 端仍
 		// 会完整上报字节（现有协议不改），服务端在此判定后直接不落盘。
 		ct := capture.ResponseContentType(e.ResponseHeaders)
@@ -101,9 +101,9 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 			c.ResponseBody = capture.StaticPlaceholder(kind, ct, staticResponseSize(e))
 			c.ResponseBodyBase64 = ""
 		}
-		// M15：大图上传请求体同样不落盘（SDK 只会上传前 1 MiB，保留的必然是
+		// 大图上传请求体同样不落盘（SDK 只会上传前 1 MiB，保留的必然是
 		// 截断字节）。仅当本次上传成功（2xx）才分流——上传失败的请求保留截断
-		// 样本，让 Web 仍能看到当时实际发出的内容（截断徽标走 E3 展示）。
+		// 样本，让 Web 仍能看到当时实际发出的内容，页面将其标为截断。
 		if reqCT := capture.RequestContentType(e.RequestHeaders); isSuccessfulUpload(e) {
 			if kind := capture.ClassifyResponseWithSize(reqCT, staticRequestBodySize(e)); kind == capture.StaticImage {
 				c.RequestStaticKind = kind
@@ -148,6 +148,11 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 	// `since=<seq>` incremental queries only.
 	seq := m.trafficSeq[sessionID]
 	for _, e := range stored {
+		// Keep the original source during rule-hit validation. An invalid H5
+		// source must not be treated as a native hit when its label is dropped.
+		if len(e.Adapter) > capture.MaxAdapterBytes {
+			e.Adapter = ""
+		}
 		seq++
 		e.Seq = seq
 	}
@@ -258,7 +263,7 @@ func staticRequestBodySize(e *capture.TrafficEntry) int64 {
 }
 
 // isSuccessfulUpload reports whether the entry carries a 2xx HTTP response.
-// Upload-request bodies are only dropped for successful requests (M15): a
+// Upload-request bodies are only dropped for successful requests: a
 // failed upload keeps its truncated sample for troubleshooting.
 func isSuccessfulUpload(e *capture.TrafficEntry) bool {
 	return e.StatusCode >= 200 && e.StatusCode < 300

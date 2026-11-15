@@ -80,7 +80,7 @@ func (m *CaptureManager) evaluateRules(ctx context.Context, app, did string) ([]
 // Owner empty, which  treats as a legacy rule (admin-manageable only).
 // Every developer may create rules; ownership is established by this stamp.
 //
-//	Step1 : a hand-authored rule (Source == nil, created from the Web
+//	a hand-authored rule (Source == nil, created from the Web
 //
 // blank form rather than captured traffic) must carry a non-blank note — with
 // no source snapshot the note is the only semantic anchor ("what does this rule
@@ -204,12 +204,12 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 // planOriginResponse decides how a rule created from captured traffic replays
 // its body, before any store write or origin fetch.
 //
-// 方案 D：从视频流量一键创建（"Mock 此请求"带 OriginTrafficID）时，初始回包
+// 从视频流量一键创建（"Mock 此请求"带 OriginTrafficID）时，初始回包
 // 为 302 → 原 URL（未编辑即跳转、不存字节）。规则一旦被编辑（PUT 置
 // Edited=true）就脱离该快路径，回包由用户内容决定。非视频流量仍记录
 // OriginTrafficID 作来源溯源，但回包原样保留。
 //
-// M15：大图流量（responseStaticKind=image）返回回源计划，由调用方取一次原图
+// 大图流量（responseStaticKind=image）返回回源计划，由调用方取一次原图
 // 存成 blob；设备 SDK 版本不支持 media 时回落 302 → 原 URL（与视频快路径同
 // 结构），绝不把「只有占位文本」的规则当成可用规则下发。
 func (m *CaptureManager) planOriginResponse(ctx context.Context, app, did string, in *capture.MockRuleInput) (*capture.MockResponse, *mediaBuildPlan, error) {
@@ -269,7 +269,7 @@ func (m *CaptureManager) planOriginResponse(ctx context.Context, app, did string
 			}, nil
 		}
 		if origin.URL != "" {
-			// M15 老 SDK 回落（与视频快路径同结构）：旧版本没有 media 拉取能力，
+			// 无法拉取 media 的旧版 SDK 走与视频相同的回退路径，
 			// 规则字节又已丢弃，只能给 302 → 原 URL 让设备自己去源站取。源站对象
 			// 可能已过期，这是「至少能试一次」的降级，不是新字节来源。
 			return &capture.MockResponse{
@@ -343,7 +343,7 @@ func canManageRule(caller *RuleCaller, r *capture.MockRule) bool {
 // ErrRuleForbidden (not ErrRuleNotFound) so rule existence cannot be probed.
 func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID string, in *capture.UpdateMockRuleInput, caller *RuleCaller) (*capture.MockRuleView, int, error) {
 	var updated *capture.MockRule
-	// M15：编辑把规则从 media 路径改回普通回包（新 Response 不带 Media）时，
+	// 编辑把规则从 media 路径改回普通回包（新 Response 不带 Media）时，
 	// 落库成功后删除旧 blob——否则文件会一直占着配额直到重启做 orphan 清理。
 	var mediaClearedID string
 	version, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
@@ -395,7 +395,7 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 		}
 		c.Response = in.Response
 		c.Note = in.Note
-		// 方案 D：任何一次保存（含仅开关切换）都视为已编辑，使该规则脱离
+		// 任何一次保存（含仅开关切换）都视为已编辑，使该规则脱离
 		// "未编辑视频规则 → 302 跳转"快路径；此后回包由用户内容决定
 		// （测空 body / 500 / 损坏字节等边界 case）。
 		c.Edited = true
@@ -602,7 +602,7 @@ func (m *CaptureManager) disableDeviceRules(ctx context.Context, app, did string
 }
 
 // ============================================================================
-// Mock rule media (M15 大图字节治理)
+// Mock rule media blobs
 // ============================================================================
 
 // mediaBuildPlan carries what must be fetched from the origin before a rule

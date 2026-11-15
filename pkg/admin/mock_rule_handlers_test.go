@@ -22,7 +22,7 @@ func ruleBody(method, path string, enabled bool) map[string]any {
 			"statusCode": 200,
 			"body":       `{"ok":true}`,
 		},
-		//  Step1: existing HTTP tests model capture-originated rules
+		//  existing HTTP tests model capture-originated rules
 		// ("Mock 此请求") — they carry a source snapshot and may omit the
 		// note (source-bearing creates are exempt).
 		"source": map[string]any{"method": method, "path": path},
@@ -415,7 +415,7 @@ func TestMockRuleAPI_OwnerFields_WebVsSDK(t *testing.T) {
 	assert.True(t, sdkList.Rules[0].Effective)
 }
 
-// ---  Step1: zero-from-scratch (hand-authored) rule create validation ----
+// ---  zero-from-scratch (hand-authored) rule create validation ----
 
 func TestMockRuleAPI_HandAuthoredRules(t *testing.T) {
 	srv := newCaptureTestAPI(t)

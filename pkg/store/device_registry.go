@@ -81,6 +81,12 @@ func (m *CaptureManager) RegisterDevice(ctx context.Context, d *capture.Device) 
 	// (Web falls back to the bundle id when empty).
 	existing.AppName = d.AppName
 	existing.Platform = d.Platform
+	// The capability declaration follows the latest registration —
+	// a rebuilt app may switch instrumentation on/off. Nil keeps the previous
+	// value only when the client did not send the field at all.
+	if d.Capabilities != nil {
+		existing.Capabilities = d.Capabilities
+	}
 	existing.LastSeenAt = now
 	if err := m.devices.Update(ctx, existing); err != nil {
 		return nil, err
@@ -132,6 +138,9 @@ func (m *CaptureManager) RegisterDeviceWithPairing(ctx context.Context, d *captu
 	// owner untouched, only metadata + LastSeenAt).
 	existing.AppName = d.AppName
 	existing.Platform = d.Platform
+	if d.Capabilities != nil {
+		existing.Capabilities = d.Capabilities
+	}
 	existing.LastSeenAt = now
 	if err := m.devices.Update(ctx, existing); err != nil {
 		return nil, err

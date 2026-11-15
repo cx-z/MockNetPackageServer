@@ -541,7 +541,7 @@ paths:
           $ref: '#/components/responses/NotFound'
 
   # ==========================================================================
-  # 3. 流量上传 / 查询（ 实现，本阶段仅契约）
+  # 3. 流量上传 / 查询
   # ==========================================================================
   /traffic:
     post:
@@ -916,7 +916,7 @@ paths:
           $ref: '#/components/responses/NotFound'
 
   # ==========================================================================
-  # 4. Mock 规则（下发与 CRUD，/ 实现，本阶段仅契约）
+  # 4. Mock 规则下发与管理
   # ==========================================================================
   /devices/{app}/{did}/mock-rules:
     get:
@@ -1061,7 +1061,7 @@ paths:
   /devices/{app}/{did}/mock-rules/{ruleId}/media:
     get:
       tags: [mock-rules]
-      summary: 拉取规则二进制回包（M15 大图字节治理）
+      summary: 拉取规则二进制回包
       description: |
         规则 response.media 存在时，SDK 用本接口取原始字节回包，而不是把大图
         塞进规则快照。与 SDK 增量拉取同策略：路由开放（携带 app/did/ruleId，
@@ -1689,8 +1689,8 @@ components:
           description: 注册该设备的账号用户名（Web 手动注册 / 扫码自动注册）；SDK 直接注册的遗留设备为空
         platform:
           type: string
-          enum: [ios]
-          description: 平台（为 Android 预留， 仅 ios）
+          enum: [ios, android]
+          description: 平台（iOS 走 URLProtocol 采集；Android 走 OkHttp / HttpURLConnection / 业务上报）
         osVersion:
           type: string
           description: 系统版本
@@ -1713,6 +1713,34 @@ components:
         currentSession:
           $ref: '#/components/schemas/CaptureSession'
           description: 当前激活会话（仅 capturing 时有值）
+        capabilities:
+          $ref: '#/components/schemas/DeviceCapabilities'
+
+    DeviceCapabilities:
+      type: object
+      description: |
+        SDK 能力声明：平台据此展示这台设备"能抓到什么"、
+        最近一次注册是否已观测到运行时织入调用。旧 SDK 不上报，Web 不渲染任何能力徽标（不误报）。
+      properties:
+        adapters:
+          type: array
+          maxItems: 8
+          description: |
+            该 SDK 支持的采集来源：okhttp / httpurlconnection / business（Android），
+            urlprotocol（iOS）。单条最长 32 个 UTF-8 字节，越界/空条目被丢弃。
+          items:
+            type: string
+            maxLength: 32
+        instrumented:
+          type: boolean
+          description: |
+            最近一次注册是否已观测到 OkHttpClient 构造器执行织入入口。
+            false 表示尚未观测到该信号，具体库的流量覆盖通过实际请求验证。
+        requestBodyTee:
+          type: boolean
+          description: |
+            请求体是否为委托式 tee：边写边采样，不缓冲全量、不重建请求体，
+            线上报文形态（Content-Length / chunked）保持不变。
 
     CreateDeviceRequest:
       type: object
@@ -1743,7 +1771,7 @@ components:
           description: SDK 生成；App 作用域内唯一；App 内持久化（重启不变）；不依赖设备硬件标识
         platform:
           type: string
-          enum: [ios]
+          enum: [ios, android]
           default: ios
         osVersion:
           type: string
@@ -1768,6 +1796,11 @@ components:
           description: |
             扫码自动注册时使用的设备显示名（可选）；不提供时服务端回退为
             platform + did 前缀（如 ios·abcdef123456）。已存在设备复用时不生效（不改名）。
+        capabilities:
+          $ref: '#/components/schemas/DeviceCapabilities'
+          description: |
+            SDK 能力声明（可选）。缺失时不覆盖设备已有的声明；
+            字段越界（>8 条或单条 >32 个 UTF-8 字节）只丢弃该条目，注册照常成功。
 
     PairingTokenRequest:
       type: object
@@ -2046,7 +2079,7 @@ components:
           type: string
           enum: ["", "image"]
           description: |
-            请求体静态分类（M15 方案 D 阶段二：图片预览与大图字节治理）。
+            请求体静态资源分类。
             仅在本次上传成功（2xx）且请求体为大于 1 MiB 的 image/* 时置 image：
             服务端丢弃已上传的截断字节、RequestStaticBody 写占位，Web 卡片按原 URL 预览。
             上传失败（非 2xx）时保留截断样本以便排查，该字段保持空串。
@@ -2075,7 +2108,7 @@ components:
           type: string
           enum: ["", "video", "image"]
           description: |
-            静态资源分类（方案 D：视频响应预览与大Body存储治理 + M15 大图治理）。
+            响应体静态资源分类。
             空串=业务 API（字节按 UTF-8/base64 原路径保存）；
             video=命中 video/* 白名单，服务端 ingestion 时丢弃 base64、写占位
             ResponseBody，仅保留元信息 + 原 URL（entry.url）供浏览器/302 回放；
@@ -2144,7 +2177,13 @@ components:
           description: 服务端已确认规则 ID 与设备和请求的匹配键一致。旧记录及无法核验的 ID 缺省。
         adapter:
           type: string
-          description: 可选采集来源。iOS WKWebView 使用 wkwebview-fetch、wkwebview-xhr、wkwebview-beacon、wkwebview-eventsource、wkwebview-navigation 或 wkwebview-resource。
+          description: |
+            可选的 SDK 采集来源。iOS WKWebView 使用 wkwebview-fetch、wkwebview-xhr、
+            wkwebview-beacon、wkwebview-eventsource、wkwebview-navigation 或 wkwebview-resource。
+            Android 使用 `okhttp`（OkHttp 应用拦截器/插件注入）、`httpurlconnection`
+            （HttpURLConnection 包装器），或通过 `MockNetPack.reportHttp` 上报的
+            业务自填值（如 `cronet`）。`wkwebview-*` 为 WebKit 保留。来源与正文完整度独立。
+            超过 32 个 UTF-8 字节时仅丢弃来源，仍接收该条请求。老记录可缺省。
         seq:
           type: integer
           description: |
@@ -2595,7 +2634,7 @@ components:
           allOf:
             - $ref: '#/components/schemas/MediaRef'
           description: |
-            服务端存储的二进制回包（M15 方案 D 阶段二）。存在时 SDK 必须调用
+            服务端存储的二进制回包。存在时 SDK 必须调用
             GET /devices/{app}/{did}/mock-rules/{ruleId}/media 取原始字节回包，
             body/bodyBase64 为空。仅当设备 SDK 版本 ≥ 支持阈值（iOS 1.1.1；Android 尚未纳入版本）
             时，"Mock 此请求"才会生成 media 规则；低版本设备保持原有回包。
@@ -2604,7 +2643,7 @@ components:
     MediaRef:
       type: object
       required: [sha256, size]
-      description: 服务端 blob 引用（M15）；SDK 以其 sha256 作缓存 key。
+      description: SDK 以服务端 blob 的 sha256 作为缓存键。
       properties:
         sha256:
           type: string
@@ -2667,7 +2706,7 @@ components:
           type: boolean
           default: false
           description: |
-            是否已被用户编辑过（ 方案 D）。任何一次 PUT 保存（含仅开关切换）
+            规则是否已被用户编辑。任何一次 PUT 保存（含仅开关切换）
             都置 true。未编辑的视频规则回放为 302 → 原 URL；已编辑后回包由
             用户内容决定（测空 body / 500 / 损坏字节等边界 case）。
             纯服务端字段：不回发 SDK。

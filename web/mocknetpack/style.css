@@ -77,6 +77,9 @@ button.mini.active { background: var(--primary); color: #fff; }
 .t-url { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
          color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .t-status { flex: none; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+/* 采集方式徽标（okhttp / httpurlconnection / 业务自填；老记录不展示） */
+.t-adapter { flex: none; font-size: 11px; color: var(--muted); border: 1px solid var(--border);
+             border-radius: 8px; padding: 0 6px; background: var(--card); }
 .st-2xx { color: #1e7d3c; }
 .st-3xx { color: #b26a00; }
 .st-4xx { color: #d9480f; }
@@ -416,7 +419,7 @@ pre.raw { white-space: pre-wrap; word-break: break-all; font-size: 12px; backgro
 /* push mock 规则区块（置于日志上方） */
 .lc-push-rule-title { margin-bottom: 8px; }
 
-/* ===== 方案 D：视频响应卡片（静态资源不存字节，原 URL 回放） ===== */
+/* ===== 视频响应卡片（静态资源不存字节，原 URL 回放） ===== */
 .media-card {
   display: flex; gap: 12px; padding: 12px;
   border: 1px solid var(--border); border-radius: 8px;
@@ -447,7 +450,7 @@ pre.raw { white-space: pre-wrap; word-break: break-all; font-size: 12px; backgro
 }
 .media-open:hover { background: var(--primary-hover); }
 
-/* ===== M15 方案 D 阶段二：大图预览卡片 / 截断徽标 / 灯箱 ===== */
+/* ===== 大图预览卡片 / 截断徽标 / 灯箱 ===== */
 .media-note { font-size: 12px; color: var(--muted); line-height: 1.5; }
 .img-media-cover {
   display: flex; align-items: center; justify-content: center;
@@ -479,3 +482,18 @@ img.img-media-full { cursor: zoom-in; }
   position: fixed; top: 16px; right: 22px; color: #fff; font-size: 28px;
   line-height: 1; cursor: pointer; user-select: none;
 }
+
+/* 设备能力徽标（采集来源 / 插桩状态） */
+.cap-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  background: #eef2ff;
+  color: #3b4cca;
+  border: 1px solid #dfe3ff;
+  margin-right: 4px;
+}
+.cap-badge.on { background: #e8f7ee; color: #1f7a45; border-color: #cdecd9; }
+.cap-badge.off { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }

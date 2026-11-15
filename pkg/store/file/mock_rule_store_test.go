@@ -19,7 +19,7 @@ func ruleInput(method, path string, enabled bool) *capture.MockRuleInput {
 		Path:     path,
 		Response: capture.MockResponse{StatusCode: 200, Body: `{"ok":true}`},
 		Enabled:  enabled,
-		//  Step1: existing tests model capture-originated rules ("Mock 此
+		//  existing tests model capture-originated rules ("Mock 此
 		// 请求") — they carry a source snapshot and may omit the note
 		// (source-bearing creates are exempt). Hand-authored rules are exercised
 		// explicitly in TestMockRule_HandAuthoredNoteRequired below.
@@ -510,7 +510,7 @@ func TestMockRule_UpdateNoteAndKeepEnabled(t *testing.T) {
 	}
 }
 
-// ---  Step1: hand-authored rules (Source == nil) --------------------------
+// ---  hand-authored rules (Source == nil) --------------------------
 
 func TestMockRule_HandAuthoredNoteRequired(t *testing.T) {
 	m, _ := newCaptureManager(t, 0)

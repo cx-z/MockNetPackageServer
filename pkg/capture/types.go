@@ -2,13 +2,19 @@ package capture
 
 import "time"
 
-// Platform identifies the device operating system. Only iOS is supported in
-// ; the type exists so the model stays platform-neutral (G5).
+// MaxAdapterBytes bounds capture-source labels in both device and traffic data.
+const MaxAdapterBytes = 32
+
+// Platform identifies the device operating system. Android SDKs declare their
+// capture adapters (okhttp / httpurlconnection / business) via capabilities.
 type Platform string
 
 const (
-	// PlatformIOS is the iOS platform.
+	// PlatformIOS is the iOS platform (URLProtocol-based capture).
 	PlatformIOS Platform = "ios"
+	// PlatformAndroid is the Android platform (OkHttp interceptor +
+	// HttpURLConnection wrapper + opt-in business self-report).
+	PlatformAndroid Platform = "android"
 )
 
 // ============================================================================
@@ -65,6 +71,24 @@ type Device struct {
 	LastSeenAt time.Time `json:"lastSeenAt"`
 	// RegisteredAt is when the device first registered.
 	RegisteredAt time.Time `json:"registeredAt"`
+	// Capabilities is the SDK capability declaration reported at registration:
+	// which capture adapters the SDK ships and whether build-time
+	// instrumentation is active. Nil for SDKs that predate the field.
+	Capabilities *DeviceCapabilities `json:"capabilities,omitempty"`
+}
+
+// DeviceCapabilities is the SDK self-declaration of capture coverage
+// (contract RegisterDeviceRequest.capabilities).
+type DeviceCapabilities struct {
+	// Adapters lists the capture sources the SDK supports on this build
+	// ("okhttp", "httpurlconnection", "business"); iOS reports "urlprotocol".
+	Adapters []string `json:"adapters,omitempty"`
+	// Instrumented records whether the SDK observed its woven constructor hook
+	// when it reported these capabilities.
+	Instrumented bool `json:"instrumented"`
+	// RequestBodyTee is true when request bodies are captured by a delegating
+	// tee (no full buffering / rebuild of the outgoing request).
+	RequestBodyTee bool `json:"requestBodyTee,omitempty"`
 }
 
 // DeriveDeviceStatus computes the device status for API output.
@@ -220,7 +244,7 @@ type TrafficEntry struct {
 	// never used for replay. Present when the request body is binary protocol
 	// (e.g. xcp AES+gzip) and the decoder succeeded.
 	RequestBodyDecoded string `json:"requestBodyDecoded,omitempty"`
-	// RequestStaticKind marks a large upload request body (M15): an image/*
+	// RequestStaticKind marks a large upload request body: an image/*
 	// request whose body exceeds the SDK's 1 MiB capture cap. Such a body can
 	// only arrive truncated, so it is NOT stored — RequestBody holds a
 	// placeholder, RequestBodyBase64 is empty, and the original URL is the only
@@ -277,8 +301,10 @@ type TrafficEntry struct {
 	// MockHitVerified is set by the server when the reported rule ID belongs
 	// to this device and matches the request endpoint.
 	MockHitVerified bool `json:"mockHitVerified,omitempty"`
-	// Adapter identifies the SDK capture source. WKWebView uses
-	// "wkwebview-fetch" or "wkwebview-xhr"; older records may omit it.
+	// Adapter identifies the SDK capture source. WKWebView uses "wkwebview-*"
+	// identifiers, including "wkwebview-fetch" and "wkwebview-xhr". Android
+	// reports "okhttp", "httpurlconnection", or a business-supplied value
+	// (e.g. "cronet") via MockNetPack.reportHttp. Older records may omit it.
 	Adapter string `json:"adapter,omitempty"`
 }
 
@@ -317,14 +343,14 @@ type MockResponse struct {
 	// It lives inside response (not on the rule root) so old rules without it
 	// default to 0 and behaviour is unchanged.
 	DelayMs int `json:"delayMs,omitempty"`
-	// Media points at a server-stored binary body (M15): when present the SDK
+	// Media points at a server-stored binary body: when present the SDK
 	// must fetch GET /devices/{app}/{did}/mock-rules/{ruleId}/media instead of
 	// replaying Body/BodyBase64, which stay empty for these rules. Nil = no
 	// media, the legacy body path applies.
 	Media *MediaRef `json:"media,omitempty"`
 }
 
-// MediaRef identifies the server-side blob backing a MockResponse (M15).
+// MediaRef identifies the server-side blob backing a MockResponse.
 // SHA256 is the blob's content hash, used to detect a rewritten rule blob and
 // to key the SDK-side LRU cache (an edited rule gets a new hash → no stale hit).
 type MediaRef struct {

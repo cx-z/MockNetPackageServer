@@ -9,7 +9,7 @@ import (
 	"github.com/getmockd/mockd/pkg/store"
 )
 
-// M15 方案 D 阶段二：大图字节治理的入库分流测试。
+// 大图字节治理的入库分流测试。
 // 规则：image/* 且字节 > ImageInlineLimit（1 MiB）→ 丢弃字节、只留占位 + 原 URL；
 // 请求体一侧额外要求本次上传成功（2xx），失败上传保留截断样本供排查。
 

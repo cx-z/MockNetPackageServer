@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// MockNetPack web: M15 大图预览（静态大图卡片 / 截断徽标 / 灯箱入口）回归测试
+// MockNetPack web: 大图预览（静态大图卡片 / 截断徽标 / 灯箱入口）回归测试
 // （node，无浏览器依赖）。
 // 运行：node tests/image-preview.test.js（在 web/mocknetpack 目录下）。
 // ============================================================================

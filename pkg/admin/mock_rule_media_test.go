@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// M15 方案 D 阶段二端到端：大图抓包 → 建规则回源存 blob → SDK 按 media 拉取。
+// 大图规则端到端测试：大图抓包 → 建规则回源存 blob → SDK 按 media 拉取。
 // 覆盖路由（含 open 的 media 路由）、版本门控、设备隔离与回源失败 400 原因码。
 
 func registerDeviceWithSDK(t *testing.T, srv *httptest.Server, app, did, sdkVersion string) {
