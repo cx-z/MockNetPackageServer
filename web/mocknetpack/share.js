@@ -53,6 +53,7 @@ async function renderShareView(shareId) {
     }
 
     const e = snap.entry;
+    const h5 = h5TrafficKind(e);
     const headRows = (h) => Object.entries(h || {})
       .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
         '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("");
@@ -70,15 +71,21 @@ async function renderShareView(shareId) {
       }) + "</div>";
     const respTab =
         '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
-          (e.statusCode != null ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "") : "请求失败： " + esc(e.error || "")) +
+          (h5DiagnosticStage(e) ? esc(h5ResponseStatus(e)) :
+            e.statusCode != null ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "") :
+            h5 ? esc(e.error || "浏览器未暴露响应") : "请求失败： " + esc(e.error || "")) +
         "</span></div>" +
-        '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + (e.durationMs || 0) + " ms</span></div>" +
+        (h5DiagnosticStage(e) && (e.errorDomain || e.errorCode != null)
+          ? '<div class="d-kv"><span class="d-k">错误域/码</span><span class="d-v">' +
+            esc(e.errorDomain || "—") + " / " + esc(String(e.errorCode ?? "—")) + "</span></div>" : "") +
+        '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + trafficDuration(e, " ms") + "</span></div>" +
         '<div class="d-kv"><span class="d-k">时间</span><span class="d-v">' + esc(e.timestamp || "—") + "</span></div>" +
+        trafficMockHtml(e) +
       '<div class="d-block"><div class="d-title">响应头</div>' + (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
       '<div class="d-block"><div class="d-title">响应体</div>' + bodyHtml(e.responseBodyDecoded || e.responseBody, {
         contentType: headerValue(e.responseHeaders, "Content-Type"),
         base64: e.responseBodyBase64,
-        staticKind: e.responseStaticKind,
+        staticKind: trafficResponseStaticKind(e),
         url: e.url,
         contentLength: headerValue(e.responseHeaders, "Content-Length"),
         contentRange: headerValue(e.responseHeaders, "Content-Range"),
@@ -92,6 +99,7 @@ async function renderShareView(shareId) {
         "</div>" +
         '<div style="margin-bottom:8px;color:var(--muted);font-size:12px">MockNetPack 请求分享 · 有效期至 ' + esc(expDate.toLocaleString()) + "</div>" +
         '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
+        (h5 ? '<div class="d-v">H5 · ' + h5 + "</div>" : "") +
         '<div class="tabs">' +
           '<button class="tab active" data-tab="req">请求</button>' +
           '<button class="tab" data-tab="resp">响应</button>' +

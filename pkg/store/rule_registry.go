@@ -20,11 +20,17 @@ import (
 // Mock rules
 // ============================================================================
 
-// interfaceKey identifies a mockable endpoint by Method + URL path (Query/Body
-// do not participate in matching, requirement ).
+// interfaceKey identifies an endpoint by method and path, plus origin for H5.
 type interfaceKey struct {
-	method string
-	path   string
+	method, path, origin string
+}
+
+// mockInterface uses an empty origin for legacy Native matching.
+func mockInterface(method, path, scope, origin string) interfaceKey {
+	if scope == capture.H5MockScope {
+		return interfaceKey{strings.ToUpper(method), path, origin}
+	}
+	return interfaceKey{method, path, ""}
 }
 
 // evaluateRules recomputes the runtime Effective flag for every rule of a device
@@ -32,11 +38,7 @@ type interfaceKey struct {
 // when it is the sole enabled rule on its interface; an interface with >1
 // enabled rule mocks nothing and is reported as a conflict.
 func (m *CaptureManager) evaluateRules(ctx context.Context, app, did string) ([]*capture.MockRuleView, []capture.MockRuleConflict, int, error) {
-	all, err := m.rules.List(ctx, &MockRuleFilter{App: app, Did: did})
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	version, err := m.rules.GetRuleVersion(ctx, app, did)
+	all, version, err := m.rules.Snapshot(ctx, app, did)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -44,13 +46,13 @@ func (m *CaptureManager) evaluateRules(ctx context.Context, app, did string) ([]
 	enabledCount := make(map[interfaceKey]int)
 	for _, r := range all {
 		if r.Enabled {
-			enabledCount[interfaceKey{r.Method, r.Path}]++
+			enabledCount[mockInterface(r.Method, r.Path, r.Scope, r.Origin)]++
 		}
 	}
 
 	views := make([]*capture.MockRuleView, 0, len(all))
 	for _, r := range all {
-		eff := r.Enabled && enabledCount[interfaceKey{r.Method, r.Path}] == 1
+		eff := r.Enabled && enabledCount[mockInterface(r.Method, r.Path, r.Scope, r.Origin)] == 1
 		c := *r
 		views = append(views, &capture.MockRuleView{MockRule: &c, Effective: eff})
 	}
@@ -59,6 +61,7 @@ func (m *CaptureManager) evaluateRules(ctx context.Context, app, did string) ([]
 	for k, n := range enabledCount {
 		if n > 1 {
 			conflicts = append(conflicts, capture.MockRuleConflict{
+				Origin:  k.origin,
 				Method:  k.method,
 				Path:    k.path,
 				Message: MockRuleConflictMessage,
@@ -91,9 +94,19 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 
 	// 回包来源（视频 302 / 大图回源 media / 原样保留）由 planOriginResponse 决定，
 	// 其中包含 OriginTrafficID 的跨设备归属校验。
-	videoRedirect, mediaPlan, err := m.planOriginResponse(ctx, app, did, in.OriginTrafficID)
+	videoRedirect, mediaPlan, err := m.planOriginResponse(ctx, app, did, in)
 	if err != nil {
 		return nil, 0, err
+	}
+
+	if in.Scope == capture.H5MockScope {
+		origin, valid := capture.HTTPOrigin(in.Origin)
+		if !valid || !capture.ValidH5MockKey(in.Method, in.Path) || !capture.ValidH5MockResponse(in.Method, in.Response) {
+			return nil, 0, ErrInvalidH5Rule
+		}
+		in.Origin = origin
+	} else if in.Origin != "" || (in.Scope != "" && in.Scope != "native") {
+		return nil, 0, ErrInvalidH5Rule
 	}
 
 	// 回源取数在 Mutate 之前完成：网络等待绝不能占住存储锁（Mutate 内是同步
@@ -116,7 +129,7 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 	version, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
 		if in.Enabled {
 			for _, r := range rules {
-				if r.Enabled && r.Method == in.Method && r.Path == in.Path {
+				if r.Enabled && mockInterface(r.Method, r.Path, r.Scope, r.Origin) == mockInterface(in.Method, in.Path, in.Scope, in.Origin) {
 					return nil, false, ErrRuleConflict
 				}
 			}
@@ -135,6 +148,8 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 			Did:             did,
 			Method:          in.Method,
 			Path:            in.Path,
+			Scope:           in.Scope,
+			Origin:          in.Origin,
 			Response:        in.Response,
 			Enabled:         in.Enabled,
 			Note:            in.Note,
@@ -197,7 +212,8 @@ func (m *CaptureManager) CreateMockRule(ctx context.Context, app, did string, in
 // M15：大图流量（responseStaticKind=image）返回回源计划，由调用方取一次原图
 // 存成 blob；设备 SDK 版本不支持 media 时回落 302 → 原 URL（与视频快路径同
 // 结构），绝不把「只有占位文本」的规则当成可用规则下发。
-func (m *CaptureManager) planOriginResponse(ctx context.Context, app, did, originTrafficID string) (*capture.MockResponse, *mediaBuildPlan, error) {
+func (m *CaptureManager) planOriginResponse(ctx context.Context, app, did string, in *capture.MockRuleInput) (*capture.MockResponse, *mediaBuildPlan, error) {
+	originTrafficID := in.OriginTrafficID
 	if originTrafficID == "" {
 		return nil, nil, nil
 	}
@@ -213,6 +229,25 @@ func (m *CaptureManager) planOriginResponse(ctx context.Context, app, did, origi
 	origin, err := m.GetTraffic(ctx, originTrafficID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if strings.HasPrefix(origin.Adapter, "wkwebview-") {
+		if !capture.H5MockableAdapter(origin.Adapter) || in.Scope == "native" {
+			return nil, nil, ErrInvalidH5Rule
+		}
+		host, valid := capture.HTTPOrigin(origin.URL)
+		requestedHost, requestedValid := capture.HTTPOrigin(in.Origin)
+		if !valid || (in.Origin != "" && (!requestedValid || requestedHost != host)) ||
+			!strings.EqualFold(in.Method, origin.Method) || in.Path != origin.Path {
+			return nil, nil, ErrInvalidH5Rule
+		}
+		in.Scope, in.Origin = capture.H5MockScope, host
+		if in.Source != nil {
+			in.Source.ResponseStaticKind = origin.ResponseStaticKind
+		}
+		return nil, nil, nil
+	}
+	if in.Scope == capture.H5MockScope {
+		return nil, nil, ErrInvalidH5Rule
 	}
 	switch {
 	case origin.ResponseStaticKind == capture.StaticVideo && origin.URL != "":
@@ -331,6 +366,10 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 			return nil, false, ErrRuleForbidden
 		}
 
+		if existing.Scope == capture.H5MockScope && !capture.ValidH5MockResponse(existing.Method, in.Response) {
+			return nil, false, ErrInvalidH5Rule
+		}
+
 		// : note is required only when the PUT actually edits the canned
 		// response (statusCode/headers/body changed). A pure toggle echoes the
 		// stored response unchanged and may leave the note blank — rules created
@@ -344,7 +383,7 @@ func (m *CaptureManager) UpdateMockRule(ctx context.Context, app, did, ruleID st
 		// rule on (Enabled pointer present and true, while currently off).
 		if in.Enabled != nil && *in.Enabled && !existing.Enabled {
 			for _, r := range rules {
-				if r.ID != ruleID && r.Enabled && r.Method == existing.Method && r.Path == existing.Path {
+				if r.ID != ruleID && r.Enabled && mockInterface(r.Method, r.Path, r.Scope, r.Origin) == mockInterface(existing.Method, existing.Path, existing.Scope, existing.Origin) {
 					return nil, false, ErrRuleConflict
 				}
 			}
@@ -443,6 +482,11 @@ func (m *CaptureManager) ListMockRules(ctx context.Context, app, did string) ([]
 // it returns only the Effective rules (abnormal interfaces are excluded
 // entirely) and the new version.
 func (m *CaptureManager) ListActiveMockRules(ctx context.Context, app, did string, sinceVersion int) ([]*capture.MockRuleView, int, bool, error) {
+	return m.ListActiveMockRulesForScope(ctx, app, did, sinceVersion, "")
+}
+
+// ListActiveMockRulesForScope returns a versioned snapshot for one SDK adapter.
+func (m *CaptureManager) ListActiveMockRulesForScope(ctx context.Context, app, did string, sinceVersion int, scope string) ([]*capture.MockRuleView, int, bool, error) {
 	views, _, version, err := m.evaluateRules(ctx, app, did)
 	if err != nil {
 		return nil, 0, false, err
@@ -452,7 +496,7 @@ func (m *CaptureManager) ListActiveMockRules(ctx context.Context, app, did strin
 	}
 	active := make([]*capture.MockRuleView, 0, len(views))
 	for _, v := range views {
-		if v.Effective {
+		if v.Effective && (v.Scope == capture.H5MockScope) == (scope == capture.H5MockScope) {
 			active = append(active, v)
 		}
 	}
@@ -497,26 +541,36 @@ func (m *CaptureManager) PurgeExpiredRules(ctx context.Context) {
 		m.log.Warn("rule janitor: list rules failed", "error", err)
 		return
 	}
-	now := time.Now()
-	bumped := make(map[string]bool) // (app\0did) already bumped
+	cutoff := time.Now().Add(-m.cfg.MockRuleRetention)
+	devices := make(map[[2]string]bool)
 	for _, r := range all {
-		if now.Sub(ruleUsageTime(r)) <= m.cfg.MockRuleRetention {
-			continue
+		if ruleUsageTime(r).Before(cutoff) {
+			devices[[2]string{r.App, r.Did}] = true
 		}
-		if err := m.rules.Delete(ctx, r.ID); err != nil {
-			m.log.Warn("rule janitor: delete expired rule failed", "rule", r.ID, "error", err)
-			continue
-		}
-		m.mediaStore.Delete(r.ID)
-		key := r.App + "\x00" + r.Did
-		if !bumped[key] {
-			if _, err := m.rules.BumpRuleVersion(ctx, r.App, r.Did); err != nil {
-				m.log.Warn("rule janitor: bump version failed", "app", r.App, "did", r.Did, "error", err)
+	}
+	for device := range devices {
+		var deleted []*capture.MockRule
+		app, did := device[0], device[1]
+		_, err := m.rules.Mutate(ctx, app, did, func(rules []*capture.MockRule) ([]*capture.MockRule, bool, error) {
+			kept := rules[:0]
+			for _, r := range rules {
+				if ruleUsageTime(r).Before(cutoff) {
+					deleted = append(deleted, r)
+				} else {
+					kept = append(kept, r)
+				}
 			}
-			bumped[key] = true
+			return kept, len(deleted) != 0, nil
+		})
+		if err != nil {
+			m.log.Warn("rule janitor: purge expired rules failed", "app", app, "did", did, "error", err)
+			continue
 		}
-		m.log.Info("rule janitor: purged expired mock rule",
-			"rule", r.ID, "method", r.Method, "path", r.Path, "lastUsedAt", ruleUsageTime(r))
+		for _, r := range deleted {
+			m.mediaStore.Delete(r.ID)
+			m.log.Info("rule janitor: purged expired mock rule",
+				"rule", r.ID, "method", r.Method, "path", r.Path, "lastUsedAt", ruleUsageTime(r))
+		}
 	}
 }
 

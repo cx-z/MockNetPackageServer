@@ -2,7 +2,10 @@ package file
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -559,5 +562,82 @@ func TestMockRule_HandAuthoredNoteRequired(t *testing.T) {
 	views, _, _, err := m.ListMockRules(ctx, "app", "d1")
 	if err != nil || len(views) != 2 {
 		t.Fatalf("List = %d rules (err=%v), want 2", len(views), err)
+	}
+}
+
+func TestMockRule_H5DiskProjection(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "data.json")
+	mixed := `{"version":1,"mockRules":[{"id":"native","app":"app","did":"device","enabled":true},
+		{"id":"page","app":"app","did":"device","scope":"h5","origin":"https://api.example","enabled":true}]}`
+	if err := os.WriteFile(file, []byte(mixed), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fs := New(store.Config{DataDir: dir})
+	if err := fs.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+	disk, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This is the subset understood by old binaries, which ignore h5MockRules.
+	var legacy struct {
+		MockRules []struct{ ID string } `json:"mockRules"`
+	}
+	if err := json.Unmarshal(disk, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy.MockRules) != 1 || legacy.MockRules[0].ID != "native" {
+		t.Fatalf("legacy projection includes H5: %+v", legacy.MockRules)
+	}
+	if err := fs.reloadFromDisk(); err != nil {
+		t.Fatal(err)
+	}
+	rules, _, err := fs.MockRules().Snapshot(t.Context(), "app", "device")
+	if err != nil || len(rules) != 2 || rules[1].Scope != "h5" {
+		t.Fatalf("reload lost a scoped rule: %v, %v", rules, err)
+	}
+}
+
+// A telemetry update after a configuration write must keep that newer
+// configuration and its version, while recording the historical hit.
+func TestMockRule_LateHitKeepsDisabledEdit(t *testing.T) {
+	fs := newTestStore(t)
+	rules := fs.MockRules()
+	ctx := t.Context()
+	original := &capture.MockRule{ID: "r1", App: "app", Did: "device", Enabled: true,
+		Response: capture.MockResponse{StatusCode: 200, Body: "previous"}}
+	if _, err := rules.Mutate(ctx, "app", "device", func(rows []*capture.MockRule) ([]*capture.MockRule, bool, error) {
+		return append(rows, original), true, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hitAt := time.Now()
+	version, err := rules.Mutate(ctx, "app", "device", func(rows []*capture.MockRule) ([]*capture.MockRule, bool, error) {
+		row := *rows[0]
+		row.Enabled = false
+		row.Response.Body = "edited"
+		row.LastUsedAt = hitAt.Add(time.Second)
+		rows[0] = &row
+		return rows, true, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rules.TouchHits(ctx, "app", "device", hitAt, func(rule *capture.MockRule) bool {
+		return rule.ID == original.ID
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, gotVersion, err := rules.Snapshot(ctx, "app", "device")
+	if err != nil || len(rows) != 1 || gotVersion != version {
+		t.Fatalf("snapshot = %v, version = %v, err = %v", rows, gotVersion, err)
+	}
+	r := rows[0]
+	if r.Enabled || r.Response.Body != "edited" || r.LastHitAt == nil ||
+		!r.LastHitAt.Equal(hitAt) || !r.LastUsedAt.After(hitAt) {
+		t.Fatalf("hit overwrote rule configuration or usage metadata: %+v", r)
 	}
 }

@@ -377,6 +377,10 @@ type MockRuleFilter struct {
 // (requirement ); the runtime Effective flag is computed by the manager,
 // never stored here.
 type MockRuleStore interface {
+	// Snapshot reads the device rules and their version under the same lock.
+	Snapshot(ctx context.Context, app, did string) ([]*capture.MockRule, int, error)
+	// TouchHits updates hit and retention timestamps on fresh matching rows.
+	TouchHits(ctx context.Context, app, did string, at time.Time, matches func(*capture.MockRule) bool) error
 	// List returns all rules matching the filter (device-scoped).
 	List(ctx context.Context, filter *MockRuleFilter) ([]*capture.MockRule, error)
 	// Get returns a single rule by ID.

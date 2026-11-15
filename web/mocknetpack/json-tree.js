@@ -94,9 +94,12 @@ function bodyHtml(text, opts) {
  *  非静态 / 缺 url → null（回退原有文本/JSON 路径）。 */
 function staticResourceHtml(opts) {
   if (!opts || !opts.url) return null;
-  if (opts.staticKind === "video") return videoResourceHtml(opts);
-  if (opts.staticKind === "image") return staticImageHtml(opts);
-  return null;
+  if (opts.staticKind !== "video" && opts.staticKind !== "image") return null;
+  let url;
+  try { url = new URL(opts.url); } catch (_) { return null; }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  const media = { ...opts, url: url.href };
+  return opts.staticKind === "video" ? videoResourceHtml(media) : staticImageHtml(media);
 }
 
 /** 视频响应卡片 HTML：<video preload="metadata"> 只拉前几百 KB 自动出首帧当

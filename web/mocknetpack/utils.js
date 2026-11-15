@@ -78,6 +78,69 @@ function methodCls(m) {
   return "other";
 }
 
+/** H5 请求的 API 或页面加载来源。 */
+function h5TrafficKind(entry) {
+  if (entry?.adapter === "wkwebview-fetch") return "fetch";
+  if (entry?.adapter === "wkwebview-xhr") return "XHR";
+  if (entry?.adapter === "wkwebview-beacon") return "Beacon";
+  if (entry?.adapter === "wkwebview-eventsource") return "EventSource";
+  if (entry?.adapter === "wkwebview-navigation") return "主文档";
+  if (entry?.adapter === "wkwebview-resource") return "页面资源";
+  return "";
+}
+
+/** 业务 API 条目可作为 H5 规则的匹配来源。 */
+function h5MockableTraffic(entry) {
+  return entry?.adapter === "wkwebview-fetch" || entry?.adapter === "wkwebview-xhr";
+}
+
+/** H5 图片统一用原 URL 预览，旧的页面资源记录可按路径后缀识别。 */
+function trafficResponseStaticKind(entry) {
+  if (!h5TrafficKind(entry) || entry.method !== "GET") return entry.responseStaticKind;
+  if (entry.error || entry.statusCode >= 400 || entry.terminalStage === "h5ResourceError") return entry.responseStaticKind;
+
+  let url;
+  try { url = new URL(entry.url); } catch (_) { return entry.responseStaticKind; }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return entry.responseStaticKind;
+  const contentType = headerValue(entry.responseHeaders, "Content-Type");
+  if (/^image\//i.test(contentType || "")) return "image";
+  if (entry.responseStaticKind || contentType || entry.adapter !== "wkwebview-resource") return entry.responseStaticKind;
+  return /\.(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|webp)$/i.test(url.pathname) ? "image" : undefined;
+}
+
+/** 浏览器诊断阶段独立于 HTTP 状态码，排队和观测均有各自含义。 */
+function h5DiagnosticStage(entry) {
+  switch (entry?.terminalStage) {
+  case "h5BeaconQueued": return ["已排队", "浏览器已将 Beacon 排队，未提供 HTTP 回包"];
+  case "h5BeaconRejected": return ["未排队", "浏览器未接受 Beacon 排队", true];
+  case "h5SSEOpen": return ["已连接", "EventSource 首次连接已打开"];
+  case "h5SSEError": return ["连接错误", "EventSource 首次连接触发 error，浏览器未提供错误细节", true];
+  case "h5NavigationFinished": return ["加载完成", "WebKit 主文档导航完成"];
+  case "h5NavigationFailed": return ["导航失败", "WebKit 主文档导航失败", true];
+  case "h5ResourceLoaded": return ["已加载", "资源元素触发 load"];
+  case "h5ResourceObserved":
+    return ["已观测", entry.statusCode == null ? "已观测到资源，HTTP 状态码不可用" : "已观测到资源"];
+  case "h5ResourceError": return ["加载失败", "浏览器报告资源加载失败", true];
+  default: return null;
+  }
+}
+
+/** 诊断详情同时展示可见 HTTP 状态与浏览器加载结果。 */
+function h5ResponseStatus(entry) {
+  const diagnostic = h5DiagnosticStage(entry);
+  if (!diagnostic) {
+    return entry.statusCode == null ? entry.error || "浏览器未暴露响应" : String(entry.statusCode);
+  }
+  const status = entry.statusCode == null ? "" : entry.statusCode + " · ";
+  return status + diagnostic[1] + (entry.error ? "：" + entry.error : "");
+}
+
+/** 页面资源仅在存在 Resource Timing 耗时时展示毫秒数。 */
+function trafficDuration(entry, suffix) {
+  if (entry.adapter === "wkwebview-resource" && !entry.durationMs) return "—";
+  return (entry.durationMs || 0) + suffix;
+}
+
 // 把一条流量记录重建为完整 HTTP 报文交换（请求报文 + 响应报文，各自为
 // HTTP/1.1 原始格式：请求行/状态行 + Host 与全部头 + 空行 + 体），供
 // 「复制」按钮带走请求和回包的全部内容（粘贴到文档 / 工单 / 交给 AI 分析）。
@@ -154,4 +217,14 @@ function newUuid() {
     const r = (Math.random() * 16) | 0;
     return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
   });
+}
+
+
+/** 展示抓包时记录的规则 ID，并区分服务端已核验与设备上报。 */
+function trafficMockHtml(e, currentConfigNote = "") {
+  if (!e.mocked) return "";
+  const rule = e.matchedRuleId ? ' · 规则 ID <span class="d-mono">' + esc(e.matchedRuleId) + "</span>" : "";
+  const result = e.mockHitVerified ? "是" : "设备上报，未核验";
+  return '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">' +
+    result + rule + esc(currentConfigNote) + "</span></div>";
 }

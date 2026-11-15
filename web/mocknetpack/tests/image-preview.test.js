@@ -120,8 +120,35 @@ const inline = ctx.bodyHtml("[binary 7441522 bytes]", {
 });
 check("bodyHtml routes inline image to preview+badge", inline.includes("img-trunc-badge"), inline);
 
+// H5 历史图片记录只有原 URL，仍然可加载。新 SDK 支持无后缀图片。
+const h5Image = {
+  adapter: "wkwebview-resource", method: "GET", terminalStage: "h5ResourceObserved",
+  url: "https://cdn.example.com/static/PHOTO.webp?x=image&size=2",
+};
+const cardFor = entry => ctx.bodyHtml("", {
+  url: entry.url, staticKind: ctx.trafficResponseStaticKind(entry), base64: entry.responseBodyBase64,
+});
+const h5Card = cardFor(h5Image);
+check("old H5 image gets the clickable original URL card",
+  h5Card.includes('data-media-url="https://cdn.example.com/static/PHOTO.webp?x=image&amp;size=2"') &&
+  h5Card.includes("data-load-image") && !h5Card.includes("<img "), h5Card);
+check("new H5 image type works without an extension",
+  cardFor({ ...h5Image, url: "https://cdn.example.com/resize?id=42", responseStaticKind: "image" }).includes("img-media-card"));
+check("H5 image fetched by JS also uses the original URL",
+  cardFor({ ...h5Image, adapter: "wkwebview-fetch", url: "https://cdn.example.com/resize?id=42",
+    responseHeaders: { "content-type": ["image/png"] }, responseBodyBase64: TINY_B64 }).includes("img-media-card"));
+check("image suffix in query alone does not trigger image preview",
+  !cardFor({ ...h5Image, url: "https://cdn.example.com/app.js?name=a.png" }).includes("img-media-card"));
+check("failed H5 image keeps its diagnostic",
+  !cardFor({ ...h5Image, terminalStage: "h5ResourceError" }).includes("img-media-card"));
+check("native small image still uses stored bytes",
+  cardFor({ ...h5Image, adapter: undefined, responseBodyBase64: TINY_B64 }).includes("img-preview"));
+
 // ---- 5. 灯箱入口存在（DOM 行为在浏览器里验证，node 侧只查函数可选） ----
 check("openImageLightbox defined", typeof ctx.openImageLightbox === "function");
 check("closeImageLightbox defined", typeof ctx.closeImageLightbox === "function");
 
+assert.doesNotMatch(ctx.bodyHtml("preview", {
+  staticKind: "image", url: "javascript:alert(1)",
+}), /media-open|javascript:/);
 console.log("image-preview.test.js: " + n + " checks passed");

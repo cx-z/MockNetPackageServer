@@ -74,7 +74,7 @@ func runConcurrent(t *testing.T, name string, fnA, fnB func() error) {
 	wg.Wait()
 }
 
-// TestEndSessionPreservesUploadedTrafficForRetention locks the P0-3 + 
+// TestEndSessionPreservesUploadedTrafficForRetention locks the P0-3 +
 // semantics: entries uploaded before EndSession stay in the session (still
 // resolvable by ID for share creation, and listable during the 48h window),
 // and an upload after the end must be rejected with ErrSessionEnded.
@@ -279,8 +279,7 @@ func TestRaceHeartbeatVsGetDevice(t *testing.T) {
 }
 
 // TestRaceRuleTouchVsList covers the same pattern on the rule store: the
-// hourly janitor touches LastUsedAt on listed rules then Updates them, while
-// concurrent rule listing reads the same pointers.
+// traffic ingestion refreshes usage metadata while the SDK reads a snapshot.
 func TestRaceRuleTouchVsList(t *testing.T) {
 	m, _ := newTestManager(t)
 	ctx := context.Background()

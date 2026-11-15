@@ -212,15 +212,7 @@ function renderHistoryList(replace) {
         '<span class="t-time">' + clockTime(e.ts) + "</span>";
     } else {
       el.className = "traffic-row";
-      const statusCls = e.statusCode == null ? "st-err"
-        : e.statusCode < 300 ? "st-2xx" : e.statusCode < 400 ? "st-3xx"
-        : e.statusCode < 500 ? "st-4xx" : "st-5xx";
-      el.innerHTML =
-        '<span class="method ' + methodCls(e.method) + '">' + esc(e.method || "?") + "</span>" +
-        '<span class="t-url">' + esc(e.path || e.url) + (e.query ? "?" + esc(e.query) : "") + "</span>" +
-        '<span class="t-status ' + statusCls + '">' + (e.statusCode ?? "ERR") + "</span>" +
-        '<span class="t-dur">' + e.durationMs + "ms</span>" +
-        '<span class="t-time">' + clockTime(e.timestamp) + "</span>";
+      el.innerHTML = trafficRowHtml(e);
     }
     el.onclick = () => {
       if (historyMode !== "longconn") detail._activeTraffic = e.id;

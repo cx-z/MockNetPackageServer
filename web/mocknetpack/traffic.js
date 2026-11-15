@@ -174,16 +174,7 @@ function renderTraffic(entries) {
   for (const e of entries) {
     const el = document.createElement("div");
     el.className = "traffic-row" + (detail._activeTraffic === e.id ? " active" : "");
-    const statusCls = e.statusCode == null ? "st-err"
-      : e.statusCode < 300 ? "st-2xx" : e.statusCode < 400 ? "st-3xx"
-      : e.statusCode < 500 ? "st-4xx" : "st-5xx";
-    el.innerHTML =
-      '<span class="method ' + methodCls(e.method) + '">' + esc(e.method || "?") + "</span>" +
-      '<span class="t-url">' + esc(e.path || e.url) + (e.query ? "?" + esc(e.query) : "") + "</span>" +
-      '<span class="t-status ' + statusCls + '" title="' + esc(failureStageText(e)) + '">' +
-        (e.statusCode ?? (e.terminalStage ? failureBadge(e) : "ERR")) + "</span>" +
-      '<span class="t-dur">' + e.durationMs + "ms</span>" +
-      '<span class="t-time">' + clockTime(e.timestamp) + "</span>" +
+    el.innerHTML = trafficRowHtml(e) +
       '<button class="t-del" title="删除该日志（不影响已创建的 Mock 规则）">✕</button>';
     el.onclick = () => {
       detail._activeTraffic = e.id;
@@ -235,15 +226,31 @@ async function clearTrafficLog() {
   }
 }
 
+/** 实时和历史列表使用同一套 HTTP 状态以及 H5 来源标签。 */
+function trafficRowHtml(e) {
+  const h5 = h5TrafficKind(e);
+  const diagnostic = h5DiagnosticStage(e);
+  const statusCls = diagnostic?.[2] ? "st-4xx" : e.statusCode == null ? (diagnostic ? "st-2xx" : "st-err")
+    : e.statusCode < 300 ? "st-2xx" : e.statusCode < 400 ? "st-3xx"
+    : e.statusCode < 500 ? "st-4xx" : "st-5xx";
+  return '<span class="method ' + methodCls(e.method) + '">' + esc(e.method || "?") + "</span>" +
+    (h5 ? '<span class="t-h5">H5 · ' + h5 + "</span>" : "") +
+    '<span class="t-url">' + esc(e.path || e.url) + (e.query ? "?" + esc(e.query) : "") + "</span>" +
+    '<span class="t-status ' + statusCls + '" title="' + esc(diagnostic ? h5ResponseStatus(e) : failureStageText(e)) + '">' +
+      esc(diagnostic?.[2] ? diagnostic[0] : e.statusCode ?? diagnostic?.[0] ?? failureBadge(e)) + "</span>" +
+    '<span class="t-dur">' + trafficDuration(e, "ms") + "</span>" +
+    '<span class="t-time">' + clockTime(e.timestamp) + "</span>";
+}
+
 /** mockDelayNote：流量是 Mock 命中时，按 matchedRuleId 从规则列表查配置的
- *  delayMs，>0 时返回「 · 延迟 Xms（规则配置）」小字后缀；否则返回空串。
+ *  delayMs，>0 时返回「 · 延迟 Xms（当前规则配置）」小字后缀；否则返回空串。
  *  规则列表未加载/无匹配规则/未配置延迟时静默不展示。 */
 function mockDelayNote(e) {
-  if (!e || !e.mocked || !e.matchedRuleId) return "";
+  if (!e?.mocked || !e.mockHitVerified || !e.matchedRuleId) return "";
   const rules = (typeof ruleStore !== "undefined" && ruleStore) || [];
   const mr = rules.find((x) => x.id === e.matchedRuleId);
   const d = mr && mr.response && mr.response.delayMs;
-  return (d && d > 0) ? ' · 延迟 ' + d + 'ms（规则配置）' : "";
+  return (d && d > 0) ? ' · 延迟 ' + d + 'ms（当前规则配置）' : "";
 }
 
 /**
@@ -281,6 +288,9 @@ function renderTrafficDetail(e, target) {
   detail._activeRule = null;
   document.querySelectorAll(".rule-row").forEach((el) => el.classList.remove("active"));
   const box = target || $("trafficDetail");
+  const h5 = h5TrafficKind(e);
+  const diagnostic = h5DiagnosticStage(e);
+  const durationNote = h5 === "fetch" ? "（至 fetch Promise 完成）" : h5 === "XHR" ? "（至 XHR 终态）" : "";
   const headRows = (h) => Object.entries(h || {})
     .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
       '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("");
@@ -299,12 +309,13 @@ function renderTrafficDetail(e, target) {
       }) + "</div>";
   const respTab =
       '<div class="d-kv"><span class="d-k">状态</span><span class="d-v">' +
-        (e.statusCode != null
+        (diagnostic ? esc(h5ResponseStatus(e)) : e.statusCode != null
           ? e.statusCode + (e.error ? "（" + esc(e.error) + "）" : "")
+          : h5 ? esc(e.error || failureStageText(e))
           : "无 HTTP 响应（" + esc(failureStageText(e)) + "）" +
             (e.error ? "：" + esc(e.error) : "")) +
       "</span></div>" +
-      (e.statusCode == null && (e.errorDomain || e.errorCode != null)
+      ((e.statusCode == null || diagnostic) && (e.errorDomain || e.errorCode != null)
         ? '<div class="d-kv"><span class="d-k">错误域/码</span><span class="d-v">' +
             esc(e.errorDomain || "—") + " / " + esc(String(e.errorCode != null ? e.errorCode : "—")) +
             (e.timeoutInferred ? "（推断）" : "") + "</span></div>"
@@ -312,16 +323,15 @@ function renderTrafficDetail(e, target) {
       (e.statusCode == null && e.errorDescription
         ? '<div class="d-kv"><span class="d-k">错误描述</span><span class="d-v">' + esc(e.errorDescription) + "</span></div>"
         : "") +
-      '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + e.durationMs + " ms</span></div>" +
+      '<div class="d-kv"><span class="d-k">耗时</span><span class="d-v">' + trafficDuration(e, " ms") + durationNote + "</span></div>" +
       '<div class="d-kv"><span class="d-k">时间</span><span class="d-v">' + esc(e.timestamp || "—") + "</span></div>" +
-      (e.mocked ? '<div class="d-kv"><span class="d-k">Mock</span><span class="d-v">是' +
-        (mockDelayNote(e) || "") + '</span></div>' : "") +
+      trafficMockHtml(e, mockDelayNote(e)) +
       '<div class="d-block"><div class="d-title">响应头</div>' +
         (headRows(e.responseHeaders) || '<div class="d-v">—</div>') + "</div>" +
       '<div class="d-block"><div class="d-title">响应体</div>' + bodyHtml(e.responseBodyDecoded || e.responseBody, {
         contentType: headerValue(e.responseHeaders, "Content-Type"),
         base64: e.responseBodyBase64,
-        staticKind: e.responseStaticKind,
+        staticKind: trafficResponseStaticKind(e),
         url: e.url,
         contentLength: headerValue(e.responseHeaders, "Content-Length"),
         contentRange: headerValue(e.responseHeaders, "Content-Range"),
@@ -330,11 +340,12 @@ function renderTrafficDetail(e, target) {
   box.innerHTML =
     '<div class="detail-panel">' +
       '<div class="d-actions">' +
-        '<button id="mockThisBtn" class="small">Mock 此请求</button>' +
+        (h5 && !h5MockableTraffic(e) ? "" : '<button id="mockThisBtn" class="small">Mock 此请求</button>') +
         '<button id="copyReqBtn" class="small ghost">复制</button>' +
         '<button id="shareBtn" class="small ghost">分享</button>' +
       "</div>" +
       '<div class="d-kv"><span class="d-k">请求</span><span class="d-v">' + esc(e.method) + " " + esc(e.url) + "</span></div>" +
+      (h5 ? '<div class="d-kv"><span class="d-k">采集方式</span><span class="d-v">H5 · ' + h5 + "</span></div>" : "") +
       '<div class="tabs">' +
         '<button class="tab active" data-tab="req">请求</button>' +
         '<button class="tab" data-tab="resp">响应</button>' +
@@ -356,8 +367,8 @@ function renderTrafficDetail(e, target) {
 
   const btn = box.querySelector("#mockThisBtn");
   if (btn) {
-    btn.disabled = e.statusCode == null;  // 失败请求无回包可固化
-    btn.onclick = () => mockThisRequest(e);
+    btn.disabled = e.statusCode == null && !h5MockableTraffic(e);
+    btn.onclick = () => mockThisRequest(e, box.id === "historyDetail");
   }
   const shareBtn = box.querySelector("#shareBtn");
   if (shareBtn) {

@@ -47,21 +47,13 @@ function ruleOwnersText(r) {
   return "创建人 — · 最后编辑 " + esc(updater);
 }
 
-//  Step4：命中可见性徽章文案。创建时 LastUsedAt 与 CreatedAt 同刻
-// （7 天滑动清理基线需要），若二者时刻差 < 5s 说明这条规则创建后从未被命中/
-// 编辑/启停触动 → 灰字「从未命中」，提示开发者检查路径是否写错；否则显示
-// 最近命中的相对时间。
+// 命中时间来自实际流量，创建、编辑和启停只更新规则留存时间。
 function hitBadgeText(r) {
-  const lu = r.lastUsedAt;
-  if (!lu) return "从未命中 · 检查路径是否写对";
-  if (r.createdAt) {
-    const gap = Math.abs(new Date(lu).getTime() - new Date(r.createdAt).getTime());
-    if (Number.isFinite(gap) && gap < 5000) return "从未命中 · 检查路径是否写对";
-  }
-  return "最近命中：" + relTime(lu);
+  return r.lastHitAt ? "最近命中：" + relTime(r.lastHitAt) : "暂无命中记录";
 }
 
 function renderRules(data) {
+  if (detail) detail.supportsH5Mock = data.supportsH5Mock === true;
   const rules = data.rules || [];
   $("rulesInfo").textContent = "· 共 " + rules.length + " 条 · 版本 " + (data.version ?? 0);
 
@@ -70,7 +62,7 @@ function renderRules(data) {
   const conflicts = data.conflicts || [];
   if (conflicts.length) {
     cb.innerHTML = '<div class="c-title">⚠ 检测到接口冲突，以下接口暂不 Mock：</div>' +
-      conflicts.map((c) => '<div class="c-item">' + esc(c.method) + " " + esc(c.path) +
+      conflicts.map((c) => '<div class="c-item">' + esc(c.method) + " " + esc((c.origin ? "H5 · " + c.origin : "") + c.path) +
         " — " + esc(c.message) + "</div>").join("");
     cb.classList.remove("hidden");
   } else {
@@ -201,7 +193,7 @@ function renderRuleDetail(r) {
     .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
       '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("") : "";
   const reqTab =
-      '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc(r.path) + "</span></div>" +
+      '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc((r.scope === "h5" ? "H5 · " + r.origin : "") + r.path) + "</span></div>" +
       (src
         ? '<div class="d-block"><div class="d-title">原始请求头</div>' + (reqHeadersRows || '<div class="d-v">—</div>') + "</div>" +
           '<div class="d-block"><div class="d-title">原始请求体</div>' +
@@ -294,7 +286,8 @@ function openEditRuleForm(r) {
     bodyDefault = r.source.responseBodyDecoded;
   }
   const src = r.source;
-  const hasOriginal = !!src;   // 有抓包快照即可一键回退整个响应
+  const originalH5 = r.scope === "h5" && src ? h5CapturedResponse(src) : undefined;
+  const hasOriginal = r.scope === "h5" ? !!originalH5 : !!src;
   const isBinary = !!resp.bodyBase64;
   const isMedia = !!resp.media;
 
@@ -303,7 +296,7 @@ function openEditRuleForm(r) {
     .map(([k, v]) => '<div class="d-kv"><span class="d-k">' + esc(k) + "</span>" +
       '<span class="d-v">' + esc(Array.isArray(v) ? v.join(", ") : v) + "</span></div>").join("") : "";
   const reqTab =
-      '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc(r.path) + "</span></div>" +
+      '<div class="d-kv"><span class="d-k">接口</span><span class="d-v">' + esc(r.method) + " " + esc((r.scope === "h5" ? "H5 · " + r.origin : "") + r.path) + "</span></div>" +
       (src
         ? '<div class="d-block"><div class="d-title">原始请求头（只读）</div>' + (editReqHeadersRows || '<div class="d-v">—</div>') + "</div>" +
           '<div class="d-block"><div class="d-title">原始请求体（只读）</div>' +
@@ -327,7 +320,7 @@ function openEditRuleForm(r) {
       (hasOriginal
         ? '<div class="edit-row" style="margin-top:12px">' +
             '<button id="revertOriginalBtn" class="ghost small" type="button">一键回退为原始响应</button>' +
-            '<span class="sub" style="margin-left:8px">（恢复抓包快照的状态码/响应头；回包体回滚为抓包解码 JSON 原文，以文本回放）</span>' +
+            '<span class="sub" style="margin-left:8px">（恢复抓包快照中的状态码、响应头和正文）</span>' +
           '</div>'
         : '') +
       '<div class="edit-row edit-body-row"><label>回包体（UTF-8 文本）' +
@@ -351,7 +344,7 @@ function openEditRuleForm(r) {
 
   box.innerHTML =
     '<div class="detail-panel">' +
-      '<div class="d-title">编辑规则 · ' + esc(r.method) + " " + esc(r.path) +
+      '<div class="d-title">编辑规则 · ' + esc(r.method) + " " + esc((r.scope === "h5" ? "H5 · " + r.origin : "") + r.path) +
       ' <span class="sub">（接口与匹配键不可改）</span></div>' +
       '<div class="tabs">' +
         '<button class="tab" data-tab="req">请求</button>' +
@@ -419,11 +412,14 @@ function openEditRuleForm(r) {
         "大图字节在入库时已丢弃，回退后通常是空体回包，不能恢复原图。继续？")) return;
       try {
         const decText = (src.responseBodyDecoded) || "";
-        const newResp = {
+        const original = originalH5 || {
           statusCode: src.statusCode ?? 200,
           headers: flatHeaders(src.responseHeaders),
           body: decText || src.responseBody || "",
           ...((src.responseBodyBase64 && !decText) ? { bodyBase64: src.responseBodyBase64 } : {}),
+        };
+        const newResp = {
+          ...original,
           // 回退不改延迟：delayMs 是 mock 模拟参数、不在抓包快照里，保留用户当前配置。
           ...(resp.delayMs ? { delayMs: resp.delayMs } : {}),
         };
@@ -459,6 +455,14 @@ function openEditRuleForm(r) {
   bindJsonTree(box);
 }
 
+/** 声明的响应类型优先，旧 Native 规则在未填写类型时保留 JSON 识别。 */
+function shouldValidateMockJSON(scope, headers, trimmedBody) {
+  if (!trimmedBody) return false;
+  const type = (headerValue(headers, "content-type") || "").split(";", 1)[0].trim().toLowerCase();
+  if (type) return type === "application/json" || type.endsWith("+json");
+  return scope !== "h5" && (trimmedBody.startsWith("{") || trimmedBody.startsWith("["));
+}
+
 /** 收集编辑表单 → PUT /mock-rules/{id} → 刷新。前端先做 note 非空拦截。 */
 async function saveRuleEdit(rule) {
   if (!detail) return;
@@ -483,7 +487,7 @@ async function saveRuleEdit(rule) {
   // 拦截全角符号/多余逗号等低级错误，避免坏 JSON 以"无网络"误导。
   const bodyText = $("editBody").value;
   const trimmedBody = bodyText.trim();
-  if (trimmedBody && (trimmedBody.startsWith("{") || trimmedBody.startsWith("["))) {
+  if (shouldValidateMockJSON(rule.scope, headers, trimmedBody)) {
     try {
       JSON.parse(trimmedBody);
     } catch (e) {
@@ -617,9 +621,58 @@ function mediaFetchErrorMessage(err) {
     : "原图未能回源，规则未创建：" + (err.message || err.code || "");
 }
 
+/** 从流量保留原始请求与回包用于规则详情。 */
+function captureRuleSource(e) {
+  return {
+    method: e.method,
+    path: e.path,
+    url: e.url,
+    query: e.query,
+    requestHeaders: e.requestHeaders,
+    requestBody: e.requestBody,
+    ...(e.requestBodyBase64 ? { requestBodyBase64: e.requestBodyBase64 } : {}),
+    ...(e.requestBodyDecoded ? { requestBodyDecoded: e.requestBodyDecoded } : {}),
+    statusCode: e.statusCode,
+    responseHeaders: e.responseHeaders,
+    responseBody: e.responseBody,
+    ...(e.responseStaticKind ? { responseStaticKind: e.responseStaticKind } : {}),
+    ...(e.responseBodyDecoded ? { responseBodyDecoded: e.responseBodyDecoded } : {}),
+    ...(e.responseBodyBase64 ? { responseBodyBase64: e.responseBodyBase64 } : {}),
+    capturedAt: e.timestamp,
+  };
+}
+
+/** 只有可重放的样本才预填回包，其他记录要求用户填写。 */
+function h5CapturedResponse(e) {
+  const status = e.statusCode;
+  const bodyless = e.method?.toUpperCase() === "HEAD" || status === 204 || status === 205;
+  const contentType = (headerValue(e.responseHeaders, "Content-Type") || "").toLowerCase();
+  const body = e.responseBody || "";
+  if (!(status >= 200 && status <= 299 || status >= 400 && status <= 599) ||
+      e.responseBodyBase64 || e.responseStaticKind || contentType.startsWith("text/event-stream") ||
+      body.startsWith("[正文未保留") || body.includes("[正文已截断]") || body.startsWith("[binary ") ||
+      (body.startsWith("[") && body.endsWith(" → 原 URL]"))) return;
+  if ((bodyless && body) || (!body && !bodyless && headerValue(e.responseHeaders, "Content-Length") !== "0")) return;
+  const headers = flatHeaders(e.responseHeaders);
+  try { new Headers(headers); } catch (_) { return; }
+  for (const name of Object.keys(headers)) {
+    if (/^(content-length|content-encoding|transfer-encoding|set-cookie2?)$/i.test(name)) delete headers[name];
+  }
+  return { statusCode: status, headers, body };
+}
+
 /** 请求流详情里的「Mock 此请求」：把这条真实请求/回包固化为一条规则（默认停用）。 */
-async function mockThisRequest(e) {
+async function mockThisRequest(e, fromHistory = false) {
   if (!detail) return;
+  if (h5MockableTraffic(e)) {
+    if (!detail.supportsH5Mock) { showError("当前服务端尚未支持 H5 Mock"); return; }
+    let url;
+    try { url = new URL(e.url); } catch (_) { /* 已损坏的历史记录没有可用的目标 URL。 */ }
+    if (!url || !["http:", "https:"].includes(url.protocol)) { showError("该日志缺少 HTTP(S) 目标 URL"); return; }
+    if (fromHistory) closeHistory();
+    openCreateRuleForm(e);
+    return;
+  }
   const input = {
     method: e.method,
     path: e.path,
@@ -633,22 +686,7 @@ async function mockThisRequest(e) {
     // 方案 D：标注来源流量 ID。视频规则由服务端据此初始化为 302 → 原 URL
     // （未编辑即跳转、不存字节）；非视频仅作来源溯源。
     originTrafficId: e.id || "",
-    source: {
-      method: e.method,
-      path: e.path,
-      url: e.url,
-      query: e.query,
-      requestHeaders: e.requestHeaders,
-      requestBody: e.requestBody,
-      ...(e.requestBodyBase64 ? { requestBodyBase64: e.requestBodyBase64 } : {}),
-      ...(e.requestBodyDecoded ? { requestBodyDecoded: e.requestBodyDecoded } : {}),
-      statusCode: e.statusCode,
-      responseHeaders: e.responseHeaders,
-      responseBody: e.responseBody,
-      ...(e.responseBodyDecoded ? { responseBodyDecoded: e.responseBodyDecoded } : {}),
-      ...(e.responseBodyBase64 ? { responseBodyBase64: e.responseBodyBase64 } : {}),
-      capturedAt: e.timestamp,
-    },
+    source: captureRuleSource(e),
   };
   try {
     const res = await apiFetch("/devices/" + encodeURIComponent(detail.app) + "/" +
@@ -677,7 +715,7 @@ async function mockThisRequest(e) {
 
 /** 打开「新建 Mock 规则」空表单（右列 ruleDetail 面板）。与 openEditRuleForm
  *  复用同一套 .edit-row/.edit-pane 样式与 CodeMirror 配置；提交不带 source。 */
-function openCreateRuleForm() {
+function openCreateRuleForm(source) {
   if (!detail) return;
   ruleBodyEditor = null;   //  离开编辑表单即释放 CM 引用
   showDetailPane("rule");
@@ -696,6 +734,11 @@ function openCreateRuleForm() {
         '<div class="d-kv"><span class="d-k">生效设备</span><span class="d-v">' +
           esc(detail.app) + " / " + esc(detail.did) +
           ' <span class="sub">（自动绑定当前设备，不可改）</span></span></div>' +
+        '<div class="edit-row"><label for="createScope">请求来源</label>' +
+          '<select id="createScope" class="filter-input"><option value="native">Native</option>' +
+          (detail.supportsH5Mock ? '<option value="h5">H5</option>' : "") + '</select></div>' +
+        '<div class="edit-row" id="createOriginRow" hidden><label for="createOrigin">目标 Origin</label>' +
+          '<input id="createOrigin" class="filter-input" placeholder="https://api.example.com" /></div>' +
         '<div class="edit-row"><label>Method</label>' +
           '<input id="createMethod" list="createMethodList" class="filter-input" placeholder="GET" autocomplete="off" />' +
           '<datalist id="createMethodList">' + methodOptions + '</datalist></div>' +
@@ -719,6 +762,23 @@ function openCreateRuleForm() {
       "</div>" +
     "</div>";
 
+  const h5 = h5MockableTraffic(source);
+  if (h5) {
+    $("createScope").value = "h5";
+    $("createOrigin").value = new URL(source.url).origin;
+    $("createMethod").value = source.method;
+    $("createPath").value = source.path;
+    const response = h5CapturedResponse(source);
+    $("createStatus").value = response?.statusCode ?? "";
+    $("createHeaders").value = Object.entries(response?.headers || {}).map(([k, v]) => k + ": " + v).join("\n");
+    $("createBody").value = response?.body ?? "";
+    for (const id of ["createScope", "createOrigin", "createMethod", "createPath"]) $(id).disabled = true;
+    if (!response) $("createStatus").placeholder = "请填写状态码与回包";
+  }
+  const showOrigin = () => { $("createOriginRow").hidden = $("createScope").value !== "h5"; };
+  $("createScope").onchange = showOrigin;
+  showOrigin();
+
   // CodeMirror 接管回包体（与编辑表单同款配置）。
   ruleBodyEditor = CodeMirror.fromTextArea($("createBody"), {
     mode: { name: "javascript", json: true },
@@ -739,13 +799,13 @@ function openCreateRuleForm() {
   $("createCancelBtn").onclick = () => {
     $("ruleDetail").innerHTML = '<div class="empty">点击左侧一条规则查看详情。</div>';
   };
-  $("createSaveBtn").onclick = () => submitCreateRule();
+  $("createSaveBtn").onclick = () => submitCreateRule(h5 ? source : undefined);
   $("createMethod").focus();
 }
 
 /** 收集新建表单 → POST /mock-rules（不带 source，默认停用）。前端先做必填/
  *  path/JSON 校验，与服务端 Step1 规则对齐；服务端 400/409 时保留表单可修正。 */
-async function submitCreateRule() {
+async function submitCreateRule(source) {
   if (!detail) return;
   const method = ($("createMethod").value || "").trim().toUpperCase();
   if (!method) { showError("Method 不能为空"); return; }
@@ -753,18 +813,37 @@ async function submitCreateRule() {
   if (!path) { showError("Path 不能为空"); return; }
   if (!path.startsWith("/")) { showError("Path 必须以 / 开头"); return; }
   if (path.indexOf("?") !== -1) { showError("Path 不得包含查询串 ?（查询参数不参与匹配）"); return; }
+  const scope = $("createScope")?.value || "native";
+  let origin;
+  if (scope === "h5") {
+    if (!detail.supportsH5Mock) { showError("当前服务端尚未支持 H5 Mock"); return; }
+    try {
+      const url = new URL(($("createOrigin").value || "").trim());
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+        throw new TypeError();
+      }
+      origin = url.origin;
+    } catch (_) { showError("请填写 HTTP(S) 目标 Origin，例如 https://api.example.com"); return; }
+    const keyURL = new URL(origin + path);
+    if (keyURL.pathname !== path || keyURL.search || keyURL.hash || /%(?![0-9a-f]{2})/i.test(path)) {
+      showError("请填写浏览器编码后的 Path，例如 /api/%E4%B8%AD"); return;
+    }
+  }
   const statusCode = Number($("createStatus").value);
   if (!Number.isFinite(statusCode) || statusCode < 100 || statusCode > 599) {
     showError("状态码必须在 100–599 之间"); return;
   }
   const note = ($("createNote").value || "").trim();
-  if (!note) { showError("备注必填，请填写这条规则测什么"); return; }
+  if (!note && !source) { showError("备注必填，请填写这条规则测什么"); return; }
 
   // CodeMirror 内容先回写隐藏 textarea，再统一取值。
   if (ruleBodyEditor) ruleBodyEditor.save();
   const bodyText = $("createBody").value || "";
+  // 响应头：每行 "Key: Value"，空行/无冒号行跳过。
+  const headers = parseHeadersText($("createHeaders") && $("createHeaders").value);
+
   const trimmedBody = bodyText.trim();
-  if (trimmedBody && (trimmedBody.startsWith("{") || trimmedBody.startsWith("["))) {
+  if (shouldValidateMockJSON(scope, headers, trimmedBody)) {
     try {
       JSON.parse(trimmedBody);
     } catch (e) {
@@ -773,9 +852,6 @@ async function submitCreateRule() {
       return;
     }
   }
-
-  // 响应头：每行 "Key: Value"，空行/无冒号行跳过。
-  const headers = parseHeadersText($("createHeaders") && $("createHeaders").value);
 
   // 回包延迟：与编辑表单同款 parse/clamp；>0 才写入 response（=0 省略，后端 omitempty）。
   const delayRaw = $("createDelayMs") ? parseInt($("createDelayMs").value, 10) : 0;
@@ -793,6 +869,8 @@ async function submitCreateRule() {
         method: method,
         path: path,
         response: createResp,
+        ...(scope === "h5" ? { scope, origin } : {}),
+        ...(source ? { originTrafficId: source.id, source: captureRuleSource(source) } : {}),
         note: note,
         enabled: false,
       }),
@@ -813,5 +891,5 @@ async function submitCreateRule() {
 //  Step2：规则区头部「新建 Mock 规则」入口（脚本在 body 末尾加载，DOM 已就绪）。
 (function () {
   const btn = document.getElementById("ruleCreateBtn");
-  if (btn) btn.onclick = openCreateRuleForm;
+  if (btn) btn.onclick = () => openCreateRuleForm();
 })();

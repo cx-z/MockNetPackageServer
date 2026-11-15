@@ -33,6 +33,7 @@ var (
 	// ErrRuleConflict means enabling this rule would leave more than one enabled
 	// rule on the same interface (maps to HTTP 409).
 	ErrRuleConflict = errors.New("mock rule conflict: another enabled rule already exists for this interface")
+	ErrInvalidH5Rule = errors.New("invalid H5 Mock target or response")
 	// ErrNoteRequired means the PUT actually edits the canned response
 	// (body/statusCode/headers changed) but carries a blank note (maps to HTTP 400).
 	// A pure toggle (response echoed unchanged) may leave the note blank — rules

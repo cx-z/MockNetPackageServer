@@ -54,7 +54,7 @@ info:
       超限丢最旧（rolling window）。被 Mock 的请求持久化为规则及其 source 快照（ 起，7 天滑动），
       与 48h 临时流量保留是两套独立规则。
     - 推送通道：Web 请求流按 2s 轮询 GET /sessions/{id}/traffic 实现秒级可见（已定，不新增推送端点）。
-    - Mock 规则语义：规则=接口回包，Method+URL 路径匹配；同一接口运行时仅一条 effective=true（异常态多条 enabled 则该接口全部 effective=false、不回包，并在 MockRuleList.conflicts 上报前端弹窗）；规则持久化但 SDK 仅在抓包会话 capturing 期间应用；"Mock 此请求"固化的真实请求快照（原始值+Mock 值）随规则持久化。
+    - Mock 规则语义：Native 按 Method + Path 匹配，H5 同时匹配目标 Origin；同一接口运行时仅一条 effective=true（异常态多条 enabled 则该接口全部 effective=false、不回包，并在 MockRuleList.conflicts 上报前端弹窗）；规则持久化但 SDK 仅在抓包会话 capturing 期间应用；"Mock 此请求"固化的真实请求快照（原始值+Mock 值）随规则持久化。
     - 会话结束规则失效：抓包会话一旦结束（页面关闭/最后一个查看者释放/心跳超时/手动断开），服务端把该设备所有 enabled=true 的 Mock 规则批量置为 enabled=false 并 Bump 规则版本；规则不删除、仍在 Web 规则列表中，下次建立会话后由用户从历史规则手动一键重新启用。SDK 拉到的新规则集全为 disabled，不再自动生效。
     - 7 天滑动清理：Mock 规则及其 source 快照持久化保留，默认 7 天（服务端配置项），滑动窗口起点为 lastUsedAt。命中回包、Web 编辑保存、Web toggle 启停三类操作刷新 lastUsedAt；心跳/规则版本轮询/Web 纯浏览不刷新。过期规则连同其 source 快照自动删除。
     - 协议解码器增强：SDK 暴露 setBodyDecoder 注入点，由各 App 把二进制私有协议（如 xcp）解成可读 UTF-8 文本；解码结果以 TrafficEntry.responseBodyDecoded / MockRuleSource.responseBodyDecoded 独立通道上传展示，原始 base64 仍只用于回放。
@@ -925,10 +925,10 @@ paths:
       description: |
         SDK 侧：携带 sinceVersion 增量拉取本设备运行时生效规则；version 为单调递增版本号，规则变更（创建/编辑/启停/删除）即 +1。
         仅返回 effective=true 的规则供 SDK 回包（异常态同接口多条 enabled 时该接口规则全部 effective=false、不出现在 SDK 集）。
-        SDK 拉取响应只含 SDK 消费字段（id/method/path/response/enabled/effective）——owner/updatedBy 等
-        纯服务端字段与 source/note/lastUsedAt 等 Web-only 字段绝不下发 SDK。
+        SDK 拉取响应只含 SDK 消费字段（id/method/path/response/enabled/effective，H5 投影另含 scope/origin）——owner/updatedBy 等
+        纯服务端字段与 source/note/lastUsedAt/lastHitAt 等 Web-only 字段绝不下发 SDK。
         Web 侧：不带 sinceVersion，返回本设备全部规则（含停用、含 source 快照、含 owner/updatedBy），并附带 conflicts 异常态报告。
-        匹配语义：Method + URL 路径（不含 Query/Body 参数）；同一接口同时仅一条生效（前端互斥 + 服务端兜底：多条生效时该接口不 Mock 并在 conflicts 下发前端弹窗）。
+        匹配语义：Native 按 Method + Path 匹配，H5 额外匹配目标 Origin。两类规则均忽略 Query 和 Body；同一接口同时仅一条生效（前端互斥 + 服务端兜底：多条生效时该接口不 Mock 并在 conflicts 下发前端弹窗）。
       operationId: listMockRules
       parameters:
         - $ref: '#/components/parameters/AppPath'
@@ -938,6 +938,12 @@ paths:
           schema:
             type: integer
           description: SDK 增量拉取：仅返回 version > sinceVersion 的规则
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [h5]
+          description: SDK 携带 sinceVersion 时可请求 H5 规则快照。省略时只返回 Native 规则。
       responses:
         '200':
           description: 规则集合（含版本号）
@@ -951,15 +957,16 @@ paths:
       tags: [mock-rules]
       summary: 创建 Mock 回包规则（含"从真实回包一键创建"）
       description: |
-        创建时默认 enabled=false；同一接口（Method+Path）允许多条保存，但运行时仅一条 effective。
+        创建时默认 enabled=false；同一接口允许多条保存，但运行时仅一条 effective。Native 按 Method + Path 匹配，H5 加上目标 Origin。
         note 创建时可空（null），首次编辑保存时再必填。
         "从真实回包一键创建"：Web 把整条已抓包 TrafficEntry 作为 source 快照传入（原始请求 + 真实回包 b1），服务端随规则持久化（临时流量会话结束即清空，快照保留）；手动创建可省略 source。
-        来源流量 responseStaticKind=video 时，服务端把回包整体替换为 302 → 原 URL。
-        来源流量 responseStaticKind=image 且设备 SDK 版本 ≥ 1.1.1（iOS 1.1.1；Android 尚未纳入版本，仍报 1.0.x 走 302 回落）时，服务端按原
+        Native 来源流量 responseStaticKind=video 时，服务端把回包整体替换为 302 → 原 URL。
+        Native 来源流量 responseStaticKind=image 且设备 SDK 版本 ≥ 1.1.1（iOS 1.1.1；Android 尚未纳入版本，仍报 1.0.x 走 302 回落）时，服务端按原
         请求头回源取一次原始字节，存成 blob，回包置为 response.media（body 为空）；
         回源失败返回 400 media_unfetchable + code（url_empty / missing_auth /
         http_4xx / http_5xx / timeout / too_large / redirect_limit / network /
         storage_full），规则不落库。
+        H5 规则支持 fetch 和异步 XHR 的 2xx、4xx、5xx 文本回包，使用浏览器编码后的 Path。正文采样占位和不合法的响应头不能保存为回包。
       operationId: createMockRule
       parameters:
         - $ref: '#/components/parameters/AppPath'
@@ -2072,9 +2079,9 @@ components:
             空串=业务 API（字节按 UTF-8/base64 原路径保存）；
             video=命中 video/* 白名单，服务端 ingestion 时丢弃 base64、写占位
             ResponseBody，仅保留元信息 + 原 URL（entry.url）供浏览器/302 回放；
-            image=image/* 且响应字节 > 1 MiB（SDK 抓包上限），同样丢弃字节、只留
-            占位 + 原 URL；Web 走"点击加载原图"卡片，"Mock 此请求"建规则时由服务端
-            回源取原始字节存 blob（见 MockResponse.media）。
+            image=Native 大图（image/* 且响应字节 > 1 MiB）或 WebKit 识别的页面图片。
+            两者均可在 Web 点击加载原 URL。Native 大图创建 Mock 时由服务端回源存 blob
+            （见 MockResponse.media）。
             后续 audio/pdf 分类在此扩展，Web 卡片分支按该值分发。
         responseBodyDecoded:
           type: string
@@ -2099,13 +2106,15 @@ components:
             超时终态为合成的截止点说明（推断时前缀"请求超时（推断）"），与 error 摘要互补
         terminalStage:
           type: string
-          enum: [httpResponse, transportError, clientTimeout, clientCancelled]
+          enum: [httpResponse, transportError, clientTimeout, clientCancelled, h5BeaconQueued, h5BeaconRejected, h5SSEOpen, h5SSEError, h5NavigationFinished, h5NavigationFailed, h5ResourceLoaded, h5ResourceObserved, h5ResourceError]
           description: |
             终态阶段：httpResponse=收到 HTTP 响应（含 4xx/5xx）；
             transportError=连接失败/中断等传输层错误；
             clientTimeout=客户端在 request.timeoutInterval 截止点中止
             （含会话级超时短于请求超时、由转发任务观测到 -1001 的情形）；
-            clientCancelled=客户端主动取消。旧 SDK 缺省。
+            clientCancelled=客户端主动取消。h5 前缀为浏览器诊断阶段，分别记录
+            Beacon 排队结果、EventSource 首次连接、主文档导航和页面资源的加载观测。
+            诊断阶段可与 HTTP 状态码同时存在。旧 SDK 缺省。
         clientAbort:
           type: boolean
           description: 是否由客户端中止（超时或主动取消）结束；仅新 SDK 上报
@@ -2125,12 +2134,17 @@ components:
         mocked:
           type: boolean
           default: false
-          description: 是否命中 Mock（ 恒为 false； 起标记，Web 请求流标注"Mock 命中"）
+          description: 设备上报是否命中 Mock。若已知规则与设备或请求不匹配，服务端清除此标记。
         matchedRuleId:
           type: string
-          description: >-
-            命中的 Mock 规则 ID：仅 mocked=true 时非空，
-            用于确认该请求究竟命中哪一条规则；真实流量为空/缺省。
+          description: 设备上报的 Mock 规则 ID。规则已删除时仍可保留未核验的 ID。
+        mockHitVerified:
+          type: boolean
+          readOnly: true
+          description: 服务端已确认规则 ID 与设备和请求的匹配键一致。旧记录及无法核验的 ID 缺省。
+        adapter:
+          type: string
+          description: 可选采集来源。iOS WKWebView 使用 wkwebview-fetch、wkwebview-xhr、wkwebview-beacon、wkwebview-eventsource、wkwebview-navigation 或 wkwebview-resource。
         seq:
           type: integer
           description: |
@@ -2607,6 +2621,13 @@ components:
       type: object
       required: [id, app, did, method, path, response, enabled, effective, createdAt, updatedAt]
       properties:
+        scope:
+          type: string
+          enum: [native, h5]
+          description: H5 规则显式指定 h5。旧规则缺省为 Native。
+        origin:
+          type: string
+          description: H5 规则的目标 Origin，匹配协议、域名及有效端口。
         id:
           type: string
         app:
@@ -2663,6 +2684,10 @@ components:
             上一次"被使用"时间。
             命中回包、Web 编辑保存、Web toggle 启停三类操作刷新；心跳/版本轮询/纯浏览不刷新。
             早于 now - retention（默认 7 天，配置项）的规则连同 source 快照自动删除。
+        lastHitAt:
+          type: string
+          format: date-time
+          description: 最近一次收到规则实际命中记录的时间。历史规则可缺省，编辑和启停不会更新。
         note:
           type: string
           nullable: true
@@ -2739,6 +2764,9 @@ components:
           description: |
             原始真实回包经 App 协议解码器解出的可读 UTF-8 文本，随"Mock 此请求"快照固化，
             供规则详情页对照查看；纯展示字段，不参与回放。
+        responseStaticKind:
+          type: string
+          description: 来源响应的静态资源类型。H5 规则编辑时据此判断原响应是否可以回放。
         capturedAt:
           type: string
           format: date-time
@@ -2748,6 +2776,13 @@ components:
       type: object
       required: [method, path, response]
       properties:
+        scope:
+          type: string
+          enum: [native, h5]
+          description: H5 规则显式指定 h5。旧规则缺省为 Native。
+        origin:
+          type: string
+          description: H5 规则的目标 Origin，匹配协议、域名及有效端口。
         method:
           type: string
         path:
@@ -2797,6 +2832,13 @@ components:
       type: object
       required: [version, rules]
       properties:
+        supportsH5Mock:
+          type: boolean
+          description: Web 全量规则列表声明服务端支持创建和下发 H5 规则。
+        scope:
+          type: string
+          enum: [h5]
+          description: 标识 H5 SDK 快照。
         version:
           type: integer
           description: 当前规则版本号（单调递增；SDK 用于增量比对）
@@ -2817,6 +2859,9 @@ components:
                 type: string
               path:
                 type: string
+              origin:
+                type: string
+                description: H5 规则的目标 Origin。
               message:
                 type: string
                 example: "不允许同一个接口同时开启多个 Mock 规则"

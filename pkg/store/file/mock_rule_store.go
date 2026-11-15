@@ -2,6 +2,7 @@ package file
 
 import (
 	"context"
+	"time"
 
 	"github.com/getmockd/mockd/pkg/capture"
 	"github.com/getmockd/mockd/pkg/store"
@@ -24,6 +25,18 @@ func (s *mockRuleStore) List(ctx context.Context, filter *store.MockRuleFilter) 
 	s.fs.mu.RLock()
 	defer s.fs.mu.RUnlock()
 
+	return s.listLocked(filter), nil
+}
+
+// Snapshot returns the rules and their version as one consistent read.
+func (s *mockRuleStore) Snapshot(_ context.Context, app, did string) ([]*capture.MockRule, int, error) {
+	s.fs.mu.RLock()
+	defer s.fs.mu.RUnlock()
+	return s.listLocked(&store.MockRuleFilter{App: app, Did: did}), s.fs.data.RuleVersions[versionKey(app, did)], nil
+}
+
+// listLocked copies matching rows while the caller holds the store lock.
+func (s *mockRuleStore) listLocked(filter *store.MockRuleFilter) []*capture.MockRule {
 	result := make([]*capture.MockRule, 0, len(s.fs.data.MockRules))
 	for _, r := range s.fs.data.MockRules {
 		if filter != nil {
@@ -39,7 +52,29 @@ func (s *mockRuleStore) List(ctx context.Context, filter *store.MockRuleFilter) 
 		c := *r
 		result = append(result, &c)
 	}
-	return result, nil
+	return result
+}
+
+// TouchHits records hit evidence without rewriting any configuration or version.
+func (s *mockRuleStore) TouchHits(_ context.Context, app, did string, at time.Time, matches func(*capture.MockRule) bool) error {
+	s.fs.mu.Lock()
+	defer s.fs.mu.Unlock()
+	if s.fs.cfg.ReadOnly {
+		return store.ErrReadOnly
+	}
+	for i, r := range s.fs.data.MockRules {
+		if r.App != app || r.Did != did || !matches(r) || (r.LastHitAt != nil && !at.After(*r.LastHitAt)) {
+			continue
+		}
+		c := *r
+		c.LastHitAt = &at
+		if at.After(c.LastUsedAt) {
+			c.LastUsedAt = at
+		}
+		s.fs.data.MockRules[i] = &c
+		s.fs.markDirty()
+	}
+	return nil
 }
 
 // Get returns a rule by ID.

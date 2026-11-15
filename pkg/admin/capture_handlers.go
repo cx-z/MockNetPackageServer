@@ -239,6 +239,8 @@ func writeCaptureError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "rule_not_found", "Mock rule not found")
 	case errors.Is(err, store.ErrRuleForbidden):
 		writeError(w, http.StatusForbidden, "forbidden", "insufficient permission: only the rule owner or an admin may modify this rule")
+	case errors.Is(err, store.ErrInvalidH5Rule):
+		writeError(w, http.StatusBadRequest, "invalid_h5_rule", "H5 Mock 需要 HTTP(S) Origin、浏览器编码的 Path、合法响应头及 2xx、4xx、5xx 文本回包。")
 	case errors.Is(err, store.ErrRuleConflict):
 		writeError(w, http.StatusConflict, "rule_conflict", store.MockRuleConflictMessage)
 	case errors.Is(err, store.ErrNoteRequired):

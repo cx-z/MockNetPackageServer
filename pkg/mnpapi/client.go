@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -392,9 +393,28 @@ func (c *Client) GetMockRule(ctx context.Context, app, did, ruleID string) (*cap
 // CreateMockRule creates a hand-authored rule (note required when the body
 // starts with "{" or "[" — server-side JSON check,  semantics).
 func (c *Client) CreateMockRule(ctx context.Context, app, did string, in *capture.MockRuleInput) (*capture.MockRuleView, error) {
+	path := "/api/v1/devices/" + url.PathEscape(app) + "/" + url.PathEscape(did) + "/mock-rules"
+	h5 := in.Scope == capture.H5MockScope
+	if !h5 && (in.Origin != "" || (in.Scope != "" && in.Scope != "native")) {
+		return nil, errors.New("规则范围必须为 native 或 h5，目标 Origin 仅用于 H5 规则")
+	}
+	if h5 {
+		var capabilities struct {
+			SupportsH5Mock bool `json:"supportsH5Mock"`
+		}
+		if err := c.do(ctx, http.MethodGet, path, nil, nil, &capabilities); err != nil {
+			return nil, err
+		}
+		if !capabilities.SupportsH5Mock {
+			return nil, errors.New("服务端不支持 H5 Mock")
+		}
+	}
 	var out capture.MockRuleView
-	if err := c.do(ctx, http.MethodPost, "/api/v1/devices/"+url.PathEscape(app)+"/"+url.PathEscape(did)+"/mock-rules", nil, in, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, path, nil, in, &out); err != nil {
 		return nil, err
+	}
+	if h5 && (out.MockRule == nil || out.Scope != capture.H5MockScope) {
+		return nil, errors.New("服务端未确认创建 H5 Mock，请检查服务端版本和规则列表")
 	}
 	return &out, nil
 }
@@ -418,6 +438,23 @@ func (c *Client) CreateMockRuleFromTraffic(ctx context.Context, app, did, traffi
 		resp.BodyBase64 = e.ResponseBodyBase64
 	}
 	resp.DelayMs = delayMs
+	if strings.HasPrefix(e.Adapter, "wkwebview-") && !capture.H5MockableAdapter(e.Adapter) {
+		return nil, errors.New("该 H5 采集类型不支持 Mock")
+	}
+	if capture.H5MockableAdapter(e.Adapter) {
+		if !capture.ValidH5MockResponse(e.Method, resp) || e.ResponseStaticKind != "" {
+			return nil, errors.New("H5 样本无法直接重放，请手动创建 H5 规则")
+		}
+		if resp.Body == "" && e.Method != http.MethodHead && e.StatusCode != 204 && e.StatusCode != 205 {
+			var confirmedEmpty bool
+			for name, value := range resp.Headers {
+				confirmedEmpty = confirmedEmpty || (strings.EqualFold(name, "Content-Length") && value == "0")
+			}
+			if !confirmedEmpty {
+				return nil, errors.New("H5 样本缺少可确认的正文，请手动创建 H5 规则")
+			}
+		}
+	}
 	src := &capture.MockRuleSource{
 		Method:              e.Method,
 		Path:                e.Path,
@@ -451,6 +488,11 @@ func (c *Client) CreateMockRuleFromTraffic(ctx context.Context, app, did, traffi
 		Source:          src,
 		OriginTrafficID: trafficID,
 	}
+	if capture.H5MockableAdapter(e.Adapter) {
+		in.Scope = capture.H5MockScope
+		in.Origin, _ = capture.HTTPOrigin(e.URL)
+	}
+
 	return c.CreateMockRule(ctx, app, did, in)
 }
 

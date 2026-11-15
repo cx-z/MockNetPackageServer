@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -220,22 +221,22 @@ func TestMockRuleAPI_DelayMsValidation(t *testing.T) {
 	// 2) Boundary values accepted on POST: 0 (default) and 30000.
 	var created capture.MockRuleView
 	resp = doJSON(t, http.MethodPost, base, map[string]any{
-		"method":  "GET",
-		"path":    "/api/delay-0",
-		"enabled": false,
+		"method":   "GET",
+		"path":     "/api/delay-0",
+		"enabled":  false,
 		"response": map[string]any{"statusCode": 200, "delayMs": 0},
-		"source":  map[string]any{"method": "GET", "path": "/api/delay-0"},
+		"source":   map[string]any{"method": "GET", "path": "/api/delay-0"},
 	}, &created)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	assert.Equal(t, 0, created.Response.DelayMs, "delayMs=0 must round-trip as 0")
 
 	var created30k capture.MockRuleView
 	resp = doJSON(t, http.MethodPost, base, map[string]any{
-		"method":  "GET",
-		"path":    "/api/delay-30k",
-		"enabled": true,
+		"method":   "GET",
+		"path":     "/api/delay-30k",
+		"enabled":  true,
 		"response": map[string]any{"statusCode": 200, "delayMs": 30000},
-		"source":  map[string]any{"method": "GET", "path": "/api/delay-30k"},
+		"source":   map[string]any{"method": "GET", "path": "/api/delay-30k"},
 	}, &created30k)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	assert.Equal(t, 30000, created30k.Response.DelayMs)
@@ -266,22 +267,22 @@ func TestMockRuleAPI_DelayMsValidation(t *testing.T) {
 	// 5) Missing delayMs field → accepted, defaults to 0 (backward compat with old rules).
 	var noDelay capture.MockRuleView
 	resp = doJSON(t, http.MethodPost, base, map[string]any{
-		"method":  "GET",
-		"path":    "/api/no-delay",
-		"enabled": false,
+		"method":   "GET",
+		"path":     "/api/no-delay",
+		"enabled":  false,
 		"response": map[string]any{"statusCode": 200}, // no delayMs key
-		"source":  map[string]any{"method": "GET", "path": "/api/no-delay"},
+		"source":   map[string]any{"method": "GET", "path": "/api/no-delay"},
 	}, &noDelay)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	assert.Equal(t, 0, noDelay.Response.DelayMs, "missing delayMs must default to 0")
 
 	// 6) String-typed delayMs → rejected with decode error (400).
 	resp = doJSON(t, http.MethodPost, base, map[string]any{
-		"method":  "GET",
-		"path":    "/api/string-delay",
-		"enabled": false,
+		"method":   "GET",
+		"path":     "/api/string-delay",
+		"enabled":  false,
 		"response": map[string]any{"statusCode": 200, "delayMs": "2000"},
-		"source":  map[string]any{"method": "GET", "path": "/api/string-delay"},
+		"source":   map[string]any{"method": "GET", "path": "/api/string-delay"},
 	}, &errResp)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "string delayMs must fail JSON decode")
 }
@@ -361,7 +362,8 @@ func TestMockRuleAPI_EditOmitsEnabledKeepsSwitch(t *testing.T) {
 	assert.False(t, updated.Effective)
 }
 
-//  序列化出口：Web 全量列表下发 owner/updatedBy；SDK 增量拉取（同一路由
+//	序列化出口：Web 全量列表下发 owner/updatedBy；SDK 增量拉取（同一路由
+//
 // ?sinceVersion 分支）绝不携带 owner/updatedBy 及 source/note/lastUsedAt 等
 // 纯服务端/Web-only 字段（契约 v0.11.0：SDK 只关心 method/path/response/enabled/effective）。
 func TestMockRuleAPI_OwnerFields_WebVsSDK(t *testing.T) {
@@ -465,4 +467,172 @@ func TestMockRuleAPI_HandAuthoredRules(t *testing.T) {
 	assert.Empty(t, created.Source, "hand-authored rule must have no source snapshot")
 	assert.Equal(t, "mock greeting for UI dev", created.Note)
 	assert.False(t, created.Enabled)
+}
+
+func TestMockRuleAPI_NativeExactHitIgnoresMethodCase(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
+	const app, did = "com.example.integrating", "dev-1"
+	rulesURL := srv.URL + "/api/v1/devices/" + app + "/" + did + "/mock-rules"
+	var rule capture.MockRuleView
+	require.Equal(t, http.StatusCreated, doJSON(t, http.MethodPost, rulesURL, ruleBody("get", "/api/native", true), &rule).StatusCode)
+	assert.Equal(t, "get", rule.Method, "preserve original rule key")
+
+	var session capture.CaptureSession
+	require.Equal(t, http.StatusCreated, doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
+		ActivateSessionRequest{App: app, Did: did}, &session).StatusCode)
+	entry := &capture.TrafficEntry{
+		Timestamp: session.StartedAt, Method: "GET", URL: "https://api.example/api/native",
+		Path: "/api/native", StatusCode: 200, Mocked: true, MatchedRuleID: rule.ID,
+	}
+	require.Equal(t, http.StatusAccepted, doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: app, Did: did, SessionID: session.ID, Entries: []*capture.TrafficEntry{entry}}, nil).StatusCode)
+	var traffic TrafficListResponse
+	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+session.ID+"/traffic", nil, &traffic).StatusCode)
+	require.Len(t, traffic.Entries, 1)
+	assert.True(t, traffic.Entries[0].Mocked)
+	assert.True(t, traffic.Entries[0].MockHitVerified)
+	assert.Equal(t, rule.ID, traffic.Entries[0].MatchedRuleID)
+	var listing MockRuleListResponse
+	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, rulesURL, nil, &listing).StatusCode)
+	require.Len(t, listing.Rules, 1)
+	assert.NotNil(t, listing.Rules[0].LastHitAt)
+}
+
+func TestMockRuleAPI_H5SnapshotIsolation(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
+
+	var native, h5, other capture.MockRuleView
+	require.Equal(t, http.StatusCreated, doJSON(t, http.MethodPost, base, ruleBody("POST", "/api/a", true), &native).StatusCode)
+	in := ruleBody("POST", "/api/a", true)
+	in["scope"], in["origin"] = "h5", "https://API.example:443"
+	require.Equal(t, http.StatusCreated, doJSON(t, http.MethodPost, base, in, &h5).StatusCode)
+	assert.Equal(t, "https://api.example", h5.Origin)
+	require.Equal(t, http.StatusConflict, doJSON(t, http.MethodPost, base, in, nil).StatusCode)
+	in["origin"] = "https://other.example"
+	require.Equal(t, http.StatusCreated, doJSON(t, http.MethodPost, base, in, &other).StatusCode)
+
+	var legacy, web sdkRuleListResponse
+	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, base+"?sinceVersion=0", nil, &legacy).StatusCode)
+	require.Len(t, legacy.Rules, 1)
+	assert.Equal(t, native.ID, legacy.Rules[0].ID)
+	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, base+"?sinceVersion=0&scope=h5", nil, &web).StatusCode)
+	require.Len(t, web.Rules, 2)
+	assert.Equal(t, "h5", web.Scope)
+	for _, rule := range web.Rules {
+		assert.Equal(t, "h5", rule.Scope)
+	}
+
+	var session capture.CaptureSession
+	require.Equal(t, http.StatusCreated, doJSON(t, http.MethodPost, srv.URL+"/api/v1/sessions",
+		ActivateSessionRequest{App: "com.example.integrating", Did: "dev-1"}, &session).StatusCode)
+	entry := &capture.TrafficEntry{
+		Timestamp: session.StartedAt, Method: "POST", URL: "https://api.example/api/a?q=1",
+		Path: "/api/a", StatusCode: 200, Adapter: "wkwebview-xhr", Mocked: true, MatchedRuleID: h5.ID,
+	}
+	require.Equal(t, http.StatusAccepted, doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "com.example.integrating", Did: "dev-1", SessionID: session.ID, Entries: []*capture.TrafficEntry{entry}}, nil).StatusCode)
+	var listing MockRuleListResponse
+	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, base, nil, &listing).StatusCode)
+	assert.Equal(t, web.Version, listing.Version, "hit accounting must not bump configuration version")
+	for _, rule := range listing.Rules {
+		assert.Equal(t, rule.ID == h5.ID, rule.LastHitAt != nil)
+	}
+	// SDK reports may be delayed beyond deletion, but contradictory known IDs
+	// must be removed before traffic reaches live, history or share consumers.
+	wrongOrigin, wrongPath, wrongURL, missingRule := *entry, *entry, *entry, *entry
+	wrongOrigin.MatchedRuleID = other.ID
+	wrongPath.URL, wrongPath.Path = "https://api.example/api/other", "/api/other"
+	wrongURL.URL = "https://api.example/api/other"
+	missingRule.MatchedRuleID, missingRule.MockHitVerified = "deleted-rule", true
+	reports := []*capture.TrafficEntry{&wrongOrigin, &wrongPath, &wrongURL, &missingRule}
+	for i, report := range reports {
+		report.RequestBody = fmt.Sprintf("report-%d", i)
+	}
+	require.Equal(t, http.StatusAccepted, doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
+		TrafficUploadRequest{App: "com.example.integrating", Did: "dev-1", SessionID: session.ID, Entries: reports}, nil).StatusCode)
+	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, base, nil, &listing).StatusCode)
+	for _, rule := range listing.Rules {
+		assert.Equal(t, rule.ID == h5.ID, rule.LastHitAt != nil)
+	}
+	var traffic TrafficListResponse
+	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+session.ID+"/traffic", nil, &traffic).StatusCode)
+	require.Len(t, traffic.Entries, 5)
+	byRequestBody := make(map[string]*capture.TrafficEntry)
+	for _, recorded := range traffic.Entries {
+		byRequestBody[recorded.RequestBody] = recorded
+	}
+	verified := byRequestBody[""]
+	require.NotNil(t, verified)
+	assert.True(t, verified.Mocked)
+	assert.True(t, verified.MockHitVerified)
+	assert.Equal(t, h5.ID, verified.MatchedRuleID)
+	for i := range 3 {
+		recorded := byRequestBody[fmt.Sprintf("report-%d", i)]
+		require.NotNil(t, recorded)
+		assert.False(t, recorded.Mocked)
+		assert.False(t, recorded.MockHitVerified)
+		assert.Empty(t, recorded.MatchedRuleID)
+		assert.Equal(t, reports[i].URL, recorded.URL)
+		assert.Equal(t, reports[i].StatusCode, recorded.StatusCode)
+	}
+	unverified := byRequestBody["report-3"]
+	require.NotNil(t, unverified)
+	assert.True(t, unverified.Mocked)
+	assert.False(t, unverified.MockHitVerified)
+	assert.Equal(t, "deleted-rule", unverified.MatchedRuleID)
+	var share shareResponse
+	shares := srv.URL + "/api/v1/shares"
+	require.Equal(t, http.StatusCreated, doJSON(t, http.MethodPost, shares,
+		shareRequest{TrafficID: byRequestBody["report-0"].ID}, &share).StatusCode)
+	var snapshot struct {
+		Entry capture.TrafficEntry `json:"entry"`
+	}
+	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, shares+"/"+share.ShareID, nil, &snapshot).StatusCode)
+	assert.False(t, snapshot.Entry.Mocked)
+	assert.Empty(t, snapshot.Entry.MatchedRuleID)
+	assert.Equal(t, wrongOrigin.RequestBody, snapshot.Entry.RequestBody)
+	fromTraffic := ruleBody("POST", "/api/a", false)
+	fromTraffic["originTrafficId"] = verified.ID
+	var derived capture.MockRuleView
+	require.Equal(t, http.StatusCreated, doJSON(t, http.MethodPost, base, fromTraffic, &derived).StatusCode)
+	assert.Equal(t, "h5", derived.Scope)
+	assert.Equal(t, "https://api.example", derived.Origin)
+	fromTraffic["scope"] = "native"
+	assert.Equal(t, http.StatusBadRequest, doJSON(t, http.MethodPost, base, fromTraffic, nil).StatusCode)
+}
+
+func TestMockRuleAPI_H5BrowserContract(t *testing.T) {
+	srv := newCaptureTestAPI(t)
+	seedMockRuleDevice(t, srv)
+	base := srv.URL + "/api/v1/devices/com.example.integrating/dev-1/mock-rules"
+	for _, test := range []struct{ input, want string }{
+		{"https://bücher.example:443", "https://xn--bcher-kva.example"},
+		{"http://[2001:0db8:0:0:0:0:0:1]:8080", "http://[2001:db8::1]:8080"},
+		{"http://[::ffff:192.0.2.1]", "http://[::ffff:c000:201]"},
+	} {
+		in := ruleBody("GET", "/test/%e4%b8%ad%2F", false)
+		in["scope"], in["origin"] = "h5", test.input
+		in["response"] = capture.MockResponse{StatusCode: 200, Headers: map[string]string{"Content-Type": "text/plain"}, Body: "[maintenance]"}
+		var rule capture.MockRuleView
+		require.Equal(t, http.StatusCreated, doJSON(t, http.MethodPost, base, in, &rule).StatusCode)
+		assert.Equal(t, test.want, rule.Origin)
+		assert.Equal(t, "/test/%e4%b8%ad%2F", rule.Path)
+	}
+	for _, test := range []struct {
+		path     string
+		response capture.MockResponse
+	}{
+		{"/a/%2E%2e/b", capture.MockResponse{StatusCode: 200}},
+		{"/a/中文", capture.MockResponse{StatusCode: 200}},
+		{"/a", capture.MockResponse{StatusCode: 200, Headers: map[string]string{"bad header": "value"}}},
+		{"/a", capture.MockResponse{StatusCode: 200, Headers: map[string]string{"X-Header": "\r\nInjected: yes"}}},
+		{"/a", capture.MockResponse{StatusCode: 200, Body: "[正文未保留：采样超时]"}},
+	} {
+		in := ruleBody("GET", test.path, true)
+		in["scope"], in["origin"], in["response"] = "h5", "https://api.example", test.response
+		require.Equal(t, http.StatusBadRequest, doJSON(t, http.MethodPost, base, in, nil).StatusCode)
+	}
 }

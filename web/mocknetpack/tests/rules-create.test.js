@@ -13,7 +13,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const ctx = {};
+const ctx = { URL, Headers };
 ctx.atob = (s) => Buffer.from(s, "base64").toString("binary");
 ctx.document = {
   getElementById: () => null,
@@ -171,19 +171,19 @@ async function expectBlocked(name, mutate, expectHint) {
     };
     const iso = (minusMs) => new Date(Date.now() - minusMs).toISOString();
 
-    // 6a: 从未命中（lastUsedAt ≈ createdAt，同刻创建）
+    // 6a: 启停更新使用时间，但没有命中证据
     ctx.renderRules({ rules: [{ id: "r-new", method: "GET", path: "/api/new", enabled: false,
       response: { statusCode: 200, body: "{}" }, source: null,
-      createdAt: iso(0), lastUsedAt: iso(0) }], version: 1, conflicts: [] });
+      createdAt: iso(30 * 60 * 1000), lastUsedAt: iso(0) }], version: 1, conflicts: [] });
     const rowNew = rows.find((e) => e.innerHTML.includes("r-line2"));
-    check("W9 从未命中规则显示『从未命中』", !!rowNew && rowNew.innerHTML.includes("从未命中"),
+    check("W9 启停后规则显示『暂无命中记录』", !!rowNew && rowNew.innerHTML.includes("暂无命中记录"),
       rowNew && rowNew.innerHTML.slice(0, 300));
 
-    // 6b: 命中过（lastUsedAt 远晚于 createdAt）
+    // 6b: 真实命中与最近编辑时间独立
     rows.length = 0;
     ctx.renderRules({ rules: [{ id: "r-hit", method: "GET", path: "/api/hit", enabled: true,
       response: { statusCode: 200, body: "{}" }, source: null,
-      createdAt: iso(3 * 3600 * 1000), lastUsedAt: iso(3 * 60 * 1000) }], version: 1, conflicts: [] });
+      createdAt: iso(3 * 3600 * 1000), lastUsedAt: iso(0), lastHitAt: iso(3 * 60 * 1000) }], version: 1, conflicts: [] });
     const rowHit = rows.find((e) => e.innerHTML.includes("r-line2"));
     check("W9 命中过规则显示最近命中相对时间", !!rowHit && rowHit.innerHTML.includes("最近命中") && rowHit.innerHTML.includes("分钟前"),
       rowHit && rowHit.innerHTML.slice(0, 300));
@@ -191,6 +191,18 @@ async function expectBlocked(name, mutate, expectHint) {
     ctx.document.createElement = prevCreate;
     ctx.document.getElementById = prevGet;
   })();
+
+  reset();
+  ctx.detail.supportsH5Mock = true;
+  Object.assign(values, {
+    createScope: "h5", createOrigin: "https://example.test", createBody: "[maintenance]",
+    createHeaders: "Content-Type: text/plain",
+  });
+  await ctx.submitCreateRule();
+  check("H5 声明为普通文本时允许方括号正文",
+    fetchCalls.length === 1 && JSON.parse(fetchCalls[0].opts.body).response.body === "[maintenance]");
+  check("H5 截断样本不用于建规则或回退",
+    ctx.h5CapturedResponse({ statusCode: 200, method: "GET", responseBody: "partial\n[正文已截断]" }) === undefined);
 
   if (failures) {
     console.error("\n共 " + failures + " 项失败");

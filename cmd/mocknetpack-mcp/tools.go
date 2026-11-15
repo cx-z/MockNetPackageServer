@@ -107,6 +107,8 @@ func toolCreateMockRule() mcp.Tool {
 		mcp.WithString("did", mcp.Required(), mcp.Description("设备标识")),
 		mcp.WithString("method", mcp.Required(), mcp.Description("HTTP 方法（匹配键）")),
 		mcp.WithString("path", mcp.Required(), mcp.Description("URL 路径（匹配键，不含 query）")),
+		mcp.WithString("scope", mcp.Description("规则范围 native 或 h5，默认 native")),
+		mcp.WithString("origin", mcp.Description("H5 规则的目标 HTTP(S) Origin，包含协议、域名和可选端口")),
 		mcp.WithNumber("statusCode", mcp.Description("Mock 回包状态码（默认 200）")),
 		mcp.WithObject("headers", mcp.Description("Mock 回包响应头，JSON 对象（字符串值）")),
 		mcp.WithString("body", mcp.Description("Mock 回包体（UTF-8 文本）")),
@@ -366,6 +368,8 @@ func mcpCreateMockRule(base string) server.ToolHandlerFunc {
 		in := &capture.MockRuleInput{
 			Method:   mustString(p, "method"),
 			Path:     mustString(p, "path"),
+			Scope:    mustString(p, "scope"),
+			Origin:   mustString(p, "origin"),
 			Response: resp,
 			Note:     mustString(p, "note"),
 		}
@@ -549,6 +553,8 @@ func mcpListMockRules(base string) server.ToolHandlerFunc {
 				"ruleId":    r.ID,
 				"method":    r.Method,
 				"path":      r.Path,
+				"scope":     r.Scope,
+				"origin":    r.Origin,
 				"enabled":   r.Enabled,
 				"effective": r.Effective,
 				"note":      r.Note,

@@ -29,9 +29,10 @@ type mediaFetchErrorResponse struct {
 // the current monotonic version. Conflicts is only populated for the Web full
 // list (omitted on the SDK incremental pull).
 type MockRuleListResponse struct {
-	Version   int                        `json:"version"`
-	Rules     []*capture.MockRuleView    `json:"rules"`
-	Conflicts []capture.MockRuleConflict `json:"conflicts,omitempty"`
+	SupportsH5Mock bool                       `json:"supportsH5Mock,omitempty"`
+	Version        int                        `json:"version"`
+	Rules          []*capture.MockRuleView    `json:"rules"`
+	Conflicts      []capture.MockRuleConflict `json:"conflicts,omitempty"`
 }
 
 // ruleCaller builds the  permission identity for a rule mutation from the
@@ -50,6 +51,8 @@ func ruleCaller(r *http.Request) *store.RuleCaller {
 // SDK — the contract guarantees the pull leaks nothing beyond the match key,
 // the canned response, the switch and the runtime effective flag.
 type sdkRuleView struct {
+	Scope     string               `json:"scope,omitempty"`
+	Origin    string               `json:"origin,omitempty"`
 	ID        string               `json:"id"`
 	Method    string               `json:"method"`
 	Path      string               `json:"path"`
@@ -64,6 +67,8 @@ func toSDKRules(views []*capture.MockRuleView) []sdkRuleView {
 	for _, v := range views {
 		out = append(out, sdkRuleView{
 			ID:        v.ID,
+			Scope:     v.Scope,
+			Origin:    v.Origin,
 			Method:    v.Method,
 			Path:      v.Path,
 			Response:  v.Response,
@@ -78,6 +83,7 @@ func toSDKRules(views []*capture.MockRuleView) []sdkRuleView {
 // rule set. Distinct from MockRuleListResponse so the wire format for the SDK
 // can never accidentally grow Web-only fields.
 type sdkRuleListResponse struct {
+	Scope   string        `json:"scope,omitempty"`
 	Version int           `json:"version"`
 	Rules   []sdkRuleView `json:"rules"`
 }
@@ -103,7 +109,12 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_field", "sinceVersion must be a non-negative integer")
 			return
 		}
-		active, version, changed, err := a.captureManager.ListActiveMockRules(r.Context(), app, did, since)
+		scope := r.URL.Query().Get("scope")
+		if scope != "" && scope != capture.H5MockScope {
+			writeError(w, http.StatusBadRequest, "invalid_field", "scope must be h5 for H5 SDK snapshots")
+			return
+		}
+		active, version, changed, err := a.captureManager.ListActiveMockRulesForScope(r.Context(), app, did, since, scope)
 		if err != nil {
 			writeCaptureError(w, err)
 			return
@@ -115,6 +126,7 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 			sdkRules = []sdkRuleView{}
 		}
 		writeJSON(w, http.StatusOK, sdkRuleListResponse{
+			Scope:   scope,
 			Version: version,
 			Rules:   sdkRules,
 		})
@@ -148,15 +160,16 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 		views = []*capture.MockRuleView{}
 	}
 	writeJSON(w, http.StatusOK, MockRuleListResponse{
-		Version:   version,
-		Rules:     views,
-		Conflicts: conflicts,
+		SupportsH5Mock: true,
+		Version:        version,
+		Rules:          views,
+		Conflicts:      conflicts,
 	})
 }
 
 // handleCreateMockRule handles POST /api/v1/devices/{app}/{did}/mock-rules.
 // Creates a rule (default disabled). Enabling it rejects with 409 if another
-// enabled rule already matches the same Method+Path.
+// enabled rule already matches the same scoped endpoint.
 func (a *API) handleCreateMockRule(w http.ResponseWriter, r *http.Request) {
 	var in capture.MockRuleInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -179,7 +192,7 @@ func (a *API) handleCreateMockRule(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateMockRule handles PUT /api/v1/devices/{app}/{did}/mock-rules/{ruleId}.
-// Edits the canned response and note (match key Method+Path is immutable);
+// Edits the canned response and note without changing the scoped match key;
 // optionally flips the enabled switch. Enabling against another enabled rule on
 // the same interface returns 409. note must be non-blank only when the PUT
 // actually changes the canned response ; a pure toggle may leave it blank.

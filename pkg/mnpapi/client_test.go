@@ -231,6 +231,35 @@ func TestClient_CreateMockRuleFromTraffic(t *testing.T) {
 	assert.Equal(t, "r1", rule.ID)
 }
 
+func TestClient_H5CreateChecksServerBeforePosting(t *testing.T) {
+	for _, supportsH5 := range []bool{false, true} {
+		t.Run(fmt.Sprint(supportsH5), func(t *testing.T) {
+			f := &fakeServer{}
+			f.handler = func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/traffic/t1" {
+					writeJSON(w, 200, capture.TrafficEntry{Method: "GET", URL: "https://api.example/api",
+						Path: "/api", Adapter: "wkwebview-fetch", StatusCode: 200, ResponseBody: "ok"})
+					return
+				}
+				if r.Method == http.MethodGet {
+					writeJSON(w, 200, map[string]bool{"supportsH5Mock": supportsH5})
+					return
+				}
+				assert.True(t, supportsH5, "old server must never receive a create")
+				writeJSON(w, 201, capture.MockRuleView{MockRule: &capture.MockRule{ID: "unexpected-native"}})
+			}
+			f.ts = httptest.NewServer(f)
+			defer f.ts.Close()
+			c := newTestClient(t, f)
+			in := &capture.MockRuleInput{Scope: "h5", Origin: "https://api.example", Method: "GET", Path: "/api"}
+			_, err := c.CreateMockRule(t.Context(), "app", "device", in)
+			require.Error(t, err)
+			_, err = c.CreateMockRuleFromTraffic(t.Context(), "app", "device", "t1", "note", 0)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestClient_UpdateAndSetEnabled(t *testing.T) {
 	f := &fakeServer{}
 	f.handler = func(w http.ResponseWriter, r *http.Request) {

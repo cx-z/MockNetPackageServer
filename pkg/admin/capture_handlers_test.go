@@ -320,6 +320,7 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 			ResponseHeaders: map[string][]string{"Server": {"mockd"}},
 			ResponseBody:    `{"items":[]}`,
 			DurationMs:      42,
+			Adapter:         "wkwebview-fetch",
 		},
 		{Timestamp: now.Add(time.Millisecond), Method: "GET", URL: "http://example.com/health", DurationMs: 3},
 		{Timestamp: now.Add(2 * time.Millisecond), Method: "", URL: "http://x/bad", DurationMs: 1}, // invalid
@@ -354,12 +355,15 @@ func TestCaptureAPI_TrafficLifecycle(t *testing.T) {
 	assert.Equal(t, 42, first.DurationMs)
 	assert.NotEmpty(t, first.ID)
 	assert.Equal(t, sessionID, first.SessionID)
+	assert.Equal(t, "wkwebview-fetch", first.Adapter)
+	assert.Empty(t, list.Entries[1].Adapter)
 
 	// Single request detail by server-generated ID.
 	var detail capture.TrafficEntry
 	resp = doJSON(t, http.MethodGet, srv.URL+"/api/v1/traffic/"+first.ID, nil, &detail)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, first.URL, detail.URL)
+	assert.Equal(t, first.Adapter, detail.Adapter)
 
 	// Paging: limit=1&offset=1 -> second entry only.
 	var page TrafficListResponse

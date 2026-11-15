@@ -237,11 +237,9 @@ type TrafficEntry struct {
 	// ResponseBodyBase64 carries the raw response body bytes (base64) when it is
 	// not UTF-8 text, so a rule can replay the exact original bytes ( fix).
 	ResponseBodyBase64 string `json:"responseBodyBase64,omitempty"`
-	// ResponseStaticKind marks a whitelisted static resource (video) whose
-	// bytes are deliberately NOT stored ( 方案 D): ResponseBody holds a
-	// display placeholder and ResponseBodyBase64 is empty; the original URL
-	// (entry.URL) is the browser replay pointer. Empty = business API, bytes
-	// kept via the normal UTF-8/base64 path.
+	// ResponseStaticKind identifies a resource previewed from its original URL:
+	// a native video/large image classified at ingestion, or an image observed
+	// by WebKit without response bytes.
 	ResponseStaticKind StaticKind `json:"responseStaticKind,omitempty"`
 	// ResponseBodyDecoded is the UTF-8 text decoded by the app-injected protocol
 	// decoder , for Web display only; never used for replay.
@@ -271,13 +269,17 @@ type TrafficEntry struct {
 	TimeoutInferred bool `json:"timeoutInferred,omitempty"`
 	// DurationMs is the request duration in milliseconds.
 	DurationMs int `json:"durationMs"`
-	// Mocked marks whether this request hit a mock rule ( onward; the Web
-	// request stream labels it "Mock 命中").
+	// Mocked records a device's Mock report after contradictory reports are removed.
 	Mocked bool `json:"mocked,omitempty"`
-	// MatchedRuleID is the ID of the mock rule that served this request (
-	// P1-1): populated by the SDK on mock hits so Agents can confirm which rule
-	// actually matched; empty for real (unmocked) traffic.
+	// MatchedRuleID is the rule reported by the SDK. Unknown IDs may be retained
+	// as unverified when the rule no longer exists.
 	MatchedRuleID string `json:"matchedRuleId,omitempty"`
+	// MockHitVerified is set by the server when the reported rule ID belongs
+	// to this device and matches the request endpoint.
+	MockHitVerified bool `json:"mockHitVerified,omitempty"`
+	// Adapter identifies the SDK capture source. WKWebView uses
+	// "wkwebview-fetch" or "wkwebview-xhr"; older records may omit it.
+	Adapter string `json:"adapter,omitempty"`
 }
 
 // ============================================================================
@@ -296,7 +298,7 @@ type ServerConfig struct {
 }
 
 // ============================================================================
-// Mock rules 
+// Mock rules
 // ============================================================================
 
 // MockResponse is the canned response a MockRule returns when it matches
@@ -337,38 +339,41 @@ type MediaRef struct {
 // with the rule so the original vs. mocked values can be reviewed later
 // (requirement 6.6 / ). A hand-authored rule  has no source.
 type MockRuleSource struct {
-	Method          string              `json:"method"`
-	Path            string              `json:"path"`
-	URL             string              `json:"url,omitempty"`
-	Query           string              `json:"query,omitempty"`
-	RequestHeaders  map[string][]string `json:"requestHeaders,omitempty"`
-	RequestBody     string              `json:"requestBody,omitempty"`
-	RequestBodyBase64 string            `json:"requestBodyBase64,omitempty"`
+	Method            string              `json:"method"`
+	Path              string              `json:"path"`
+	URL               string              `json:"url,omitempty"`
+	Query             string              `json:"query,omitempty"`
+	RequestHeaders    map[string][]string `json:"requestHeaders,omitempty"`
+	RequestBody       string              `json:"requestBody,omitempty"`
+	RequestBodyBase64 string              `json:"requestBodyBase64,omitempty"`
 	// RequestBodyDecoded is the request body decoded by the app-injected protocol
 	// decoder , frozen into the snapshot for the detail view; display only.
-	RequestBodyDecoded string           `json:"requestBodyDecoded,omitempty"`
-	StatusCode      *int                `json:"statusCode,omitempty"`
-	ResponseHeaders map[string][]string `json:"responseHeaders,omitempty"`
-	ResponseBody    *string             `json:"responseBody,omitempty"`
-	ResponseBodyBase64 string           `json:"responseBodyBase64,omitempty"`
-	ResponseBodyDecoded string           `json:"responseBodyDecoded,omitempty"`
-	CapturedAt      time.Time           `json:"capturedAt"`
+	RequestBodyDecoded  string              `json:"requestBodyDecoded,omitempty"`
+	StatusCode          *int                `json:"statusCode,omitempty"`
+	ResponseHeaders     map[string][]string `json:"responseHeaders,omitempty"`
+	ResponseBody        *string             `json:"responseBody,omitempty"`
+	ResponseBodyBase64  string              `json:"responseBodyBase64,omitempty"`
+	ResponseBodyDecoded string              `json:"responseBodyDecoded,omitempty"`
+	ResponseStaticKind  StaticKind          `json:"responseStaticKind,omitempty"`
+	CapturedAt          time.Time           `json:"capturedAt"`
 }
 
 // MockRule is a persisted, device-scoped canned-response rule. It matches by
-// Method + URL path (Query/Body ignored); while a capture session is active the
+// method and path (plus Origin for H5); while a capture session is active the
 // SDK returns Response for matching requests. Enabled is the persisted user
 // switch; the runtime Effective flag is computed at read time (MockRuleView)
 // so an abnormal multi-enabled interface does not mock at all.
 type MockRule struct {
-	ID        string          `json:"id"`
-	App       string          `json:"app"`
-	Did       string          `json:"did"`
-	Method    string          `json:"method"`
-	Path      string          `json:"path"`
-	Response  MockResponse    `json:"response"`
-	Enabled   bool            `json:"enabled"`
-	Source    *MockRuleSource `json:"source,omitempty"`
+	Scope    string          `json:"scope,omitempty"`
+	Origin   string          `json:"origin,omitempty"`
+	ID       string          `json:"id"`
+	App      string          `json:"app"`
+	Did      string          `json:"did"`
+	Method   string          `json:"method"`
+	Path     string          `json:"path"`
+	Response MockResponse    `json:"response"`
+	Enabled  bool            `json:"enabled"`
+	Source   *MockRuleSource `json:"source,omitempty"`
 	// OriginTrafficID records the traffic entry this rule was created from via
 	// "Mock 此请求" (empty for hand-authored rules). The server stamps it from
 	// MockRuleInput.OriginTrafficID and uses it to resolve the captured
@@ -379,9 +384,9 @@ type MockRule struct {
 	// video entry replays as a 302 redirect to the original URL; once Edited
 	// the canned response is whatever the user configured (empty body / 500 /
 	// corrupt bytes …).
-	Edited bool `json:"edited,omitempty"`
-	CreatedAt time.Time       `json:"createdAt"`
-	UpdatedAt time.Time       `json:"updatedAt"`
+	Edited    bool      `json:"edited,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 	// LastUsedAt is the sliding-window cleanup baseline .
 	// Refreshed when the rule is hit, edited via Web, or toggled on/off;
 	// heartbeats, version polling and passive browsing do not refresh it.
@@ -389,6 +394,8 @@ type MockRule struct {
 	// with their source snapshot. A zero value (legacy rows pre-) is treated
 	// as UpdatedAt by the janitor.
 	LastUsedAt time.Time `json:"lastUsedAt"`
+	// LastHitAt records an observed hit independently of rule edits and toggles.
+	LastHitAt *time.Time `json:"lastHitAt,omitempty"`
 	// Note is the human-readable rule memo . A single string, overwritten
 	// on each edit (no edit history). Optional at creation; required (non-blank)
 	// only when a PUT actually changes the canned response (editing). A pure
@@ -407,9 +414,11 @@ type MockRule struct {
 }
 
 // MockRuleInput is the create payload (contract MockRuleInput). It carries the
-// match key (Method+Path) because create defines which interface the rule
+// match key (method, path, and H5 Origin) because create defines which interface the rule
 // targets. Edit uses UpdateMockRuleInput instead, so the match key is frozen.
 type MockRuleInput struct {
+	Scope    string          `json:"scope,omitempty"`
+	Origin   string          `json:"origin,omitempty"`
 	Method   string          `json:"method"`
 	Path     string          `json:"path"`
 	Response MockResponse    `json:"response"`
@@ -450,6 +459,7 @@ type MockRuleView struct {
 // exists for the same interface; the whole interface is not mocked and Web shows
 // a popup (requirement 6.5 / ).
 type MockRuleConflict struct {
+	Origin  string `json:"origin,omitempty"`
 	Method  string `json:"method"`
 	Path    string `json:"path"`
 	Message string `json:"message"`

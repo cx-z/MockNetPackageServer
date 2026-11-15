@@ -72,6 +72,7 @@ type storeData struct {
 	// (keyed by app + "\x00" + did). Rules persist; the runtime Effective flag
 	// is computed by the manager and never stored.
 	MockRules    []*capture.MockRule `json:"mockRules,omitempty"`
+	H5MockRules  []*capture.MockRule `json:"h5MockRules,omitempty"`
 	RuleVersions map[string]int      `json:"ruleVersions,omitempty"`
 
 	// MockNetPack push mock rules and the per-device push
@@ -197,9 +198,31 @@ func (fs *FileStore) Open(ctx context.Context) error {
 		return err
 	}
 
+	if err := fs.loadRuleScopes(&stored); err != nil {
+		return err
+	}
 	fs.data = &stored
 	fs.dirty.Store(false)
 	fs.saveLoopOnce.Do(func() { go fs.saveLoop() })
+	return nil
+}
+
+// loadRuleScopes migrates mixed files before use and restores the in-memory list.
+func (fs *FileStore) loadRuleScopes(stored *storeData) error {
+	for _, rule := range stored.MockRules {
+		if rule != nil && rule.Scope == capture.H5MockScope && !fs.cfg.ReadOnly {
+			data, err := stored.marshal()
+			if err != nil {
+				return err
+			}
+			if err := fs.writeData(data); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	stored.MockRules = append(stored.MockRules, stored.H5MockRules...)
+	stored.H5MockRules = nil
 	return nil
 }
 
@@ -234,13 +257,37 @@ func (fs *FileStore) doSave() error {
 	// Ensure version is set
 	fs.data.Version = dataVersion
 
-	data, err := json.MarshalIndent(fs.data, "", "  ")
+	data, err := fs.data.marshal()
 	fs.mu.Unlock()
 
 	if err != nil {
 		return err
 	}
 
+	if err := fs.writeData(data); err != nil {
+		return err
+	}
+	fs.dirty.Store(false)
+	return nil
+}
+
+// marshal splits the in-memory rule list into legacy and H5 disk projections.
+func (data *storeData) marshal() ([]byte, error) {
+	stored := *data
+	stored.MockRules = nil
+	stored.H5MockRules = append([]*capture.MockRule(nil), data.H5MockRules...)
+	for _, rule := range data.MockRules {
+		if rule != nil && rule.Scope == capture.H5MockScope {
+			stored.H5MockRules = append(stored.H5MockRules, rule)
+		} else {
+			stored.MockRules = append(stored.MockRules, rule)
+		}
+	}
+	return json.MarshalIndent(&stored, "", "  ")
+}
+
+// writeData replaces the persisted file with a durable snapshot.
+func (fs *FileStore) writeData(data []byte) error {
 	// Atomic write: write to temp file, fsync it, then rename, then fsync the
 	// directory so the rename itself survives a crash. Without the fsyncs a
 	// power loss right after the rename can leave a zero-length or missing
@@ -266,8 +313,6 @@ func (fs *FileStore) doSave() error {
 		return err
 	}
 	syncDir(fs.cfg.DataDir)
-
-	fs.dirty.Store(false)
 	return nil
 }
 
@@ -489,6 +534,9 @@ func (fs *FileStore) reloadFromDisk() error {
 		return err
 	}
 
+	if err := fs.loadRuleScopes(&stored); err != nil {
+		return err
+	}
 	fs.data = &stored
 	fs.dirty.Store(false)
 	return nil

@@ -1,8 +1,10 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -140,6 +142,7 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 		m.trafficMu.Unlock()
 		return 0, ErrSessionNotFound
 	}
+	hits := m.validateTrafficMockHits(ctx, app, did, stored)
 	// : stamp per-session monotonic sequence numbers (arrival order). The
 	// SDK never sends Seq; it is a server-side + query-side field consumed by
 	// `since=<seq>` incremental queries only.
@@ -203,9 +206,8 @@ func (m *CaptureManager) UploadTraffic(ctx context.Context, app, did, sessionID 
 	m.persistSessionTraffic(ctx, sessionID)
 	m.trafficMu.Unlock()
 
-	// : a mocked upload is proof the rule was hit; refresh its LastUsedAt so
-	// the sliding cleanup window starts over. Heartbeats/polling don't reach here.
-	if hits := collectHits(stored); len(hits) > 0 {
+	// Refresh the lifetime only for validated hits and legacy Native reports.
+	if len(hits) > 0 {
 		m.touchHitRules(ctx, app, did, hits)
 	}
 	return len(stored), nil
@@ -322,39 +324,91 @@ func (m *CaptureManager) deleteSessionTraffic(ctx context.Context, sessionID str
 	}
 }
 
-// collectHits returns the set of (method, path) interfaces that were actually
-// mocked in this batch (deduplicated).
-func collectHits(entries []*capture.TrafficEntry) map[interfaceKey]bool {
-	hits := make(map[interfaceKey]bool)
+// ruleHit identifies the matched scope and endpoint. Only legacy Native SDKs
+// may report a hit without the rule ID.
+type ruleHit struct {
+	id  string
+	key interfaceKey
+}
+
+// validateTrafficMockHits records whether a reported rule matches the device and
+// request. A deleted rule may still be reported by a delayed upload, so retain
+// unknown IDs as unverified telemetry. The capture data itself is kept either way.
+func (m *CaptureManager) validateTrafficMockHits(ctx context.Context, app, did string, entries []*capture.TrafficEntry) map[ruleHit]bool {
+	hits := make(map[ruleHit]bool)
+	rules := make(map[string]*capture.MockRule)
 	for _, e := range entries {
-		if e.Mocked {
-			hits[interfaceKey{method: e.Method, path: e.Path}] = true
+		e.MockHitVerified = false // Only the server can set this flag.
+		if !e.Mocked {
+			e.MatchedRuleID = ""
+			continue
 		}
+		key, valid := trafficMockKey(e)
+		if !valid {
+			e.Mocked, e.MatchedRuleID = false, ""
+			continue
+		}
+		if e.MatchedRuleID == "" {
+			hits[ruleHit{key: key}] = true // Legacy Native fallback.
+			continue
+		}
+		rule, cached := rules[e.MatchedRuleID]
+		if !cached {
+			var err error
+			rule, err = m.rules.Get(ctx, e.MatchedRuleID)
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				m.log.Warn("could not verify Mock hit", "error", err)
+			}
+			rules[e.MatchedRuleID] = rule
+		}
+		if rule == nil {
+			continue
+		}
+		ruleKey := mockInterface(rule.Method, rule.Path, rule.Scope, rule.Origin)
+		// Native SDKs ignore method case. Use the stored spelling for the exact
+		// hit update so the legacy rule key and conflict policy stay unchanged.
+		if rule.Scope != capture.H5MockScope && strings.EqualFold(key.method, ruleKey.method) {
+			key.method = ruleKey.method
+		}
+		if rule.App != app || rule.Did != did || key != ruleKey {
+			e.Mocked, e.MatchedRuleID = false, ""
+			continue
+		}
+		e.MockHitVerified = true
+		hits[ruleHit{id: e.MatchedRuleID, key: key}] = true
 	}
 	return hits
 }
 
-// touchHitRules refreshes LastUsedAt of every enabled rule matching a hit
-// interface. It is best-effort: store errors are logged, never propagated to
-// the traffic upload path.
-func (m *CaptureManager) touchHitRules(ctx context.Context, app, did string, hits map[interfaceKey]bool) {
-	all, err := m.rules.List(ctx, &MockRuleFilter{App: app, Did: did})
-	if err != nil {
-		m.log.Warn("rule janitor: list rules for hit-touch failed", "error", err)
-		return
+// trafficMockKey preserves Native path semantics and checks that the H5 path
+// also matches the browser URL, including the original percent encoding.
+func trafficMockKey(e *capture.TrafficEntry) (interfaceKey, bool) {
+	if !strings.HasPrefix(e.Adapter, "wkwebview-") {
+		return mockInterface(e.Method, e.Path, "", ""), true
 	}
-	now := time.Now()
-	for _, r := range all {
-		if !r.Enabled {
-			continue
-		}
-		if !hits[interfaceKey{method: r.Method, path: r.Path}] {
-			continue
-		}
-		r.LastUsedAt = now
-		if err := m.rules.Update(ctx, r); err != nil {
-			m.log.Warn("rule janitor: touch hit rule failed", "rule", r.ID, "error", err)
-		}
+	if !capture.H5MockableAdapter(e.Adapter) || e.MatchedRuleID == "" {
+		return interfaceKey{}, false
+	}
+	origin, ok := capture.HTTPOrigin(e.URL)
+	if !ok {
+		return interfaceKey{}, false
+	}
+	u, err := url.Parse(e.URL)
+	if err != nil || cmp.Or(u.RawPath, u.EscapedPath(), "/") != e.Path {
+		return interfaceKey{}, false
+	}
+	return mockInterface(e.Method, e.Path, capture.H5MockScope, origin), true
+}
+
+// touchHitRules updates only usage metadata belonging to this device.
+func (m *CaptureManager) touchHitRules(ctx context.Context, app, did string, hits map[ruleHit]bool) {
+	err := m.rules.TouchHits(ctx, app, did, time.Now(), func(r *capture.MockRule) bool {
+		key := mockInterface(r.Method, r.Path, r.Scope, r.Origin)
+		return hits[ruleHit{id: r.ID, key: key}] ||
+			(r.Scope != capture.H5MockScope && r.Enabled && hits[ruleHit{key: key}])
+	})
+	if err != nil {
+		m.log.Warn("rule janitor: touch hit rule failed", "error", err)
 	}
 }
 
