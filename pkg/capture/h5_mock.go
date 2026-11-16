@@ -15,9 +15,26 @@ import (
 
 const H5MockScope = "h5"
 
+// H5Adapter reserves page traffic sources, including future diagnostic types.
+func H5Adapter(adapter string) bool {
+	return strings.HasPrefix(adapter, "wkwebview-") || strings.HasPrefix(adapter, "android-webview-")
+}
+
+// H5TrafficAdapters lists the page sources understood by the platform.
+func H5TrafficAdapters() []string {
+	adapters := make([]string, 0, 12)
+	for _, prefix := range []string{"wkwebview-", "android-webview-"} {
+		for _, kind := range []string{"fetch", "xhr", "beacon", "eventsource", "navigation", "resource"} {
+			adapters = append(adapters, prefix+kind)
+		}
+	}
+	return adapters
+}
+
 // H5MockableAdapter reports which page APIs can replay a canned HTTP response.
 func H5MockableAdapter(adapter string) bool {
-	return adapter == "wkwebview-fetch" || adapter == "wkwebview-xhr"
+	return adapter == "wkwebview-fetch" || adapter == "wkwebview-xhr" ||
+		adapter == "android-webview-fetch" || adapter == "android-webview-xhr"
 }
 
 // HTTPOrigin extracts the browser-compatible scheme, host and non-default port.

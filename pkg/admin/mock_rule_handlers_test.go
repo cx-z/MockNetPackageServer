@@ -517,10 +517,14 @@ func TestMockRuleAPI_H5SnapshotIsolation(t *testing.T) {
 	var legacy, web sdkRuleListResponse
 	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, base+"?sinceVersion=0", nil, &legacy).StatusCode)
 	require.Len(t, legacy.Rules, 1)
+	assert.Empty(t, legacy.H5TrafficAdapters)
 	assert.Equal(t, native.ID, legacy.Rules[0].ID)
 	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, base+"?sinceVersion=0&scope=h5", nil, &web).StatusCode)
 	require.Len(t, web.Rules, 2)
 	assert.Equal(t, "h5", web.Scope)
+	assert.Contains(t, web.H5TrafficAdapters, "android-webview-fetch")
+	assert.Contains(t, web.H5TrafficAdapters, "android-webview-navigation")
+	assert.Contains(t, web.H5TrafficAdapters, "wkwebview-xhr")
 	for _, rule := range web.Rules {
 		assert.Equal(t, "h5", rule.Scope)
 	}
@@ -532,8 +536,11 @@ func TestMockRuleAPI_H5SnapshotIsolation(t *testing.T) {
 		Timestamp: session.StartedAt, Method: "POST", URL: "https://api.example/api/a?q=1",
 		Path: "/api/a", StatusCode: 200, Adapter: "wkwebview-xhr", Mocked: true, MatchedRuleID: h5.ID,
 	}
+	android := *entry
+	android.Adapter = "android-webview-fetch"
+	android.RequestBody = "android"
 	require.Equal(t, http.StatusAccepted, doJSON(t, http.MethodPost, srv.URL+"/api/v1/traffic",
-		TrafficUploadRequest{App: "com.example.integrating", Did: "dev-1", SessionID: session.ID, Entries: []*capture.TrafficEntry{entry}}, nil).StatusCode)
+		TrafficUploadRequest{App: "com.example.integrating", Did: "dev-1", SessionID: session.ID, Entries: []*capture.TrafficEntry{entry, &android}}, nil).StatusCode)
 	var listing MockRuleListResponse
 	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, base, nil, &listing).StatusCode)
 	assert.Equal(t, web.Version, listing.Version, "hit accounting must not bump configuration version")
@@ -559,7 +566,7 @@ func TestMockRuleAPI_H5SnapshotIsolation(t *testing.T) {
 	}
 	var traffic TrafficListResponse
 	require.Equal(t, http.StatusOK, doJSON(t, http.MethodGet, srv.URL+"/api/v1/sessions/"+session.ID+"/traffic", nil, &traffic).StatusCode)
-	require.Len(t, traffic.Entries, 5)
+	require.Len(t, traffic.Entries, 6)
 	byRequestBody := make(map[string]*capture.TrafficEntry)
 	for _, recorded := range traffic.Entries {
 		byRequestBody[recorded.RequestBody] = recorded
@@ -569,6 +576,10 @@ func TestMockRuleAPI_H5SnapshotIsolation(t *testing.T) {
 	assert.True(t, verified.Mocked)
 	assert.True(t, verified.MockHitVerified)
 	assert.Equal(t, h5.ID, verified.MatchedRuleID)
+	verifiedAndroid := byRequestBody["android"]
+	require.NotNil(t, verifiedAndroid)
+	assert.True(t, verifiedAndroid.MockHitVerified)
+	assert.Equal(t, h5.ID, verifiedAndroid.MatchedRuleID)
 	for i := range 3 {
 		recorded := byRequestBody[fmt.Sprintf("report-%d", i)]
 		require.NotNil(t, recorded)
@@ -595,7 +606,7 @@ func TestMockRuleAPI_H5SnapshotIsolation(t *testing.T) {
 	assert.Empty(t, snapshot.Entry.MatchedRuleID)
 	assert.Equal(t, wrongOrigin.RequestBody, snapshot.Entry.RequestBody)
 	fromTraffic := ruleBody("POST", "/api/a", false)
-	fromTraffic["originTrafficId"] = verified.ID
+	fromTraffic["originTrafficId"] = verifiedAndroid.ID
 	var derived capture.MockRuleView
 	require.Equal(t, http.StatusCreated, doJSON(t, http.MethodPost, base, fromTraffic, &derived).StatusCode)
 	assert.Equal(t, "h5", derived.Scope)

@@ -80,18 +80,23 @@ function methodCls(m) {
 
 /** H5 请求的 API 或页面加载来源。 */
 function h5TrafficKind(entry) {
-  if (entry?.adapter === "wkwebview-fetch") return "fetch";
-  if (entry?.adapter === "wkwebview-xhr") return "XHR";
-  if (entry?.adapter === "wkwebview-beacon") return "Beacon";
-  if (entry?.adapter === "wkwebview-eventsource") return "EventSource";
-  if (entry?.adapter === "wkwebview-navigation") return "主文档";
-  if (entry?.adapter === "wkwebview-resource") return "页面资源";
+  const adapter = entry?.adapter;
+  const kind = typeof adapter === "string" ? /^(?:wkwebview|android-webview)-(.+)$/.exec(adapter)?.[1] : "";
+  switch (kind) {
+    case "fetch": return "fetch";
+    case "xhr": return "XHR";
+    case "beacon": return "Beacon";
+    case "eventsource": return "EventSource";
+    case "navigation": return "主文档";
+    case "resource": return "页面资源";
+  }
   return "";
 }
 
 /** 业务 API 条目可作为 H5 规则的匹配来源。 */
 function h5MockableTraffic(entry) {
-  return entry?.adapter === "wkwebview-fetch" || entry?.adapter === "wkwebview-xhr";
+  const kind = h5TrafficKind(entry);
+  return kind === "fetch" || kind === "XHR";
 }
 
 /** H5 图片统一用原 URL 预览，旧的页面资源记录可按路径后缀识别。 */
@@ -104,7 +109,7 @@ function trafficResponseStaticKind(entry) {
   if (url.protocol !== "http:" && url.protocol !== "https:") return entry.responseStaticKind;
   const contentType = headerValue(entry.responseHeaders, "Content-Type");
   if (/^image\//i.test(contentType || "")) return "image";
-  if (entry.responseStaticKind || contentType || entry.adapter !== "wkwebview-resource") return entry.responseStaticKind;
+  if (entry.responseStaticKind || contentType || h5TrafficKind(entry) !== "页面资源") return entry.responseStaticKind;
   return /\.(avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|webp)$/i.test(url.pathname) ? "image" : undefined;
 }
 
@@ -115,8 +120,9 @@ function h5DiagnosticStage(entry) {
   case "h5BeaconRejected": return ["未排队", "浏览器未接受 Beacon 排队", true];
   case "h5SSEOpen": return ["已连接", "EventSource 首次连接已打开"];
   case "h5SSEError": return ["连接错误", "EventSource 首次连接触发 error，浏览器未提供错误细节", true];
-  case "h5NavigationFinished": return ["加载完成", "WebKit 主文档导航完成"];
-  case "h5NavigationFailed": return ["导航失败", "WebKit 主文档导航失败", true];
+  case "h5NavigationFinished": return ["加载完成", entry.adapter === "wkwebview-navigation" ? "WebKit 主文档导航完成" : "WebView 主文档加载完成"];
+  case "h5NavigationFailed": return ["导航失败", entry.adapter === "wkwebview-navigation" ? "WebKit 主文档导航失败" : "WebView 主文档导航失败", true];
+  case "h5NavigationIssue": return ["导航异常", "WebView 报告主文档导航异常", true];
   case "h5ResourceLoaded": return ["已加载", "资源元素触发 load"];
   case "h5ResourceObserved":
     return ["已观测", entry.statusCode == null ? "已观测到资源，HTTP 状态码不可用" : "已观测到资源"];
@@ -137,7 +143,7 @@ function h5ResponseStatus(entry) {
 
 /** 页面资源仅在存在 Resource Timing 耗时时展示毫秒数。 */
 function trafficDuration(entry, suffix) {
-  if (entry.adapter === "wkwebview-resource" && !entry.durationMs) return "—";
+  if (h5TrafficKind(entry) === "页面资源" && !entry.durationMs) return "—";
   return (entry.durationMs || 0) + suffix;
 }
 

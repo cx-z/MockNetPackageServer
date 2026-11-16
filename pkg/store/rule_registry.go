@@ -230,7 +230,7 @@ func (m *CaptureManager) planOriginResponse(ctx context.Context, app, did string
 	if err != nil {
 		return nil, nil, err
 	}
-	if strings.HasPrefix(origin.Adapter, "wkwebview-") {
+	if capture.H5Adapter(origin.Adapter) {
 		if !capture.H5MockableAdapter(origin.Adapter) || in.Scope == "native" {
 			return nil, nil, ErrInvalidH5Rule
 		}

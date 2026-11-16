@@ -25,6 +25,7 @@ const context = vm.createContext({
   },
   detail: { sessionId: "session" },
   trafficFilter: "",
+  URL,
   bodyHtml: (_, options) => { previewURLs.push(options.url); return ""; },
   bindJsonTree() {},
 });
@@ -79,6 +80,19 @@ assert.match(details.innerHTML, /200 · WebKit 主文档导航失败：连接中
 assert.match(details.innerHTML, /NSURLErrorDomain \/ -1005/);
 assert.doesNotMatch(details.innerHTML, /mockThisBtn/);
 assert.match(context.h5ResponseStatus(resource), /CSP: img-src/);
+
+const androidXHR = { ...xhrEntry, adapter: "android-webview-xhr" };
+const androidNavigation = { ...navigation, adapter: "android-webview-navigation",
+  statusCode: null, errorDomain: "WebView", errorCode: -2 };
+assert.match(context.trafficRowHtml(androidXHR), /H5 · XHR/);
+context.renderTrafficDetail(androidXHR, details);
+assert.match(details.innerHTML, /mockThisBtn/);
+context.renderTrafficDetail(androidNavigation, details);
+assert.match(details.innerHTML, /WebView 主文档导航失败/);
+assert.match(details.innerHTML, /WebView \/ -2/);
+assert.doesNotMatch(details.innerHTML, /mockThisBtn/);
+const androidImage = { ...native, adapter: "android-webview-resource", url: "https://example.test/icon.webp" };
+assert.equal(context.trafficResponseStaticKind(androidImage), "image");
 
 const observed = { ...beacon, adapter: "wkwebview-resource", terminalStage: "h5ResourceObserved" };
 assert.equal(context.h5ResponseStatus(observed), "已观测到资源，HTTP 状态码不可用");

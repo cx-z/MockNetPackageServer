@@ -260,6 +260,41 @@ func TestClient_H5CreateChecksServerBeforePosting(t *testing.T) {
 	}
 }
 
+func TestClient_AndroidH5TrafficScope(t *testing.T) {
+	f := &fakeServer{}
+	f.handler = func(w http.ResponseWriter, r *http.Request) {
+		adapter := "android-webview-xhr"
+		switch r.URL.Path {
+		case "/api/v1/traffic/navigation":
+			adapter = "android-webview-navigation"
+			fallthrough
+		case "/api/v1/traffic/xhr":
+			writeJSON(w, http.StatusOK, capture.TrafficEntry{
+				Method: http.MethodGet, URL: "https://api.example/api",
+				Path: "/api", Adapter: adapter, StatusCode: http.StatusOK, ResponseBody: "ok",
+			})
+		default:
+			if r.Method == http.MethodGet {
+				writeJSON(w, http.StatusOK, map[string]bool{"supportsH5Mock": true})
+				return
+			}
+			assert.Contains(t, f.lastBody, `"scope":"h5"`)
+			assert.Contains(t, f.lastBody, `"origin":"https://api.example"`)
+			writeJSON(w, http.StatusCreated, capture.MockRuleView{
+				MockRule: &capture.MockRule{ID: "android-h5", Scope: "h5"},
+			})
+		}
+	}
+	f.ts = httptest.NewServer(f)
+	defer f.ts.Close()
+	c := newTestClient(t, f)
+	rule, err := c.CreateMockRuleFromTraffic(t.Context(), "app", "device", "xhr", "note", 0)
+	require.NoError(t, err)
+	assert.Equal(t, "android-h5", rule.ID)
+	_, err = c.CreateMockRuleFromTraffic(t.Context(), "app", "device", "navigation", "note", 0)
+	assert.ErrorContains(t, err, "该 H5 采集类型不支持 Mock")
+}
+
 func TestClient_UpdateAndSetEnabled(t *testing.T) {
 	f := &fakeServer{}
 	f.handler = func(w http.ResponseWriter, r *http.Request) {

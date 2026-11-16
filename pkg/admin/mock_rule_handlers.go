@@ -83,9 +83,10 @@ func toSDKRules(views []*capture.MockRuleView) []sdkRuleView {
 // rule set. Distinct from MockRuleListResponse so the wire format for the SDK
 // can never accidentally grow Web-only fields.
 type sdkRuleListResponse struct {
-	Scope   string        `json:"scope,omitempty"`
-	Version int           `json:"version"`
-	Rules   []sdkRuleView `json:"rules"`
+	Scope             string        `json:"scope,omitempty"`
+	Version           int           `json:"version"`
+	Rules             []sdkRuleView `json:"rules"`
+	H5TrafficAdapters []string      `json:"h5TrafficAdapters,omitempty"`
 }
 
 // handleListMockRules handles GET /api/v1/devices/{app}/{did}/mock-rules.
@@ -125,11 +126,15 @@ func (a *API) handleListMockRules(w http.ResponseWriter, r *http.Request) {
 		if sdkRules == nil {
 			sdkRules = []sdkRuleView{}
 		}
-		writeJSON(w, http.StatusOK, sdkRuleListResponse{
+		response := sdkRuleListResponse{
 			Scope:   scope,
 			Version: version,
 			Rules:   sdkRules,
-		})
+		}
+		if scope == capture.H5MockScope {
+			response.H5TrafficAdapters = capture.H5TrafficAdapters()
+		}
+		writeJSON(w, http.StatusOK, response)
 		_ = changed // always true when version != since; empty array is the "no change" signal to the SDK
 		return
 	}

@@ -438,7 +438,7 @@ func (c *Client) CreateMockRuleFromTraffic(ctx context.Context, app, did, traffi
 		resp.BodyBase64 = e.ResponseBodyBase64
 	}
 	resp.DelayMs = delayMs
-	if strings.HasPrefix(e.Adapter, "wkwebview-") && !capture.H5MockableAdapter(e.Adapter) {
+	if capture.H5Adapter(e.Adapter) && !capture.H5MockableAdapter(e.Adapter) {
 		return nil, errors.New("该 H5 采集类型不支持 Mock")
 	}
 	if capture.H5MockableAdapter(e.Adapter) {

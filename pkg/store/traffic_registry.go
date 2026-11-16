@@ -388,7 +388,7 @@ func (m *CaptureManager) validateTrafficMockHits(ctx context.Context, app, did s
 // trafficMockKey preserves Native path semantics and checks that the H5 path
 // also matches the browser URL, including the original percent encoding.
 func trafficMockKey(e *capture.TrafficEntry) (interfaceKey, bool) {
-	if !strings.HasPrefix(e.Adapter, "wkwebview-") {
+	if !capture.H5Adapter(e.Adapter) {
 		return mockInterface(e.Method, e.Path, "", ""), true
 	}
 	if !capture.H5MockableAdapter(e.Adapter) || e.MatchedRuleID == "" {

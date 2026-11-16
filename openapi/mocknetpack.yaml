@@ -2139,7 +2139,7 @@ components:
             超时终态为合成的截止点说明（推断时前缀"请求超时（推断）"），与 error 摘要互补
         terminalStage:
           type: string
-          enum: [httpResponse, transportError, clientTimeout, clientCancelled, h5BeaconQueued, h5BeaconRejected, h5SSEOpen, h5SSEError, h5NavigationFinished, h5NavigationFailed, h5ResourceLoaded, h5ResourceObserved, h5ResourceError]
+          enum: [httpResponse, transportError, clientTimeout, clientCancelled, h5BeaconQueued, h5BeaconRejected, h5SSEOpen, h5SSEError, h5NavigationFinished, h5NavigationFailed, h5NavigationIssue, h5ResourceLoaded, h5ResourceObserved, h5ResourceError]
           description: |
             终态阶段：httpResponse=收到 HTTP 响应（含 4xx/5xx）；
             transportError=连接失败/中断等传输层错误；
@@ -2182,7 +2182,8 @@ components:
             wkwebview-beacon、wkwebview-eventsource、wkwebview-navigation 或 wkwebview-resource。
             Android 使用 `okhttp`（OkHttp 应用拦截器/插件注入）、`httpurlconnection`
             （HttpURLConnection 包装器），或通过 `MockNetPack.reportHttp` 上报的
-            业务自填值（如 `cronet`）。`wkwebview-*` 为 WebKit 保留。来源与正文完整度独立。
+            业务自填值（如 `cronet`）。Android WebView 使用 `android-webview-*`，后缀与 WKWebView 相同。
+            `wkwebview-*` 和 `android-webview-*` 为 H5 适配器保留。来源与正文完整度独立。
             超过 32 个 UTF-8 字节时仅丢弃来源，仍接收该条请求。老记录可缺省。
         seq:
           type: integer
@@ -2878,6 +2879,11 @@ components:
           type: string
           enum: [h5]
           description: 标识 H5 SDK 快照。
+        h5TrafficAdapters:
+          type: array
+          description: H5 SDK 快照返回的受支持流量来源，包括空规则列表。
+          items:
+            type: string
         version:
           type: integer
           description: 当前规则版本号（单调递增；SDK 用于增量比对）
